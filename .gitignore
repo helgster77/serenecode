@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / AI tools
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+*~
+
+# mypy
+.mypy_cache/
+
+# pytest / hypothesis
+.pytest_cache/
+.hypothesis/
+htmlcov/
+.coverage
+coverage.xml
+report.html
+
+# Distribution
+*.tar.gz
+
+# OS
+.DS_Store
+Thumbs.db

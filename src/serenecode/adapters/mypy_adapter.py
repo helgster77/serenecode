@@ -1,0 +1,116 @@
+"""Mypy adapter for static type checking (Level 2).
+
+This adapter implements the TypeChecker protocol by running mypy
+as a subprocess and parsing its output into structured TypeIssue
+objects.
+
+This is an adapter module — it handles I/O (subprocess execution)
+and is exempt from full contract requirements.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+
+from serenecode.core.exceptions import ToolNotInstalledError
+from serenecode.ports.type_checker import TypeIssue
+
+_MYPY_OUTPUT_PATTERN = re.compile(
+    r"^(.+?):(\d+)(?::(\d+))?: (error|warning|note): (.+?)(?:\s+\[(.+?)\])?$"
+)
+
+
+class MypyTypeChecker:
+    """Type checker implementation using mypy.
+
+    Runs mypy as a subprocess with strict mode and parses
+    its output into structured TypeIssue objects.
+    """
+
+    def __init__(self, timeout: int = 120) -> None:
+        """Initialize the checker.
+
+        Args:
+            timeout: Maximum seconds for mypy to run.
+        """
+        self._timeout = timeout
+
+    def check(
+        self,
+        file_paths: list[str],
+        strict: bool = True,
+    ) -> list[TypeIssue]:
+        """Run mypy type checking on the given files.
+
+        Args:
+            file_paths: Paths to Python files to check.
+            strict: Whether to use strict mode.
+
+        Returns:
+            List of type issues found.
+
+        Raises:
+            ToolNotInstalledError: If mypy is not installed.
+        """
+        if not file_paths:
+            return []
+
+        cmd = [sys.executable, "-m", "mypy"]
+        if strict:
+            cmd.append("--strict")
+        cmd.extend([
+            "--no-error-summary",
+            "--show-error-codes",
+            "--no-color",
+        ])
+        cmd.extend(file_paths)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
+            )
+        except FileNotFoundError as exc:
+            raise ToolNotInstalledError(
+                "mypy is not installed. Install with: pip install mypy"
+            ) from exc
+        except subprocess.TimeoutExpired:
+            return [TypeIssue(
+                file="<timeout>",
+                line=0,
+                column=0,
+                severity="error",
+                message=f"mypy timed out after {self._timeout}s",
+            )]
+
+        return self._parse_output(result.stdout)
+
+    def _parse_output(self, output: str) -> list[TypeIssue]:
+        """Parse mypy stdout into TypeIssue objects.
+
+        Args:
+            output: mypy stdout content.
+
+        Returns:
+            List of parsed type issues.
+        """
+        issues: list[TypeIssue] = []
+
+        # Loop invariant: issues contains parsed results for lines[0..i]
+        for line in output.splitlines():
+            match = _MYPY_OUTPUT_PATTERN.match(line.strip())
+            if match:
+                issues.append(TypeIssue(
+                    file=match.group(1),
+                    line=int(match.group(2)),
+                    column=int(match.group(3)) if match.group(3) else 0,
+                    severity=match.group(4),
+                    message=match.group(5),
+                    code=match.group(6),
+                ))
+
+        return issues

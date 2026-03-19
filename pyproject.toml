@@ -1,0 +1,69 @@
+[project]
+name = "serenecode"
+version = "0.1.0"
+description = "Formal verification framework for AI-generated Python code"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "icontract>=2.7.0",
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+verify = [
+    "mypy>=1.0",
+    "hypothesis>=6.0",
+    "crosshair-tool>=0.0.60",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "mypy>=1.0",
+    "hypothesis>=6.0",
+    "crosshair-tool>=0.0.60",
+]
+
+[project.scripts]
+serenecode = "serenecode.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/serenecode"]
+
+[tool.mypy]
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+mypy_path = "src"
+packages = ["serenecode"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/e2e", "tests/integration"]
+markers = [
+    "slow: marks tests as slow",
+    "crosshair: tests that import CrossHair (monkey-patches icontract)",
+]
+pythonpath = ["src"]
+
+[tool.coverage.run]
+source = ["serenecode"]
+branch = true
+omit = [
+    "src/serenecode/templates/*",
+    "tests/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 70
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+    "pass",
+    "\\.\\.\\.",
+]
