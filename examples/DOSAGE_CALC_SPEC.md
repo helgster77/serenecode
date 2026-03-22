@@ -147,4 +147,3 @@ All functions must reject invalid inputs. Specifically:
 - max_daily_dose_mg must be >= max_single_dose_mg
 
 How invalid inputs are rejected (exceptions, return codes, etc.) is left to the implementation.
-
