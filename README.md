@@ -26,7 +26,7 @@ We built the same medical dosage calculator twice from the same spec — once wi
 
 Both versions implement four functions: dose calculation with weight-based dosing and max caps, renal function adjustment with tiered CrCl thresholds, daily safety checks with exact Decimal arithmetic, and contraindication detection across current medications.
 
-Both versions are functionally correct. The code is nearly identical. Here's what's different:
+Both versions are functionally correct. Here's what's different:
 
 | What can you claim? | Plain AI (142 lines) | SereneCode (519 lines) |
 |---|---|---|

@@ -1,6 +1,6 @@
 # Medical Dosage Calculator — Problem Specification
 
-**Purpose:** A small Python module that calculates safe drug dosages for patients. This spec is intentionally implementation-agnostic — build it once with plain AI, once with Serenecode conventions, and compare what correctness claims you can make about each version.
+**Purpose:** A small Python module that calculates safe drug dosages for patients.
 
 ---
 
@@ -148,20 +148,3 @@ All functions must reject invalid inputs. Specifically:
 
 How invalid inputs are rejected (exceptions, return codes, etc.) is left to the implementation.
 
----
-
-## What to Compare
-
-After building both versions, evaluate each on these questions:
-
-| Question | Plain AI | Serenecode |
-|----------|----------|-----------|
-| Can you prove dose never exceeds max_single_dose_mg? | | |
-| Can you prove renal adjustment never increases a dose? | | |
-| Can you prove daily safety check is consistent (is_safe ↔ daily_total <= max)? | | |
-| Can you prove contraindication check returns all and only actual conflicts? | | |
-| Can you prove no function returns a negative dose? | | |
-| What happens with boundary inputs (CrCl exactly 30, weight 0.5 kg)? | | |
-| What happens with extreme inputs (weight 300 kg, CrCl 0.01)? | | |
-| Are there inputs where the code silently gives a wrong answer? | | |
-| How confident are you shipping this to production? | | |
