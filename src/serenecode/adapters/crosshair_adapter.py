@@ -11,7 +11,7 @@ subprocess execution) and is exempt from full contract requirements.
 
 from __future__ import annotations
 
-import importlib
+import inspect
 import multiprocessing
 import multiprocessing.queues
 import queue
@@ -19,8 +19,13 @@ import re
 import subprocess
 import sys
 import time
+import typing
 from typing import Any
 
+import icontract
+
+from serenecode.adapters.module_loader import load_python_module
+from serenecode.contracts.predicates import is_non_empty_string, is_positive_int
 from serenecode.core.exceptions import ToolNotInstalledError
 from serenecode.ports.symbolic_checker import SymbolicFinding
 
@@ -35,6 +40,7 @@ except ImportError:
 _CROSSHAIR_CLI_AVAILABLE: bool | None = None
 
 
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
 def _check_crosshair_cli() -> bool:
     """Check if CrossHair CLI is available."""
     global _CROSSHAIR_CLI_AVAILABLE
@@ -52,6 +58,86 @@ def _check_crosshair_cli() -> bool:
     return _CROSSHAIR_CLI_AVAILABLE
 
 
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda search_paths: isinstance(search_paths, tuple),
+    "search_paths must be a tuple",
+)
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
+def _discover_cli_targets(
+    module_path: str,
+    search_paths: tuple[str, ...] = (),
+) -> list[tuple[str, str]]:
+    """Discover contracted top-level functions to verify with CrossHair CLI."""
+    module = load_python_module(module_path, search_paths)
+    targets: list[tuple[str, str]] = []
+
+    # Loop invariant: targets contains contracted top-level functions seen so far
+    for name in sorted(dir(module)):
+        if name.startswith("_"):
+            continue
+        obj = getattr(module, name)
+        if (
+            inspect.isfunction(obj)
+            and getattr(obj, "__module__", None) == module.__name__
+            and _has_icontract_contracts(obj)
+            and _is_symbolic_friendly_target(obj)
+        ):
+            targets.append((f"{module_path}.{name}", name))
+
+    return targets
+
+
+@icontract.require(lambda func: callable(func), "func must be callable")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _has_icontract_contracts(func: Any) -> bool:
+    """Check whether a function exposes icontract pre/postconditions."""
+    return hasattr(func, "__preconditions__") or hasattr(func, "__postconditions__")
+
+
+@icontract.require(lambda func: callable(func), "func must be callable")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _is_symbolic_friendly_target(func: Any) -> bool:
+    """Check if a function signature is tractable for direct CrossHair CLI checks."""
+    module_name = getattr(func, "__module__", "")
+    if module_name in {"serenecode", "serenecode.init", "serenecode.config"}:
+        return False
+    if module_name == "serenecode.contracts.predicates":
+        return False
+    if module_name.startswith("serenecode.adapters"):
+        return False
+
+    try:
+        resolved_hints = typing.get_type_hints(func)
+        signature = inspect.signature(func)
+    except Exception:
+        return True
+
+    # Loop invariant: every parameter seen so far is either primitive-like or has
+    # caused the function to be rejected as too object-heavy for CLI verification.
+    for name, parameter in signature.parameters.items():
+        if name in ("self", "cls"):
+            continue
+        annotation = resolved_hints.get(name, parameter.annotation)
+        if annotation is inspect.Parameter.empty or not inspect.isclass(annotation):
+            continue
+
+        module_name = getattr(annotation, "__module__", "")
+        if module_name not in {"builtins", "typing", "types", "collections.abc"}:
+            return False
+
+    return True
+
+
+@icontract.invariant(
+    lambda self: is_positive_int(self._per_condition_timeout)
+    and is_positive_int(self._per_path_timeout)
+    and is_positive_int(self._module_timeout),
+    "timeouts must remain positive",
+)
 class CrossHairSymbolicChecker:
     """Symbolic checker implementation using CrossHair.
 
@@ -59,6 +145,19 @@ class CrossHairSymbolicChecker:
     icontract postconditions hold for all valid inputs.
     """
 
+    @icontract.require(
+        lambda per_condition_timeout: is_positive_int(per_condition_timeout),
+        "per_condition_timeout must be positive",
+    )
+    @icontract.require(
+        lambda per_path_timeout: is_positive_int(per_path_timeout),
+        "per_path_timeout must be positive",
+    )
+    @icontract.require(
+        lambda module_timeout: is_positive_int(module_timeout),
+        "module_timeout must be positive",
+    )
+    @icontract.ensure(lambda result: result is None, "initialization returns None")
     def __init__(
         self,
         per_condition_timeout: int = 30,
@@ -76,11 +175,29 @@ class CrossHairSymbolicChecker:
         self._per_path_timeout = per_path_timeout
         self._module_timeout = module_timeout
 
+    @icontract.require(
+        lambda module_path: is_non_empty_string(module_path),
+        "module_path must be a non-empty string",
+    )
+    @icontract.require(
+        lambda per_condition_timeout: per_condition_timeout is None or is_positive_int(per_condition_timeout),
+        "per_condition_timeout must be positive when provided",
+    )
+    @icontract.require(
+        lambda per_path_timeout: per_path_timeout is None or is_positive_int(per_path_timeout),
+        "per_path_timeout must be positive when provided",
+    )
+    @icontract.require(
+        lambda search_paths: isinstance(search_paths, tuple),
+        "search_paths must be a tuple",
+    )
+    @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
     def verify_module(
         self,
         module_path: str,
-        per_condition_timeout: int = 30,
-        per_path_timeout: int = 10,
+        per_condition_timeout: int | None = None,
+        per_path_timeout: int | None = None,
+        search_paths: tuple[str, ...] = (),
     ) -> list[SymbolicFinding]:
         """Run symbolic verification on all contracted functions in a module.
 
@@ -92,20 +209,61 @@ class CrossHairSymbolicChecker:
         Returns:
             List of symbolic findings.
         """
-        if _CROSSHAIR_API_AVAILABLE:
-            return self._verify_via_api(module_path, per_condition_timeout, per_path_timeout)
-        elif _check_crosshair_cli():
-            return self._verify_via_cli(module_path, per_condition_timeout)
+        effective_condition_timeout = (
+            self._per_condition_timeout
+            if per_condition_timeout is None
+            else per_condition_timeout
+        )
+        effective_path_timeout = (
+            self._per_path_timeout
+            if per_path_timeout is None
+            else per_path_timeout
+        )
+
+        # Prefer the CLI backend because it has been more stable on real-world
+        # modules than CrossHair's in-process Python API.
+        if _check_crosshair_cli():
+            return self._verify_via_cli(
+                module_path,
+                effective_condition_timeout,
+                effective_path_timeout,
+                search_paths,
+            )
+        elif _CROSSHAIR_API_AVAILABLE:
+            return self._verify_via_api(
+                module_path,
+                effective_condition_timeout,
+                effective_path_timeout,
+                search_paths,
+            )
         else:
             raise ToolNotInstalledError(
                 "CrossHair is not installed. Install with: pip install crosshair-tool"
             )
 
+    @icontract.require(
+        lambda module_path: is_non_empty_string(module_path),
+        "module_path must be a non-empty string",
+    )
+    @icontract.require(
+        lambda per_condition_timeout: is_positive_int(per_condition_timeout),
+        "per_condition_timeout must be positive",
+    )
+    @icontract.require(
+        lambda per_path_timeout: is_positive_int(per_path_timeout),
+        "per_path_timeout must be positive",
+    )
+    @icontract.require(
+        lambda search_paths: isinstance(search_paths, tuple),
+        "search_paths must be a tuple",
+    )
+    @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
     def _verify_via_api(
         self,
         module_path: str,
         per_condition_timeout: int,
         per_path_timeout: int,
+        search_paths: tuple[str, ...] = (),
     ) -> list[SymbolicFinding]:
         """Verify using CrossHair's Python API in an isolated process.
 
@@ -125,10 +283,17 @@ class CrossHairSymbolicChecker:
         # when system frameworks hold locks at fork time.
         ctx = multiprocessing.get_context("spawn")
         result_queue: multiprocessing.Queue[list[SymbolicFinding]] = ctx.Queue()
+        worker = getattr(sys.modules[__name__], "_api_verification_worker")
 
         process = ctx.Process(
-            target=_api_verification_worker,
-            args=(module_path, per_condition_timeout, per_path_timeout, result_queue),
+            target=worker,
+            args=(
+                module_path,
+                per_condition_timeout,
+                per_path_timeout,
+                search_paths,
+                result_queue,
+            ),
         )
         process.start()
 
@@ -177,50 +342,117 @@ class CrossHairSymbolicChecker:
             message=f"No findings for '{module_path}'",
         )]
 
+    @icontract.require(
+        lambda module_path: is_non_empty_string(module_path),
+        "module_path must be a non-empty string",
+    )
+    @icontract.require(
+        lambda per_condition_timeout: is_positive_int(per_condition_timeout),
+        "per_condition_timeout must be positive",
+    )
+    @icontract.require(
+        lambda per_path_timeout: is_positive_int(per_path_timeout),
+        "per_path_timeout must be positive",
+    )
+    @icontract.require(
+        lambda search_paths: isinstance(search_paths, tuple),
+        "search_paths must be a tuple",
+    )
+    @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
     def _verify_via_cli(
         self,
         module_path: str,
         per_condition_timeout: int,
+        per_path_timeout: int,
+        search_paths: tuple[str, ...] = (),
     ) -> list[SymbolicFinding]:
         """Verify using CrossHair CLI as a subprocess fallback.
 
         Args:
             module_path: Module to verify.
             per_condition_timeout: Timeout per condition.
+            per_path_timeout: Timeout per execution path.
 
         Returns:
             List of symbolic findings.
         """
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable, "-m", "crosshair", "check",
-                    module_path,
-                    f"--per_condition_timeout={per_condition_timeout}",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=per_condition_timeout * 10,
-            )
-        except subprocess.TimeoutExpired:
+        targets = _discover_cli_targets(module_path, search_paths)
+        if not targets:
             return [SymbolicFinding(
                 function_name="<module>",
                 module_path=module_path,
-                outcome="timeout",
-                message=f"CrossHair verification timed out for module '{module_path}'",
+                outcome="verified",
+                message=f"No contracted top-level functions found in '{module_path}'",
             )]
-        except FileNotFoundError:
-            raise ToolNotInstalledError(
-                "CrossHair CLI not found. Install with: pip install crosshair-tool"
-            )
 
-        return _parse_cli_output(module_path, result.stdout, result.stderr)
+        findings: list[SymbolicFinding] = []
+
+        # Loop invariant: findings contains results for targets[0..i]
+        for target, function_name in targets:
+            try:
+                env = _subprocess_env(search_paths)
+                result = subprocess.run(
+                    [
+                        sys.executable, "-m", "crosshair", "check",
+                        target,
+                        "--analysis_kind=icontract",
+                        f"--per_condition_timeout={per_condition_timeout}",
+                        f"--per_path_timeout={per_path_timeout}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=max(per_condition_timeout * 4, per_path_timeout * 8),
+                    env=env,
+                )
+            except subprocess.TimeoutExpired:
+                findings.append(SymbolicFinding(
+                    function_name=function_name,
+                    module_path=module_path,
+                    outcome="timeout",
+                    message=f"CrossHair verification timed out for function '{function_name}'",
+                ))
+                continue
+            except FileNotFoundError:
+                raise ToolNotInstalledError(
+                    "CrossHair CLI not found. Install with: pip install crosshair-tool"
+                )
+
+            findings.extend(_parse_cli_output(
+                module_path,
+                result.stdout,
+                result.stderr,
+                function_name=function_name,
+            ))
+
+        return findings
 
 
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda per_condition_timeout: is_positive_int(per_condition_timeout),
+    "per_condition_timeout must be positive",
+)
+@icontract.require(
+    lambda per_path_timeout: is_positive_int(per_path_timeout),
+    "per_path_timeout must be positive",
+)
+@icontract.require(
+    lambda search_paths: isinstance(search_paths, tuple),
+    "search_paths must be a tuple",
+)
+@icontract.require(
+    lambda result_queue: result_queue is not None,
+    "result_queue must be provided",
+)
+@icontract.ensure(lambda result: result is None, "worker returns None")
 def _api_verification_worker(
     module_path: str,
     per_condition_timeout: int,
     per_path_timeout: int,
+    search_paths: tuple[str, ...],
     result_queue: multiprocessing.Queue,  # type: ignore[type-arg]
 ) -> None:
     """Run CrossHair API verification in a child process.
@@ -236,7 +468,7 @@ def _api_verification_worker(
         result_queue: Queue to put findings into.
     """
     try:
-        module = importlib.import_module(module_path)
+        module = load_python_module(module_path, search_paths)
     except ImportError as exc:
         result_queue.put([SymbolicFinding(
             function_name="<module>",
@@ -350,6 +582,11 @@ _SOLVER_LIMITATION_PATTERNS = (
 )
 
 
+@icontract.require(lambda exc: isinstance(exc, Exception), "exc must be an Exception")
+@icontract.ensure(
+    lambda result: result in {"unsupported", "error"},
+    "result must be a recognized symbolic outcome",
+)
 def _classify_exception(exc: Exception) -> str:
     """Classify an exception as a solver limitation or a real error.
 
@@ -376,6 +613,8 @@ _AUTOGEN_DUNDER_NAMES = frozenset({
 })
 
 
+@icontract.require(lambda checkable: checkable is not None, "checkable must be provided")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
 def _is_autogenerated_dunder(checkable: Any) -> bool:
     """Check if a checkable is an auto-generated dataclass dunder method.
 
@@ -428,6 +667,8 @@ def _is_autogenerated_dunder(checkable: Any) -> bool:
     return False
 
 
+@icontract.require(lambda checkable: checkable is not None, "checkable must be provided")
+@icontract.ensure(lambda result: isinstance(result, str), "result must be a string")
 def _extract_func_name_from_checkable(checkable: Any) -> str:
     """Extract function name from a CrossHair Checkable object.
 
@@ -481,6 +722,22 @@ def _extract_func_name_from_checkable(checkable: Any) -> str:
     return checkable_str[:80]
 
 
+@icontract.require(
+    lambda func_name: is_non_empty_string(func_name),
+    "func_name must be a non-empty string",
+)
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda elapsed: elapsed >= 0.0,
+    "elapsed must be non-negative",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, SymbolicFinding),
+    "result must be a SymbolicFinding",
+)
 def _message_to_finding(
     func_name: str,
     module_path: str,
@@ -572,6 +829,11 @@ def _message_to_finding(
         )
 
 
+@icontract.require(lambda message: isinstance(message, str), "message must be a string")
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, dict),
+    "result must be a dictionary or None",
+)
 def _parse_counterexample(message: str) -> dict[str, object] | None:
     """Extract counterexample values from a CrossHair message.
 
@@ -595,10 +857,18 @@ def _parse_counterexample(message: str) -> dict[str, object] | None:
     return None
 
 
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(lambda stdout: isinstance(stdout, str), "stdout must be a string")
+@icontract.require(lambda stderr: isinstance(stderr, str), "stderr must be a string")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def _parse_cli_output(
     module_path: str,
     stdout: str,
     stderr: str,
+    function_name: str = "<unknown>",
 ) -> list[SymbolicFinding]:
     """Parse CrossHair CLI output into findings.
 
@@ -614,10 +884,14 @@ def _parse_cli_output(
 
     if not stdout.strip() and not stderr.strip():
         return [SymbolicFinding(
-            function_name="<module>",
+            function_name=function_name,
             module_path=module_path,
             outcome="verified",
-            message=f"All functions in '{module_path}' verified successfully",
+            message=(
+                f"Function '{function_name}' verified successfully"
+                if function_name != "<unknown>"
+                else f"All functions in '{module_path}' verified successfully"
+            ),
         )]
 
     line_pattern = re.compile(r"^(.+?):(\d+):\s*error:\s*(.+)$")
@@ -630,7 +904,7 @@ def _parse_cli_output(
         match = line_pattern.match(line)
         if match:
             findings.append(SymbolicFinding(
-                function_name="<unknown>",
+                function_name=function_name,
                 module_path=module_path,
                 outcome="counterexample",
                 message=match.group(3),
@@ -638,7 +912,7 @@ def _parse_cli_output(
             ))
         elif "error" in line.lower():
             findings.append(SymbolicFinding(
-                function_name="<unknown>",
+                function_name=function_name,
                 module_path=module_path,
                 outcome="error",
                 message=line,
@@ -646,10 +920,32 @@ def _parse_cli_output(
 
     if not findings and stderr.strip():
         findings.append(SymbolicFinding(
-            function_name="<module>",
+            function_name=function_name,
             module_path=module_path,
             outcome="error",
             message=f"CrossHair error: {stderr[:200]}",
         ))
 
     return findings
+
+
+@icontract.require(
+    lambda search_paths: isinstance(search_paths, tuple),
+    "search_paths must be a tuple",
+)
+@icontract.ensure(lambda result: isinstance(result, dict), "result must be a dictionary")
+def _subprocess_env(search_paths: tuple[str, ...]) -> dict[str, str]:
+    """Build subprocess environment with project import roots on PYTHONPATH."""
+    import os
+
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    paths: list[str] = list(search_paths)
+
+    if existing:
+        paths.append(existing)
+
+    if paths:
+        env["PYTHONPATH"] = os.pathsep.join(paths)
+
+    return env

@@ -171,7 +171,6 @@ class CheckSummary:
             "passed": self.passed_count,
             "failed": self.failed_count,
             "skipped": self.skipped_count,
-            "duration_seconds": self.duration_seconds,
         }
 
 
@@ -236,6 +235,7 @@ def make_check_result(
     results: tuple[FunctionResult, ...],
     level_requested: int,
     duration_seconds: float,
+    level_achieved: int | None = None,
 ) -> CheckResult:
     """Create a CheckResult from a tuple of FunctionResults.
 
@@ -245,6 +245,7 @@ def make_check_result(
         results: Tuple of per-function results.
         level_requested: The verification level that was requested.
         duration_seconds: How long the check took.
+        level_achieved: Optional aggregate level achieved override.
 
     Returns:
         A fully constructed CheckResult.
@@ -256,14 +257,18 @@ def make_check_result(
 
     # Loop invariant: counts reflect classifications of results[0..i]
     for r in results:
+        if r.level_achieved < min_achieved:
+            min_achieved = r.level_achieved
         if r.status == CheckStatus.PASSED:
             passed_count += 1
         elif r.status == CheckStatus.FAILED:
             failed_count += 1
-            if r.level_achieved < min_achieved:
-                min_achieved = r.level_achieved
         else:
             skipped_count += 1
+
+    overall_level_achieved = (
+        min_achieved if level_achieved is None else level_achieved
+    )
 
     summary = CheckSummary(
         total_functions=len(results),
@@ -273,14 +278,16 @@ def make_check_result(
         duration_seconds=duration_seconds,
     )
 
-    # Only report as passed if at least one function passed and none failed
-    all_skipped = passed_count == 0 and failed_count == 0 and skipped_count > 0
-    passed = failed_count == 0 and not all_skipped
+    passed = (
+        failed_count == 0
+        and skipped_count == 0
+        and overall_level_achieved == level_requested
+    )
 
     return CheckResult(
         passed=passed,
         level_requested=level_requested,
-        level_achieved=min_achieved if failed_count > 0 else level_requested,
+        level_achieved=overall_level_achieved,
         results=results,
         summary=summary,
     )

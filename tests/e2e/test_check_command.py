@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from serenecode.cli import main
+from serenecode.models import make_check_result
 
 
 class TestCheckCommand:
@@ -112,3 +114,138 @@ def double(x: int) -> int:
         runner = CliRunner()
         result = runner.invoke(main, ["check", str(sub)])
         assert result.exit_code == 0
+
+    def test_verify_flag_starts_at_level_3(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (tmp_path / "test.py").write_text('"""Module doc."""\n', encoding="utf-8")
+        captured: dict[str, int] = {}
+
+        def fake_run_pipeline(*args: object, **kwargs: object):
+            captured["start_level"] = kwargs["start_level"]  # type: ignore[index]
+            captured["level"] = kwargs["level"]  # type: ignore[index]
+            return make_check_result((), level_requested=3, duration_seconds=0.0)
+
+        monkeypatch.setattr("serenecode.cli.run_pipeline", fake_run_pipeline)
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", str(tmp_path), "--verify"])
+
+        assert result.exit_code == 0
+        assert captured == {"start_level": 3, "level": 3}
+
+    def test_src_layout_with_package_imports_passes_level_3(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        src_pkg = tmp_path / "src" / "pkg"
+        src_pkg.mkdir(parents=True)
+        (src_pkg / "__init__.py").write_text("", encoding="utf-8")
+        (src_pkg / "helper.py").write_text(
+            '''\
+"""Helper module."""
+
+import icontract
+
+
+@icontract.require(lambda x: x >= 0, "x must be non-negative")
+@icontract.ensure(lambda result, x: result == x * 2, "must double")
+def double(x: int) -> int:
+    """Double a non-negative integer."""
+    return x * 2
+''',
+            encoding="utf-8",
+        )
+        (src_pkg / "mod.py").write_text(
+            '''\
+"""Wrapper module."""
+
+import icontract
+from pkg.helper import double
+
+
+@icontract.require(lambda x: x >= 0, "x must be non-negative")
+@icontract.ensure(lambda result, x: result == x * 2, "must double")
+def wrapped_double(x: int) -> int:
+    """Delegate doubling to the helper module."""
+    return double(x)
+''',
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", "src", "--level", "3"])
+
+        assert result.exit_code == 0
+        assert "Property testing skipped" not in result.output
+
+    def test_package_subdirectory_with_relative_imports_passes_level_3(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        src_pkg = tmp_path / "src" / "pkg"
+        src_pkg.mkdir(parents=True)
+        (tmp_path / "SERENECODE.md").write_text("# config\n", encoding="utf-8")
+        (src_pkg / "__init__.py").write_text('"""Package."""\n', encoding="utf-8")
+        (src_pkg / "helper.py").write_text(
+            '''\
+"""Helper module."""
+
+import icontract
+
+
+@icontract.require(lambda x: x >= 0, "x must be non-negative")
+@icontract.ensure(lambda result, x: result == x * 2, "must double")
+def double(x: int) -> int:
+    """Double a non-negative integer."""
+    return x * 2
+''',
+            encoding="utf-8",
+        )
+        (src_pkg / "mod.py").write_text(
+            '''\
+"""Wrapper module."""
+
+import icontract
+
+from .helper import double
+
+
+@icontract.require(lambda x: x >= 0, "x must be non-negative")
+@icontract.ensure(lambda result, x: result == x * 2, "must double")
+def wrapped_double(x: int) -> int:
+    """Delegate doubling to the helper module."""
+    return double(x)
+''',
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", "src/pkg", "--level", "3"])
+
+        assert result.exit_code == 0
+        assert "Property testing skipped" not in result.output
+
+    def test_scoped_core_directory_still_enforces_core_rules(self, tmp_path: Path) -> None:
+        core_dir = tmp_path / "src" / "core"
+        core_dir.mkdir(parents=True)
+        (core_dir / "ioy.py").write_text(
+            '''\
+"""Core module."""
+
+import os
+''',
+            encoding="utf-8",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", str(core_dir), "--structural"])
+
+        assert result.exit_code == 1
+        assert "Forbidden import 'os' in core module" in result.output

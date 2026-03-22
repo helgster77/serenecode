@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import icontract
 
+from serenecode.contracts.predicates import is_non_empty_string
 from serenecode.models import (
     CheckResult,
     CheckStatus,
@@ -65,7 +66,11 @@ def transform_type_results(
         details: list[Detail] = []
         # Loop invariant: details contains Detail for errors[0..j]
         for error in errors:
-            suggestion = _suggest_from_mypy_code(error.code, error.message) if error.code else None
+            suggestion = (
+                _suggest_from_mypy_code(error.code, error.message)
+                if error.code and is_non_empty_string(error.message)
+                else None
+            )
             details.append(Detail(
                 level=VerificationLevel.TYPES,
                 tool="mypy",
@@ -91,6 +96,18 @@ def transform_type_results(
     )
 
 
+@icontract.require(
+    lambda code: code is None or is_non_empty_string(code),
+    "code must be a non-empty string when provided",
+)
+@icontract.require(
+    lambda message: is_non_empty_string(message),
+    "message must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, str),
+    "result must be a string or None",
+)
 def _suggest_from_mypy_code(code: str | None, message: str) -> str | None:
     """Generate a fix suggestion from a mypy error code.
 

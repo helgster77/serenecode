@@ -1,5 +1,7 @@
 """Domain models for the medical dosage calculator."""
 
+import math
+
 import icontract
 
 
@@ -31,14 +33,13 @@ class DosageError(_DosageErrorBase):
         """Initialize DosageError with a non-empty message."""
         super().__init__(message)
 
-
 class _Frozen:
     """Mixin that prevents attribute modification after ``__init__`` completes.
 
     Subclasses must set ``self._frozen = True`` as the last line of ``__init__``.
-    The invariant on ``_Frozen`` is omitted to avoid icontract ``__new__``
-    wrapping conflicts with subclass invariants; immutability is enforced
-    structurally by ``__setattr__``.
+    The invariant on ``_Frozen`` is omitted because icontract's class
+    wrapper conflicts with subclass invariants for this mixin pattern.
+    Immutability itself is enforced structurally by ``__setattr__``.
     """
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -55,8 +56,16 @@ class _Frozen:
     "Dose must be positive",
 )
 @icontract.invariant(
+    lambda self: math.isfinite(self.dose_mg),
+    "Dose must be finite",
+)
+@icontract.invariant(
     lambda self: self.volume_ml > 0,
     "Volume must be positive",
+)
+@icontract.invariant(
+    lambda self: math.isfinite(self.volume_ml),
+    "Volume must be finite",
 )
 class DoseResult(_Frozen):
     """Result of a dose calculation."""
@@ -66,8 +75,20 @@ class DoseResult(_Frozen):
         "dose_mg must be positive",
     )
     @icontract.require(
+        lambda dose_mg: math.isfinite(dose_mg),
+        "dose_mg must be finite",
+    )
+    @icontract.require(
+        lambda self: not getattr(self, "_frozen", False),
+        "Frozen instances cannot be reinitialized",
+    )
+    @icontract.require(
         lambda volume_ml: volume_ml > 0,
         "volume_ml must be positive",
+    )
+    @icontract.require(
+        lambda volume_ml: math.isfinite(volume_ml),
+        "volume_ml must be finite",
     )
     @icontract.ensure(
         lambda self: self.dose_mg > 0 and self.volume_ml > 0,
@@ -86,12 +107,24 @@ class DoseResult(_Frozen):
     "Daily total must be positive",
 )
 @icontract.invariant(
+    lambda self: math.isfinite(self.daily_total_mg),
+    "Daily total must be finite",
+)
+@icontract.invariant(
     lambda self: self.max_daily_mg > 0,
     "Max daily dose must be positive",
 )
 @icontract.invariant(
+    lambda self: math.isfinite(self.max_daily_mg),
+    "Max daily dose must be finite",
+)
+@icontract.invariant(
     lambda self: self.utilization_pct >= 0,
     "Utilization percentage must be non-negative",
+)
+@icontract.invariant(
+    lambda self: math.isfinite(self.utilization_pct),
+    "Utilization percentage must be finite",
 )
 @icontract.invariant(
     lambda self: not self.is_safe or self.utilization_pct <= 100.0,
@@ -109,12 +142,28 @@ class SafetyResult(_Frozen):
         "daily_total_mg must be positive",
     )
     @icontract.require(
+        lambda daily_total_mg: math.isfinite(daily_total_mg),
+        "daily_total_mg must be finite",
+    )
+    @icontract.require(
+        lambda self: not getattr(self, "_frozen", False),
+        "Frozen instances cannot be reinitialized",
+    )
+    @icontract.require(
         lambda max_daily_mg: max_daily_mg > 0,
         "max_daily_mg must be positive",
     )
     @icontract.require(
+        lambda max_daily_mg: math.isfinite(max_daily_mg),
+        "max_daily_mg must be finite",
+    )
+    @icontract.require(
         lambda utilization_pct: utilization_pct >= 0,
         "utilization_pct must be non-negative",
+    )
+    @icontract.require(
+        lambda utilization_pct: math.isfinite(utilization_pct),
+        "utilization_pct must be finite",
     )
     @icontract.ensure(
         lambda self: self.daily_total_mg > 0 and self.max_daily_mg > 0,
@@ -145,6 +194,10 @@ class ContraindicationResult(_Frozen):
     @icontract.require(
         lambda is_safe, conflicts: is_safe == (len(conflicts) == 0),
         "is_safe must be consistent with conflicts",
+    )
+    @icontract.require(
+        lambda self: not getattr(self, "_frozen", False),
+        "Frozen instances cannot be reinitialized",
     )
     @icontract.ensure(
         lambda self: self.is_safe == (len(self.conflicts) == 0),
@@ -189,6 +242,10 @@ class Patient(_Frozen):
         "Weight must be between 0 (exclusive) and 300 kg",
     )
     @icontract.require(
+        lambda self: not getattr(self, "_frozen", False),
+        "Frozen instances cannot be reinitialized",
+    )
+    @icontract.require(
         lambda age_years: 0 <= age_years <= 150,
         "Age must be between 0 and 150 years",
     )
@@ -224,16 +281,48 @@ class Patient(_Frozen):
     "Dose per kg must be positive",
 )
 @icontract.invariant(
+    lambda self: math.isfinite(self.dose_per_kg),
+    "Dose per kg must be finite",
+)
+@icontract.invariant(
+    lambda self: self.dose_per_kg <= 100,
+    "Dose per kg must be at most 100 mg/kg",
+)
+@icontract.invariant(
     lambda self: self.concentration_mg_per_ml > 0,
     "Concentration must be positive",
+)
+@icontract.invariant(
+    lambda self: math.isfinite(self.concentration_mg_per_ml),
+    "Concentration must be finite",
+)
+@icontract.invariant(
+    lambda self: self.concentration_mg_per_ml <= 1000,
+    "Concentration must be at most 1000 mg/mL",
 )
 @icontract.invariant(
     lambda self: self.max_single_dose_mg > 0,
     "Max single dose must be positive",
 )
 @icontract.invariant(
+    lambda self: math.isfinite(self.max_single_dose_mg),
+    "Max single dose must be finite",
+)
+@icontract.invariant(
+    lambda self: self.max_single_dose_mg <= 10000,
+    "Max single dose must be at most 10,000 mg",
+)
+@icontract.invariant(
     lambda self: self.max_daily_dose_mg > 0,
     "Max daily dose must be positive",
+)
+@icontract.invariant(
+    lambda self: math.isfinite(self.max_daily_dose_mg),
+    "Max daily dose must be finite",
+)
+@icontract.invariant(
+    lambda self: self.max_daily_dose_mg <= 50000,
+    "Max daily dose must be at most 50,000 mg",
 )
 @icontract.invariant(
     lambda self: self.max_daily_dose_mg >= self.max_single_dose_mg,
@@ -247,6 +336,10 @@ class Patient(_Frozen):
     lambda self: isinstance(self.doses_per_day, int),
     "Doses per day must be an integer",
 )
+@icontract.invariant(
+    lambda self: self.doses_per_day <= 24,
+    "Doses per day must be at most 24",
+)
 class Drug(_Frozen):
     """A drug with dosing parameters and contraindication information."""
 
@@ -255,20 +348,56 @@ class Drug(_Frozen):
         "Drug ID must be non-empty",
     )
     @icontract.require(
+        lambda self: not getattr(self, "_frozen", False),
+        "Frozen instances cannot be reinitialized",
+    )
+    @icontract.require(
         lambda dose_per_kg: dose_per_kg > 0,
         "dose_per_kg must be positive",
+    )
+    @icontract.require(
+        lambda dose_per_kg: math.isfinite(dose_per_kg),
+        "dose_per_kg must be finite",
+    )
+    @icontract.require(
+        lambda dose_per_kg: dose_per_kg <= 100,
+        "dose_per_kg must be at most 100 mg/kg",
     )
     @icontract.require(
         lambda concentration_mg_per_ml: concentration_mg_per_ml > 0,
         "concentration must be positive",
     )
     @icontract.require(
+        lambda concentration_mg_per_ml: math.isfinite(concentration_mg_per_ml),
+        "concentration must be finite",
+    )
+    @icontract.require(
+        lambda concentration_mg_per_ml: concentration_mg_per_ml <= 1000,
+        "concentration must be at most 1000 mg/mL",
+    )
+    @icontract.require(
         lambda max_single_dose_mg: max_single_dose_mg > 0,
         "max_single_dose_mg must be positive",
     )
     @icontract.require(
+        lambda max_single_dose_mg: math.isfinite(max_single_dose_mg),
+        "max_single_dose_mg must be finite",
+    )
+    @icontract.require(
+        lambda max_single_dose_mg: max_single_dose_mg <= 10000,
+        "max_single_dose_mg must be at most 10,000 mg",
+    )
+    @icontract.require(
         lambda max_daily_dose_mg: max_daily_dose_mg > 0,
         "max_daily_dose_mg must be positive",
+    )
+    @icontract.require(
+        lambda max_daily_dose_mg: math.isfinite(max_daily_dose_mg),
+        "max_daily_dose_mg must be finite",
+    )
+    @icontract.require(
+        lambda max_daily_dose_mg: max_daily_dose_mg <= 50000,
+        "max_daily_dose_mg must be at most 50,000 mg",
     )
     @icontract.require(
         lambda max_daily_dose_mg, max_single_dose_mg: max_daily_dose_mg >= max_single_dose_mg,
@@ -277,6 +406,10 @@ class Drug(_Frozen):
     @icontract.require(
         lambda doses_per_day: isinstance(doses_per_day, int) and doses_per_day > 0,
         "doses_per_day must be a positive integer",
+    )
+    @icontract.require(
+        lambda doses_per_day: doses_per_day <= 24,
+        "doses_per_day must be at most 24",
     )
     @icontract.ensure(
         lambda self: self.dose_per_kg > 0 and self.max_single_dose_mg > 0,

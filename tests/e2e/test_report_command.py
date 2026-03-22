@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from serenecode.cli import main
+from serenecode.models import make_check_result
 
 
 def _write_sample_source(tmp_path: Path) -> Path:
@@ -121,3 +123,23 @@ def func(x: int, y: int) -> int:
         assert isinstance(parsed["summary"]["failed"], int)
         assert isinstance(parsed["summary"]["skipped"], int)
         assert isinstance(parsed["results"], list)
+
+    def test_report_uses_recommended_verification_level(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_sample_source(tmp_path)
+        captured: dict[str, int] = {}
+
+        def fake_run_pipeline(*args: object, **kwargs: object):
+            captured["level"] = kwargs["level"]  # type: ignore[index]
+            return make_check_result((), level_requested=3, duration_seconds=0.0)
+
+        monkeypatch.setattr("serenecode.cli.run_pipeline", fake_run_pipeline)
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["report", str(tmp_path)])
+
+        assert result.exit_code == 0
+        assert captured["level"] == 3

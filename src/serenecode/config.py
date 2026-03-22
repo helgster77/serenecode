@@ -386,6 +386,8 @@ def parse_serenecode_md(content: str) -> SerenecodeConfig:
     return config
 
 
+@icontract.require(lambda content: isinstance(content, str), "content must be a string")
+@icontract.ensure(lambda result: result in ("default", "strict", "minimal"), "result must be a known template")
 def _detect_template(content: str) -> str:
     """Detect which template a SERENECODE.md most closely matches.
 
@@ -417,6 +419,8 @@ def _detect_template(content: str) -> str:
     return "default"
 
 
+@icontract.require(lambda content: isinstance(content, str), "content must be a string")
+@icontract.ensure(lambda result: result is None or isinstance(result, tuple), "result must be a tuple or None")
 def _extract_exemptions(content: str) -> tuple[str, ...] | None:
     """Extract exempt paths from the Exemptions section.
 

@@ -1,6 +1,6 @@
 """Medical dosage calculation functions."""
 
-from decimal import Decimal
+import math
 
 import icontract
 
@@ -18,43 +18,63 @@ from core.models import (
     "Patient weight must be positive",
 )
 @icontract.require(
+    lambda patient: math.isfinite(patient.weight_kg),
+    "Patient weight must be finite",
+)
+@icontract.require(
     lambda drug: drug.dose_per_kg > 0,
     "Drug dose_per_kg must be positive",
+)
+@icontract.require(
+    lambda drug: math.isfinite(drug.dose_per_kg),
+    "Drug dose_per_kg must be finite",
 )
 @icontract.require(
     lambda drug: drug.concentration_mg_per_ml > 0,
     "Drug concentration must be positive",
 )
 @icontract.require(
+    lambda drug: math.isfinite(drug.concentration_mg_per_ml),
+    "Drug concentration must be finite",
+)
+@icontract.require(
     lambda drug: drug.max_single_dose_mg > 0,
     "Drug max single dose must be positive",
+)
+@icontract.require(
+    lambda drug: math.isfinite(drug.max_single_dose_mg),
+    "Drug max single dose must be finite",
 )
 @icontract.ensure(
     lambda result: result.dose_mg > 0,
     "Resulting dose must be positive",
 )
 @icontract.ensure(
-    lambda result, drug: result.dose_mg <= drug.max_single_dose_mg,
-    "Resulting dose must not exceed max single dose",
+    lambda result: math.isfinite(result.dose_mg),
+    "Resulting dose must be finite",
 )
 @icontract.ensure(
     lambda result: result.volume_ml > 0,
     "Resulting volume must be positive",
 )
 @icontract.ensure(
-    lambda result, patient, drug: (
-        patient.weight_kg * drug.dose_per_kg <= drug.max_single_dose_mg
-    )
-    == (not result.was_capped),
-    "was_capped must reflect whether dose was actually capped",
+    lambda result: math.isfinite(result.volume_ml),
+    "Resulting volume must be finite",
 )
 @icontract.ensure(
-    lambda result, patient, drug: (
-        result.dose_mg == patient.weight_kg * drug.dose_per_kg
-        if not result.was_capped
-        else result.dose_mg == drug.max_single_dose_mg
-    ),
-    "dose_mg must be raw dose if uncapped, or max_single_dose_mg if capped",
+    lambda result, patient, drug: result.was_capped
+    == (patient.weight_kg * drug.dose_per_kg > drug.max_single_dose_mg),
+    "was_capped must reflect whether the raw dose exceeded the single-dose cap",
+)
+@icontract.ensure(
+    lambda result, patient, drug: result.dose_mg
+    == min(patient.weight_kg * drug.dose_per_kg, drug.max_single_dose_mg),
+    "dose_mg must equal the capped raw dose",
+)
+@icontract.ensure(
+    lambda result, drug: result.volume_ml
+    == result.dose_mg / drug.concentration_mg_per_ml,
+    "volume_ml must equal dose_mg divided by concentration",
 )
 def calculate_dose(patient: Patient, drug: Drug) -> DoseResult:
     """Compute the dose for a given patient and drug.
@@ -74,12 +94,24 @@ def calculate_dose(patient: Patient, drug: Drug) -> DoseResult:
     "Dose must be positive",
 )
 @icontract.require(
+    lambda dose_mg: math.isfinite(dose_mg) and dose_mg >= 0.001,
+    "Dose must be finite and at least 0.001 mg",
+)
+@icontract.require(
     lambda creatinine_clearance: creatinine_clearance > 0,
     "Creatinine clearance must be positive",
+)
+@icontract.require(
+    lambda creatinine_clearance: math.isfinite(creatinine_clearance) and creatinine_clearance <= 200,
+    "Creatinine clearance must be finite and at most 200 mL/min",
 )
 @icontract.ensure(
     lambda result: result > 0,
     "Adjusted dose must be positive",
+)
+@icontract.ensure(
+    lambda result: math.isfinite(result),
+    "Adjusted dose must be finite",
 )
 @icontract.ensure(
     lambda result, dose_mg: result <= dose_mg,
@@ -123,6 +155,10 @@ def adjust_for_renal_function(dose_mg: float, creatinine_clearance: float) -> fl
     "Dose must be positive",
 )
 @icontract.require(
+    lambda dose_mg: math.isfinite(dose_mg),
+    "Dose must be finite",
+)
+@icontract.require(
     lambda drug: drug.doses_per_day > 0,
     "Doses per day must be positive",
 )
@@ -130,9 +166,13 @@ def adjust_for_renal_function(dose_mg: float, creatinine_clearance: float) -> fl
     lambda drug: drug.max_daily_dose_mg > 0,
     "Max daily dose must be positive",
 )
+@icontract.require(
+    lambda drug: math.isfinite(drug.max_daily_dose_mg),
+    "Max daily dose must be finite",
+)
 @icontract.ensure(
     lambda result, dose_mg, drug: result.daily_total_mg
-    == float(Decimal(str(dose_mg)) * Decimal(str(drug.doses_per_day))),
+    == dose_mg * drug.doses_per_day,
     "Daily total must equal dose_mg * doses_per_day exactly",
 )
 @icontract.ensure(
@@ -144,6 +184,10 @@ def adjust_for_renal_function(dose_mg: float, creatinine_clearance: float) -> fl
     "Utilization must be non-negative",
 )
 @icontract.ensure(
+    lambda result: math.isfinite(result.utilization_pct),
+    "Utilization must be finite",
+)
+@icontract.ensure(
     lambda result: not result.is_safe or result.utilization_pct <= 100.0,
     "If safe, utilization must be at most 100%",
 )
@@ -153,15 +197,10 @@ def check_daily_safety(dose_mg: float, drug: Drug) -> SafetyResult:
     daily_total = dose_mg * doses_per_day
     is_safe = daily_total <= max_daily_dose_mg
     """
-    # Use Decimal throughout to avoid floating-point drift
-    daily_total_dec: Decimal = Decimal(str(dose_mg)) * Decimal(str(drug.doses_per_day))
-    max_daily_dec: Decimal = Decimal(str(drug.max_daily_dose_mg))
-    daily_total_mg: float = float(daily_total_dec)
+    daily_total_mg: float = dose_mg * drug.doses_per_day
     max_daily_mg: float = drug.max_daily_dose_mg
     is_safe: bool = daily_total_mg <= max_daily_mg
-    utilization_pct: float = float(
-        (daily_total_dec / max_daily_dec) * Decimal("100")
-    )
+    utilization_pct: float = (daily_total_mg / max_daily_mg) * 100.0
 
     return SafetyResult(
         daily_total_mg=daily_total_mg,

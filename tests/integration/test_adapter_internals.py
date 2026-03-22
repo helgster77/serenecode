@@ -6,6 +6,9 @@ without running external tools (mypy, hypothesis, crosshair).
 
 from __future__ import annotations
 
+from functools import wraps
+from pathlib import Path
+
 import pytest
 
 from serenecode.adapters.mypy_adapter import MypyTypeChecker, _MYPY_OUTPUT_PATTERN
@@ -112,6 +115,30 @@ class TestHypothesisAdapterInternals:
         strategy = _get_strategy_for_annotation(list[int])
         assert strategy is not None
 
+    def test_strategy_for_protocol_stub(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.ports.file_system import FileReader
+
+        strategy = _get_strategy_for_annotation(FileReader)
+
+        assert strategy is not None
+
+    def test_strategy_for_ast_module(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        import ast
+
+        strategy = _get_strategy_for_annotation(ast.Module)
+
+        assert strategy is not None
+
+    def test_strategy_for_check_result(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.models import CheckResult
+
+        strategy = _get_strategy_for_annotation(CheckResult)
+
+        assert strategy is not None
+
     def test_build_strategies_multiple_params(self) -> None:
         from serenecode.adapters.hypothesis_adapter import _build_strategies_from_signature
         def func(x: int, y: str, z: float) -> bool:
@@ -136,6 +163,21 @@ class TestHypothesisAdapterInternals:
             return x
         assert _has_icontract_decorators(func) is False
 
+    def test_has_icontract_decorators_false_for_plain_wrapped_function(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _has_icontract_decorators
+
+        def decorator(fn):
+            @wraps(fn)
+            def inner(*args, **kwargs):
+                return fn(*args, **kwargs)
+            return inner
+
+        @decorator
+        def func(x: int) -> int:
+            return x
+
+        assert _has_icontract_decorators(func) is False
+
     def test_check_preconditions_passing(self) -> None:
         from serenecode.adapters.hypothesis_adapter import _check_preconditions
         import icontract
@@ -151,6 +193,18 @@ class TestHypothesisAdapterInternals:
         def func(x: int) -> int:
             return x
         assert _check_preconditions(func, {"x": -1}) is False
+
+    def test_check_preconditions_requires_all_conditions(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _check_preconditions
+        import icontract
+
+        @icontract.require(lambda x: x > 0, "positive")
+        @icontract.require(lambda x: x < 10, "single digit")
+        def func(x: int) -> int:
+            return x
+
+        assert _check_preconditions(func, {"x": 5}) is True
+        assert _check_preconditions(func, {"x": 50}) is False
 
     def test_find_nested_violation(self) -> None:
         from serenecode.adapters.hypothesis_adapter import _find_nested_violation
@@ -219,3 +273,108 @@ class TestCrossHairAdapterInternals:
         findings = _parse_cli_output("test_module", "", "Some error occurred")
         assert len(findings) == 1
         assert findings[0].outcome == "error"
+
+    def test_verify_module_uses_instance_timeouts_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
+
+        checker = CrossHairSymbolicChecker(
+            per_condition_timeout=111,
+            per_path_timeout=222,
+        )
+        captured: dict[str, object] = {}
+
+        def fake_verify(
+            module_path: str,
+            per_condition_timeout: int,
+            per_path_timeout: int,
+            search_paths: tuple[str, ...] = (),
+        ):
+            captured["module_path"] = module_path
+            captured["per_condition_timeout"] = per_condition_timeout
+            captured["per_path_timeout"] = per_path_timeout
+            captured["search_paths"] = search_paths
+            return []
+
+        monkeypatch.setattr(
+            "serenecode.adapters.crosshair_adapter._CROSSHAIR_API_AVAILABLE",
+            True,
+        )
+        monkeypatch.setattr(
+            "serenecode.adapters.crosshair_adapter._check_crosshair_cli",
+            lambda: False,
+        )
+        monkeypatch.setattr(checker, "_verify_via_api", fake_verify)
+
+        checker.verify_module("demo.module")
+
+        assert captured["module_path"] == "demo.module"
+        assert captured["per_condition_timeout"] == 111
+        assert captured["per_path_timeout"] == 222
+        assert captured["search_paths"] == ()
+
+    def test_verify_module_prefers_cli_when_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
+
+        checker = CrossHairSymbolicChecker(
+            per_condition_timeout=33,
+            per_path_timeout=44,
+        )
+        captured: dict[str, object] = {}
+
+        def fake_verify(
+            module_path: str,
+            per_condition_timeout: int,
+            per_path_timeout: int,
+            search_paths: tuple[str, ...] = (),
+        ):
+            captured["module_path"] = module_path
+            captured["per_condition_timeout"] = per_condition_timeout
+            captured["per_path_timeout"] = per_path_timeout
+            captured["search_paths"] = search_paths
+            return []
+
+        monkeypatch.setattr(
+            "serenecode.adapters.crosshair_adapter._CROSSHAIR_API_AVAILABLE",
+            True,
+        )
+        monkeypatch.setattr(
+            "serenecode.adapters.crosshair_adapter._check_crosshair_cli",
+            lambda: True,
+        )
+        monkeypatch.setattr(checker, "_verify_via_cli", fake_verify)
+
+        checker.verify_module("demo.module")
+
+        assert captured["module_path"] == "demo.module"
+        assert captured["per_condition_timeout"] == 33
+        assert captured["per_path_timeout"] == 44
+        assert captured["search_paths"] == ()
+
+
+class TestModuleLoader:
+    """Tests for dynamic module loading behavior."""
+
+    def test_load_python_module_refreshes_updated_module(self, tmp_path: Path) -> None:
+        from serenecode.adapters.module_loader import load_python_module
+
+        module_file = tmp_path / "sample.py"
+        module_file.write_text("VALUE = 1\n", encoding="utf-8")
+
+        first = load_python_module("sample", (str(tmp_path),))
+
+        module_file.write_text("VALUE = 2\n", encoding="utf-8")
+        second = load_python_module("sample", (str(tmp_path),))
+
+        assert first.VALUE == 1
+        assert second.VALUE == 2
+
+    def test_load_python_module_restores_canonical_module_binding(self) -> None:
+        import sys
+
+        import serenecode.models as models
+        from serenecode.adapters.module_loader import load_python_module
+
+        loaded = load_python_module("serenecode.models")
+
+        assert loaded is not models
+        assert sys.modules["serenecode.models"] is models

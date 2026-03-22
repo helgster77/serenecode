@@ -275,6 +275,8 @@ def format_html(check_result: CheckResult) -> str:
 </html>"""
 
 
+@icontract.require(lambda level: isinstance(level, int), "level must be an integer")
+@icontract.ensure(lambda result: isinstance(result, str), "result must be a string")
 def _level_badge(level: int) -> str:
     """Generate an HTML badge for a verification level.
 
@@ -297,6 +299,8 @@ def _level_badge(level: int) -> str:
     return f'<span class="badge {badge_class}">{name}</span>'
 
 
+@icontract.require(lambda text: isinstance(text, str), "text must be a string")
+@icontract.ensure(lambda result: isinstance(result, str), "result must be a string")
 def _escape_html(text: str) -> str:
     """Escape HTML special characters.
 

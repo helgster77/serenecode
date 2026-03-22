@@ -54,17 +54,30 @@ def transform_property_results(
     # Loop invariant: func_results contains transformed results for findings[0..i]
     for finding in findings:
         details: list[Detail] = []
+        status: CheckStatus
+        level_achieved: int
 
-        if finding.passed:
+        if finding.passed and finding.finding_type == "verified":
             status = CheckStatus.PASSED
+            level_achieved = 3
             details.append(Detail(
                 level=VerificationLevel.PROPERTIES,
                 tool="hypothesis",
                 finding_type="verified",
-                message=f"Property tests passed for '{finding.function_name}'",
+                message=finding.message,
+            ))
+        elif finding.passed:
+            status = CheckStatus.SKIPPED
+            level_achieved = 2
+            details.append(Detail(
+                level=VerificationLevel.PROPERTIES,
+                tool="hypothesis",
+                finding_type=finding.finding_type,
+                message=finding.message,
             ))
         else:
             status = CheckStatus.FAILED
+            level_achieved = 2
             detail = Detail(
                 level=VerificationLevel.PROPERTIES,
                 tool="hypothesis",
@@ -80,7 +93,7 @@ def transform_property_results(
             file=file_path,
             line=1,  # line info not available from property testing
             level_requested=3,
-            level_achieved=3 if finding.passed else 2,
+            level_achieved=level_achieved,
             status=status,
             details=tuple(details),
         ))

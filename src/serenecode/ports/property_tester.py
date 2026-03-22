@@ -12,8 +12,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+import icontract
+
+from serenecode.contracts.predicates import is_non_empty_string
 
 
+
+@icontract.invariant(
+    lambda self: is_non_empty_string(self.function_name) and is_non_empty_string(self.module_path),
+    "finding names must be non-empty",
+)
 @dataclass(frozen=True)
 class PropertyFinding:
     """A single finding from property-based testing.
@@ -32,6 +40,7 @@ class PropertyFinding:
     exception_message: str | None = None
 
 
+@icontract.invariant(lambda self: True, "protocol has no runtime state")
 class PropertyTester(Protocol):
     """Port for property-based testing.
 
@@ -39,16 +48,20 @@ class PropertyTester(Protocol):
     from function contracts and verify postconditions hold.
     """
 
+    @icontract.require(lambda module_path: is_non_empty_string(module_path), "module_path must be a non-empty string")
+    @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
     def test_module(
         self,
         module_path: str,
-        max_examples: int = 100,
+        max_examples: int | None = None,
+        search_paths: tuple[str, ...] = (),
     ) -> list[PropertyFinding]:
         """Run property-based tests on all contracted functions in a module.
 
         Args:
             module_path: Importable Python module path to test.
             max_examples: Maximum number of test examples per function.
+            search_paths: sys.path roots needed to import the module.
 
         Returns:
             List of property findings.

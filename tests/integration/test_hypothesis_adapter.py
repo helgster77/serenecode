@@ -136,6 +136,32 @@ class TestStrategyDerivation:
         strategies = _build_strategies_from_signature(func)
         assert strategies is not None
 
+    def test_derives_strategy_for_set_of_strings(self) -> None:
+        def func(values: set[str]) -> int:
+            return len(values)
+
+        strategies = _build_strategies_from_signature(func)
+
+        assert strategies is not None
+        assert "values" in strategies
+
+    def test_derives_strategy_for_contracted_class(self) -> None:
+        import icontract
+
+        class Demo:
+            @icontract.require(lambda value: value > 0, "value must be positive")
+            def __init__(self, value: int) -> None:
+                self.value = value
+
+        def func(demo: Demo) -> int:
+            return demo.value
+        func.__annotations__["demo"] = Demo
+
+        strategies = _build_strategies_from_signature(func)
+
+        assert strategies is not None
+        assert "demo" in strategies
+
     def test_no_strategy_without_annotations(self) -> None:
         def func(x):  # type: ignore[no-untyped-def]
             return x
@@ -146,7 +172,7 @@ class TestStrategyDerivation:
         def func() -> int:
             return 42
         strategies = _build_strategies_from_signature(func)
-        assert strategies is None
+        assert strategies == {}
 
     def test_skips_self_parameter(self) -> None:
         class Foo:

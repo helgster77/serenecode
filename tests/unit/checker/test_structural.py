@@ -163,6 +163,31 @@ class TestCheckContracts:
         results = check_contracts(tree, default_config(), aliases, "test.py")
         assert len(results) == 0
 
+    def test_private_function_checked_in_strict_mode(self) -> None:
+        source = textwrap.dedent("""\
+            def _helper(x: int) -> int:
+                return x * 2
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_contracts(tree, strict_config(), aliases, "test.py")
+        assert len(results) == 1
+        assert results[0].status == CheckStatus.FAILED
+
+    def test_nested_local_function_not_checked(self) -> None:
+        source = textwrap.dedent("""\
+            def outer(x: int) -> int:
+                def helper(y: int) -> int:
+                    return y + 1
+                return helper(x)
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_contracts(tree, strict_config(), aliases, "test.py")
+        names = [result.function for result in results]
+        assert "outer" in names
+        assert "helper" not in names
+
     def test_dunder_method_skipped(self) -> None:
         source = textwrap.dedent("""\
             def __repr__(self) -> str:
@@ -287,6 +312,29 @@ class TestCheckClassInvariants:
         aliases = _aliases_standard()
         results = check_class_invariants(tree, default_config(), aliases, "test.py")
         assert len(results) == 0
+
+    def test_private_class_checked_in_strict_mode(self) -> None:
+        source = textwrap.dedent("""\
+            class _Internal:
+                pass
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_class_invariants(tree, strict_config(), aliases, "test.py")
+        assert len(results) == 1
+        assert results[0].status == CheckStatus.FAILED
+
+    def test_nested_local_class_not_checked(self) -> None:
+        source = textwrap.dedent("""\
+            def outer() -> type[object]:
+                class Helper:
+                    pass
+                return Helper
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_class_invariants(tree, strict_config(), aliases, "test.py")
+        assert results == []
 
     def test_minimal_config_skips_invariants(self) -> None:
         source = textwrap.dedent("""\
@@ -520,6 +568,19 @@ class TestCheckDocstrings:
 
 class TestCheckLoopInvariants:
     """Tests for loop invariant comment checking."""
+
+    def test_invalid_unicode_source_is_treated_like_unreadable_tokens(self) -> None:
+        tree = _parse(
+            """\
+            def demo() -> None:
+                for _ in range(1):
+                    pass
+            """
+        )
+
+        results = check_loop_invariants("\udcff", tree, default_config(), "test.py")
+
+        assert results == []
 
     def test_loop_with_invariant_passes(self) -> None:
         source = textwrap.dedent("""\

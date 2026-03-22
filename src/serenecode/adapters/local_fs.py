@@ -10,11 +10,34 @@ in domain exceptions.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import icontract
+
+from serenecode.contracts.predicates import is_non_empty_string
 from serenecode.core.exceptions import ConfigurationError, InitializationError
 
+_IGNORED_DIR_NAMES = frozenset({
+    ".git",
+    ".hg",
+    ".svn",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    ".hypothesis",
+    "__pycache__",
+    "build",
+    "dist",
+    "env",
+    "node_modules",
+    "venv",
+})
 
+
+@icontract.invariant(lambda self: True, "reader carries no mutable state")
 class LocalFileReader:
     """File reader implementation using pathlib.
 
@@ -22,6 +45,8 @@ class LocalFileReader:
     in directories.
     """
 
+    @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+    @icontract.ensure(lambda result: isinstance(result, str), "result must be a string")
     def read_file(self, path: str) -> str:
         """Read a file and return its contents as a UTF-8 string.
 
@@ -39,6 +64,8 @@ class LocalFileReader:
         except OSError as exc:
             raise ConfigurationError(f"Cannot read file '{path}': {exc}") from exc
 
+    @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+    @icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
     def file_exists(self, path: str) -> bool:
         """Check whether a file exists at the given path.
 
@@ -50,6 +77,8 @@ class LocalFileReader:
         """
         return Path(path).is_file()
 
+    @icontract.require(lambda directory: is_non_empty_string(directory), "directory must be a non-empty string")
+    @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
     def list_python_files(self, directory: str) -> list[str]:
         """List all Python (.py) files in a directory recursively.
 
@@ -73,21 +102,37 @@ class LocalFileReader:
             return []
 
         try:
-            files = sorted(str(p) for p in dir_path.rglob("*.py"))
+            files: list[str] = []
+            # Loop invariant: files contains Python files discovered from prior os.walk entries
+            for current_root, dir_names, file_names in os.walk(dir_path):
+                dir_names[:] = sorted(
+                    d for d in dir_names
+                    if d not in _IGNORED_DIR_NAMES
+                )
+
+                # Loop invariant: files contains matching Python files from file_names[0..i]
+                for file_name in sorted(file_names):
+                    if not file_name.endswith(".py"):
+                        continue
+                    files.append(str(Path(current_root) / file_name))
         except OSError as exc:
             raise ConfigurationError(
                 f"Cannot list files in '{directory}': {exc}"
             ) from exc
 
-        return files
+        return sorted(files)
 
 
+@icontract.invariant(lambda self: True, "writer carries no mutable state")
 class LocalFileWriter:
     """File writer implementation using pathlib.
 
     Writes files to the local file system and creates directories.
     """
 
+    @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+    @icontract.require(lambda content: isinstance(content, str), "content must be a string")
+    @icontract.ensure(lambda result: result is None, "result must be None")
     def write_file(self, path: str, content: str) -> None:
         """Write content to a file, creating parent directories if needed.
 
@@ -105,6 +150,8 @@ class LocalFileWriter:
         except OSError as exc:
             raise InitializationError(f"Cannot write file '{path}': {exc}") from exc
 
+    @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+    @icontract.ensure(lambda result: result is None, "result must be None")
     def ensure_directory(self, path: str) -> None:
         """Ensure a directory exists, creating it if necessary.
 

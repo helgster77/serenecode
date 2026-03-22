@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import textwrap
 
+import icontract
+import pytest
+
 from serenecode.checker.compositional import (
     ClassInfo,
     FunctionInfo,
@@ -21,8 +24,9 @@ from serenecode.checker.compositional import (
     check_system_invariants,
     parse_module_info,
 )
-from serenecode.config import default_config, minimal_config
+from serenecode.config import default_config, minimal_config, strict_config
 from serenecode.models import CheckStatus
+from tests.conftest import icontract_enabled
 
 
 class TestParseModuleInfo:
@@ -79,10 +83,31 @@ class TestParseModuleInfo:
         assert "public_func" in info.functions
         assert "_private_func" not in info.functions
 
+    def test_resolves_relative_from_imports(self) -> None:
+        source = textwrap.dedent("""\
+            from .helper import util
+            from ..shared import common
+        """)
+        info = parse_module_info(source, "pkg/sub/module.py", "pkg/sub/module.py")
+        assert ("pkg.sub.helper", "util") in info.from_imports
+        assert ("pkg.shared", "common") in info.from_imports
+
     def test_handles_syntax_error(self) -> None:
         info = parse_module_info("def broken(:", "test.py", "test.py")
         assert len(info.imports) == 0
         assert len(info.classes) == 0
+
+    def test_handles_null_byte_source(self) -> None:
+        info = parse_module_info("\x00", "test.py", "test.py")
+        assert len(info.imports) == 0
+        assert len(info.classes) == 0
+
+    def test_rejects_invalid_module_path(self) -> None:
+        if icontract_enabled():
+            with pytest.raises(icontract.ViolationError):
+                parse_module_info("pass\n", "test.py", "\x00")
+        else:
+            pytest.skip("icontract preconditions are disabled")
 
 
 class TestParseModuleInfoEnhanced:
@@ -610,6 +635,16 @@ class TestContractCompleteness:
         failed = [r for r in results if r.status == CheckStatus.FAILED]
         assert len(failed) == 0
 
+    def test_private_functions_checked_in_strict_mode(self) -> None:
+        source = textwrap.dedent("""\
+            def _private_helper(x: int) -> int:
+                return x
+        """)
+        info = parse_module_info(source, "core/engine.py", "core/engine.py")
+        results = check_contract_completeness([info], strict_config())
+        failed = [r for r in results if r.status == CheckStatus.FAILED]
+        assert len(failed) >= 1
+
 
 class TestCircularDependencies:
     """Tests for circular dependency detection."""
@@ -695,6 +730,27 @@ class TestCircularDependencies:
         ]
         results = check_circular_dependencies(modules, default_config())
         assert len(results) == 0
+
+    def test_relative_import_cycle_detected(self) -> None:
+        a_info = parse_module_info(
+            textwrap.dedent("""\
+                from .b import g
+            """),
+            "pkg/a.py",
+            "pkg/a.py",
+        )
+        b_info = parse_module_info(
+            textwrap.dedent("""\
+                from .a import f
+            """),
+            "pkg/b.py",
+            "pkg/b.py",
+        )
+
+        results = check_circular_dependencies([a_info, b_info], default_config())
+
+        assert len(results) >= 1
+        assert "circular" in results[0].details[0].message.lower()
 
 
 class TestAssumeGuarantee:

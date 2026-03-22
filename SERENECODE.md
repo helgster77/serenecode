@@ -2,7 +2,22 @@
 
 This file governs how all code in this project must be written. Any AI coding agent (Claude Code, GitHub Copilot, etc.) MUST read this file in its entirety before writing or modifying any code. Human contributors must also follow these conventions.
 
-Serenecode is a formal verification framework for AI-generated Python code. It is built using its own conventions — the standards defined here apply to this project's own codebase.
+Serenecode is a self-hosting formal verification framework for AI-generated Python code. The standards defined here are not generic aspirations: they exist to keep this repository aligned with its purpose as both a verification tool and a reference implementation of verification-first development.
+
+---
+
+## Project Purpose
+
+This repository has two jobs at the same time:
+
+1. It must be a useful verification product for other projects.
+2. It must be a credible example of the development style it promotes.
+
+That means contributors must optimize for more than “the tests pass”:
+
+- Preserve trust in the verification pipeline itself. Changes to checking, reporting, module loading, source discovery, or configuration must keep the tool's own verification results meaningful.
+- Preserve trust in the project's claims. README examples, SERENECODE.md guidance, CLI help text, and example-project assertions must stay aligned with current behavior and runnable evidence.
+- Prefer designs that stay analyzable. Simpler, verification-friendly code is usually better than clever abstractions that weaken property testing, symbolic checking, or compositional analysis.
 
 ---
 
@@ -133,8 +148,9 @@ class FileReader(Protocol):
 
 - Implement the Protocols defined in `ports/`.
 - Handle all I/O, subprocess calls, and external library integration.
-- Are NOT subject to formal verification (Levels 3-5) but MUST have integration tests.
+- Are exempt from the same contract-completeness expectations as pure core modules, but they are still part of the shipped product and must not break repo-wide verification.
 - MUST have type annotations and pass mypy.
+- MUST have strong integration and end-to-end coverage around success paths and failure paths.
 - Keep adapters thin — minimal logic, mostly delegation to core.
 
 ### Dependency Injection
@@ -251,6 +267,9 @@ class Detail:
 - Docstrings follow Google style.
 - The docstring describes *what* the function does, not *how* (the contracts describe the formal behavior).
 - Module-level docstrings describe the module's role in the architecture.
+- Public-facing documentation must describe current behavior, not desired future behavior.
+- Strong product claims in docs must be backed by runnable evidence in the repository.
+- When commands, verification results, example numbers, or limitations change, update the relevant docs in the same change.
 
 ```python
 """Structural checker for Serenecode conventions.
@@ -270,32 +289,29 @@ as strings, not read from files.
 
 ### Mandatory Verification for All Code
 
-Every piece of code in this project MUST be tested and verified before it is considered complete. Writing code without corresponding tests and verification is never acceptable. "I'll add tests later" is not permitted — tests and verification are written alongside or before the implementation.
+Every meaningful code change in this project MUST come with verification. Writing code first and promising to “tighten the checks later” is not acceptable for a self-hosting verification tool.
 
-### Test Coverage Requirements
+### Repository-Level Targets
 
-- Core modules (`core/`, `checker/`, `models.py`, `contracts/`): 100% line and branch coverage is the target. Any uncovered line must have a documented justification.
-- Adapter modules (`adapters/`, `cli.py`): 90%+ line coverage through integration tests.
-- Contract predicates (`contracts/`): every predicate must have both positive and negative test cases demonstrating it accepts valid inputs and rejects invalid inputs.
+- The checked-in project configuration should stay clean under `uv run serenecode check src --level 5`.
+- The repository should continue to pass `uv run mypy src`.
+- The repository should continue to pass `uv run pytest -q`.
+- If a change affects verification semantics, discovery, loading, reporting, or example claims, verify those paths explicitly rather than assuming the full suite is enough.
 
 ### Verification Tiers by Module Type
 
-**Core modules** must pass ALL of the following:
+**Pure core modules** (`core/`, `checker/`, `models.py`, `contracts/`, `config.py`, `reporter.py`, `source_discovery.py`) should remain friendly to Serenecode's full pipeline:
 1. Structural check — contracts present on all public functions and classes.
 2. `mypy --strict` — zero errors.
-3. Property-based tests via Hypothesis — auto-generated from icontract preconditions using `icontract-hypothesis`. Minimum 100 examples per function (configurable via Hypothesis settings).
-4. Symbolic verification via CrossHair — prove postconditions hold for all inputs satisfying preconditions within analysis bounds.
-5. Example-based unit tests for edge cases, boundary conditions, and known tricky inputs that complement the auto-generated tests.
+3. Property-based verification through Serenecode's Hypothesis adapter, plus explicit property tests where they add signal.
+4. Symbolic verification through CrossHair for symbolic-friendly contracted top-level functions within analysis bounds.
+5. Example-based unit tests for edge cases, boundary conditions, regressions, and behavior that is important but awkward for automated strategy generation.
 
-**Adapter modules** must pass:
+**Adapter and composition-root modules** (`adapters/`, `cli.py`, `__init__.py`, `init.py`) must pass:
 1. `mypy --strict` — zero errors.
-2. Integration tests using `pytest` that exercise real I/O (file system, subprocess calls, etc.).
-3. Error path testing — every adapter must be tested with invalid inputs, missing resources, permission errors, and other failure scenarios.
-
-**CLI module** must pass:
-1. `mypy --strict` — zero errors.
-2. End-to-end tests that invoke the CLI as a subprocess and verify exit codes, stdout, and stderr output.
-3. Tests for every command (`init`, `check`, `status`, `report`) with both passing and failing inputs.
+2. Integration or end-to-end tests that exercise real file system, subprocess, and CLI behavior.
+3. Error-path coverage for invalid inputs, missing resources, backend failures, and stale-state regressions.
+4. Repo-wide checks must remain green even if some adapter code is intentionally excluded from direct symbolic targeting.
 
 ### Test Structure
 
@@ -341,18 +357,18 @@ tests/
 
 ### Property-Based Testing Rules
 
-- Every core function with icontract contracts MUST have a corresponding Hypothesis test that uses `icontract-hypothesis` to auto-derive input strategies from preconditions.
-- Custom Hypothesis strategies SHOULD be defined for domain-specific types (e.g., `CheckResult`, `FunctionResult`) in `tests/conftest.py`.
-- Hypothesis settings: use `@settings(max_examples=200, deadline=None)` for core verification functions to ensure thorough exploration.
-- When Hypothesis finds a failing example, it MUST be added as an explicit regression test (using `@example` decorator) to prevent future regressions.
+- Property-based verification in this repo is primarily driven by Serenecode's own Hypothesis adapter, not `icontract-hypothesis`.
+- If a new domain type or function signature is hard for the adapter to generate, extend the strategy derivation in the adapter or add a focused explicit Hypothesis test.
+- Use explicit Hypothesis tests for reusable predicates, strategy builders, and bug-prone helpers where they give clearer regression coverage than only relying on the pipeline.
+- When Hypothesis finds a failing example, preserve it as a regression test or a dedicated strategy/example in the relevant test suite.
 
 ```python
-from hypothesis import given, settings, example
-from icontract_hypothesis import infer_strategy
+from hypothesis import example, given, settings
+from hypothesis import strategies as st
 
 from serenecode.core.some_module import compute_mean
 
-@given(items=infer_strategy(compute_mean)["items"])
+@given(items=st.lists(st.floats(allow_nan=False, allow_infinity=False), min_size=1))
 @settings(max_examples=200, deadline=None)
 @example(items=[0.0])          # edge case: single zero
 @example(items=[1e308, 1e308]) # edge case: near float overflow
@@ -366,13 +382,13 @@ def test_compute_mean_contract(items: list[float]) -> None:
 
 ### Symbolic Verification Rules
 
-- Every core function MUST be verified with CrossHair after implementation.
-- CrossHair timeout: 60 seconds per function. If verification does not complete within this time, the function must be simplified or its contracts tightened until verification succeeds.
+- Design top-level contracted functions so they remain as symbolic-friendly as practical: pure inputs, explicit contracts, and minimal hidden state.
+- Keep the default CrossHair budgets in mind: 30 seconds per condition, 10 seconds per path, 300 seconds per module.
 - When CrossHair finds a counterexample, the fix loop is:
   1. Examine the counterexample.
   2. Determine if the contract is wrong (fix the contract) or the implementation is wrong (fix the code).
   3. Re-run CrossHair until it passes or reports "verified."
-- Functions that cannot be symbolically verified (e.g., due to CrossHair limitations with certain Python features) must be documented with the reason and must have extra-thorough Hypothesis testing (minimum 500 examples).
+- If a function or module is a poor fit for direct symbolic verification, keep the exclusion narrow, document the reason in code or tests, and add compensating regression/property coverage.
 
 ### Test-Writing Workflow
 
@@ -381,11 +397,14 @@ When writing any new function or class, the AI agent MUST follow this sequence:
 1. Write the function signature with type annotations.
 2. Write the icontract preconditions and postconditions.
 3. Write the implementation.
-4. Write Hypothesis property-based tests using `icontract-hypothesis`.
-5. Write edge-case example tests for known boundary conditions.
-6. Run `mypy --strict` and fix any type errors.
-7. Run `pytest` and fix any test failures.
-8. Run CrossHair verification and fix any counterexamples.
+4. Add the most appropriate verification coverage:
+   - explicit unit/integration/e2e tests,
+   - focused Hypothesis tests,
+   - or adapter strategy support if the pipeline needs new input generation help.
+5. Write edge-case regression tests for known boundary conditions or discovered counterexamples.
+6. Run `uv run mypy src` and fix any type errors.
+7. Run `uv run pytest -q` and fix any test failures.
+8. Run Serenecode verification at the deepest level justified by the change, and fix any findings or skips you introduced.
 
 Steps 1-3 may be done together, but steps 4-8 MUST NOT be skipped or deferred.
 
@@ -393,7 +412,8 @@ Steps 1-3 may be done together, but steps 4-8 MUST NOT be skipped or deferred.
 
 - Every bug fix MUST include a test that reproduces the bug before the fix and passes after.
 - Every counterexample discovered by CrossHair or Hypothesis MUST be preserved as an explicit test case.
-- The test suite MUST be run in full before any commit (once CI is set up).
+- If a bug was caused by strategy generation, module loading, source discovery, or enum/module identity issues, add a regression test at that integration boundary rather than only at the surface symptom.
+- The relevant verification commands for the changed area MUST be run before considering the task complete.
 
 ### Test Quality Rules
 
@@ -425,8 +445,9 @@ Steps 1-3 may be done together, but steps 4-8 MUST NOT be skipped or deferred.
 
 - Commits must be atomic — one logical change per commit.
 - Commit messages follow conventional commits format: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`.
-- All code must pass `serenecode check --structural` before committing (once the tool is available).
-- All code must pass `mypy --strict` before committing.
+- All code must pass `uv run serenecode check src --structural` before committing.
+- All code must pass `uv run mypy src` before committing.
+- Changes that affect the verification engine, source discovery, configuration, docs claims, or shipped examples should keep `uv run serenecode check src --level 5` green.
 
 ---
 

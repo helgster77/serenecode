@@ -55,6 +55,18 @@ class TestLocalFileReader:
         files = reader.list_python_files(str(test_file))
         assert len(files) == 1
 
+    def test_list_python_files_ignores_virtualenv_directories(self, tmp_path: Path) -> None:
+        (tmp_path / "app.py").write_text("# app", encoding="utf-8")
+        venv_file = tmp_path / ".venv" / "lib" / "python3.11" / "site-packages" / "pkg.py"
+        venv_file.parent.mkdir(parents=True)
+        venv_file.write_text("# ignored", encoding="utf-8")
+
+        reader = LocalFileReader()
+        files = reader.list_python_files(str(tmp_path))
+
+        assert str(tmp_path / "app.py") in files
+        assert str(venv_file) not in files
+
     def test_list_python_files_nonexistent_raises(self) -> None:
         reader = LocalFileReader()
         with pytest.raises(ConfigurationError):

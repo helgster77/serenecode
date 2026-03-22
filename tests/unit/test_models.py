@@ -393,5 +393,6 @@ class TestMakeCheckResult:
             ),
         )
         check = make_check_result(results, level_requested=3, duration_seconds=0.1)
-        assert check.passed is True
+        assert check.passed is False
         assert check.summary.skipped_count == 1
+        assert check.level_achieved == 1

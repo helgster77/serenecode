@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import icontract
 
 from serenecode.config import SerenecodeConfig, is_core_module, is_exempt_module
-from serenecode.contracts.predicates import is_pascal_case, is_snake_case
+from serenecode.contracts.predicates import is_non_empty_string, is_pascal_case, is_snake_case
 from serenecode.models import (
     CheckResult,
     CheckStatus,
@@ -177,6 +177,18 @@ def has_decorator(
     return False
 
 
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)),
+    "node must be a function or class definition",
+)
+@icontract.require(
+    lambda names: isinstance(names, frozenset),
+    "names must be a frozenset",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _decorator_has_description(
     node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
     names: frozenset[str],
@@ -209,6 +221,14 @@ def _decorator_has_description(
     return True
 
 
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _has_meaningful_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Check if a function has parameters beyond self/cls.
 
@@ -227,6 +247,14 @@ def _has_meaningful_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool
     return bool(params or args.vararg or args.kwarg or args.kwonlyargs)
 
 
+@icontract.require(
+    lambda name: is_non_empty_string(name),
+    "name must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _is_public_function(name: str) -> bool:
     """Check if a function name indicates a public function.
 
@@ -243,6 +271,36 @@ def _is_public_function(name: str) -> bool:
     return True
 
 
+@icontract.require(
+    lambda name: is_non_empty_string(name),
+    "name must be a non-empty string",
+)
+@icontract.require(
+    lambda config: isinstance(config, SerenecodeConfig),
+    "config must be a SerenecodeConfig",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _should_check_function_contracts(
+    name: str,
+    config: SerenecodeConfig,
+) -> bool:
+    """Check whether contract requirements apply to a function name."""
+    if config.contract_requirements.require_on_private:
+        return not (name.startswith("__") and name.endswith("__") and name != "__init__")
+    return _is_public_function(name)
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _has_property_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Check if a function is decorated with @property.
 
@@ -262,6 +320,14 @@ def _has_property_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> boo
     return False
 
 
+@icontract.require(
+    lambda node: isinstance(node, ast.ClassDef),
+    "node must be a class definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _is_enum_class(node: ast.ClassDef) -> bool:
     """Check if a class inherits from Enum or IntEnum.
 
@@ -283,6 +349,39 @@ def _is_enum_class(node: ast.ClassDef) -> bool:
     return False
 
 
+@icontract.require(
+    lambda node: isinstance(node, ast.ClassDef),
+    "node must be a class definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_exception_class(node: ast.ClassDef) -> bool:
+    """Check if a class participates in an exception hierarchy."""
+    # Loop invariant: checked bases[0..i] for exception-like base classes
+    for base in node.bases:
+        base_name = ""
+        if isinstance(base, ast.Name):
+            base_name = base.id
+        elif isinstance(base, ast.Attribute):
+            base_name = base.attr
+
+        if base_name in {"Exception", "BaseException"}:
+            return True
+        if base_name.endswith(("Error", "Exception")):
+            return True
+    return False
+
+
+@icontract.require(
+    lambda name: is_non_empty_string(name),
+    "name must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _is_public_class(name: str) -> bool:
     """Check if a class name indicates a public class.
 
@@ -293,6 +392,80 @@ def _is_public_class(name: str) -> bool:
         True if the class name doesn't start with underscore.
     """
     return not name.startswith("_")
+
+
+@icontract.require(
+    lambda name: is_non_empty_string(name),
+    "name must be a non-empty string",
+)
+@icontract.require(
+    lambda config: isinstance(config, SerenecodeConfig),
+    "config must be a SerenecodeConfig",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _should_check_class_invariant(
+    name: str,
+    config: SerenecodeConfig,
+) -> bool:
+    """Check whether invariant requirements apply to a class name."""
+    if config.contract_requirements.require_on_private:
+        return True
+    return _is_public_class(name)
+
+
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def _iter_checked_functions(
+    tree: ast.Module,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Return module-level functions and class methods to check.
+
+    Local closures defined inside function bodies are implementation details,
+    so structural contract/docstring rules apply to top-level functions and
+    methods rather than nested helper closures.
+    """
+    functions: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+
+    # Loop invariant: functions contains checkable defs from top-level nodes[0..i]
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.append(node)
+        elif isinstance(node, ast.ClassDef):
+            # Loop invariant: functions contains methods from class body[0..j]
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    functions.append(child)
+
+    return functions
+
+
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def _iter_checked_classes(tree: ast.Module) -> list[ast.ClassDef]:
+    """Return the top-level classes that participate in structural checks."""
+    classes: list[ast.ClassDef] = []
+
+    # Loop invariant: classes contains top-level class defs from nodes[0..i]
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.ClassDef):
+            classes.append(node)
+
+    return classes
 
 
 # ---------------------------------------------------------------------------
@@ -327,12 +500,10 @@ def check_contracts(
     """
     results: list[FunctionResult] = []
 
-    # Loop invariant: results contains check outcomes for all functions seen in nodes[0..i]
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-
-        if not _is_public_function(node.name):
+    checkable_functions = _iter_checked_functions(tree)
+    # Loop invariant: results contains check outcomes for checkable_functions[0..i]
+    for node in checkable_functions:
+        if not _should_check_function_contracts(node.name, config):
             continue
 
         # Skip @property-decorated methods (incompatible with icontract decorators)
@@ -420,16 +591,15 @@ def check_class_invariants(
 
     results: list[FunctionResult] = []
 
-    # Loop invariant: results contains check outcomes for all classes in nodes[0..i]
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
+    checkable_classes = _iter_checked_classes(tree)
+    # Loop invariant: results contains check outcomes for checkable_classes[0..i]
+    for node in checkable_classes:
+        if not _should_check_class_invariant(node.name, config):
             continue
 
-        if not _is_public_class(node.name):
-            continue
-
-        # Skip Enum subclasses — they use metaclasses incompatible with icontract
-        if _is_enum_class(node):
+        # Skip Enum and exception hierarchies because icontract invariants do
+        # not compose safely with their runtime mechanics.
+        if _is_enum_class(node) or _is_exception_class(node):
             continue
 
         details: list[Detail] = []
@@ -485,11 +655,9 @@ def check_type_annotations(
 
     results: list[FunctionResult] = []
 
-    # Loop invariant: results contains annotation findings for functions in nodes[0..i]
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-
+    checkable_functions = _iter_checked_functions(tree)
+    # Loop invariant: results contains annotation findings for checkable_functions[0..i]
+    for node in checkable_functions:
         if not _is_public_function(node.name):
             continue
 
@@ -727,9 +895,10 @@ def check_docstrings(
             ),),
         ))
 
-    # Loop invariant: results contains docstring findings for nodes[0..i]
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and _is_public_class(node.name):
+    checkable_classes = _iter_checked_classes(tree)
+    # Loop invariant: results contains class docstring findings for checkable_classes[0..i]
+    for node in checkable_classes:
+        if _is_public_class(node.name):
             if not ast.get_docstring(node):
                 results.append(FunctionResult(
                     function=node.name,
@@ -746,27 +915,33 @@ def check_docstrings(
                         suggestion="Add a docstring describing the class",
                     ),),
                 ))
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if _is_public_function(node.name) and not ast.get_docstring(node):
-                results.append(FunctionResult(
-                    function=node.name,
-                    file=file_path,
-                    line=node.lineno,
-                    level_requested=1,
-                    level_achieved=0,
-                    status=CheckStatus.FAILED,
-                    details=(Detail(
-                        level=VerificationLevel.STRUCTURAL,
-                        tool="structural",
-                        finding_type="violation",
-                        message=f"Function '{node.name}' missing docstring",
-                        suggestion="Add a docstring describing what the function does",
-                    ),),
-                ))
+    checkable_functions = _iter_checked_functions(tree)
+    # Loop invariant: results contains function docstring findings for checkable_functions[0..i]
+    for func_node in checkable_functions:
+        if _is_public_function(func_node.name) and not ast.get_docstring(func_node):
+            results.append(FunctionResult(
+                function=func_node.name,
+                file=file_path,
+                line=func_node.lineno,
+                level_requested=1,
+                level_achieved=0,
+                status=CheckStatus.FAILED,
+                details=(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="violation",
+                    message=f"Function '{func_node.name}' missing docstring",
+                    suggestion="Add a docstring describing what the function does",
+                ),),
+            ))
 
     return results
 
 
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
 @icontract.require(
     lambda tree: isinstance(tree, ast.Module),
     "tree must be an ast.Module",
@@ -803,7 +978,7 @@ def check_loop_invariants(
         for tok_type, tok_string, tok_start, _, _ in tokens:
             if tok_type == tokenize.COMMENT:
                 comments[tok_start[0]] = tok_string.lower()
-    except tokenize.TokenError:
+    except (tokenize.TokenError, UnicodeDecodeError, UnicodeEncodeError):
         return []
 
     results: list[FunctionResult] = []
@@ -896,6 +1071,14 @@ def check_loop_invariants(
     return results
 
 
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _is_recursive_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Check if a function calls itself (direct recursion).
 

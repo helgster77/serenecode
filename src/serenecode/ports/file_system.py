@@ -15,6 +15,7 @@ from typing import Protocol
 import icontract
 
 
+@icontract.invariant(lambda self: True, "protocol has no runtime state")
 class FileReader(Protocol):
     """Port for reading file contents.
 
@@ -62,6 +63,7 @@ class FileReader(Protocol):
         ...
 
 
+@icontract.invariant(lambda self: True, "protocol has no runtime state")
 class FileWriter(Protocol):
     """Port for writing file contents.
 

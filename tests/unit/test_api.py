@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+import serenecode
 from serenecode import (
     check,
     check_compositional,
@@ -14,7 +17,7 @@ from serenecode import (
     init,
     status,
 )
-from serenecode.models import CheckResult
+from serenecode.models import CheckResult, make_check_result
 
 
 class TestLibraryApiStructural:
@@ -58,28 +61,36 @@ def broken(x: int, y: int) -> int:
         assert isinstance(result, CheckResult)
 
 
-class TestLibraryApiStubs:
-    """Tests for stub API functions (Levels 2-5)."""
+class TestLibraryApiLevelWrappers:
+    """Tests for API helper wrappers around _run_check()."""
 
-    def test_check_types_returns_check_result(self) -> None:
-        result = check_types(".")
-        assert isinstance(result, CheckResult)
-        assert result.passed is True
+    @pytest.mark.parametrize(
+        ("func", "expected_level"),
+        [
+            (check_types, 2),
+            (check_properties, 3),
+            (check_symbolic, 4),
+            (check_compositional, 5),
+        ],
+    )
+    def test_level_wrapper_calls_run_check(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        func: object,
+        expected_level: int,
+    ) -> None:
+        captured: dict[str, object] = {}
 
-    def test_check_properties_returns_check_result(self) -> None:
-        result = check_properties(".")
-        assert isinstance(result, CheckResult)
-        assert result.passed is True
+        def fake_run_check(path: str, level: int) -> CheckResult:
+            captured["path"] = path
+            captured["level"] = level
+            return make_check_result((), level_requested=level, duration_seconds=0.0)
 
-    def test_check_symbolic_returns_check_result(self) -> None:
-        result = check_symbolic(".")
-        assert isinstance(result, CheckResult)
-        assert result.passed is True
+        monkeypatch.setattr(serenecode, "_run_check", fake_run_check)
 
-    def test_check_compositional_returns_check_result(self) -> None:
-        result = check_compositional(".")
+        result = func("demo.py")
         assert isinstance(result, CheckResult)
-        assert result.passed is True
+        assert captured == {"path": "demo.py", "level": expected_level}
 
 
 class TestLibraryApiCheck:

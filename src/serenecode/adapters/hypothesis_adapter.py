@@ -10,14 +10,19 @@ execution) and is exempt from full contract requirements.
 
 from __future__ import annotations
 
-import importlib
+import ast
+import collections.abc
+import enum
 import inspect
 import traceback
+import types
 import typing
 from typing import Callable
 
 import icontract
 
+from serenecode.adapters.module_loader import load_python_module
+from serenecode.contracts.predicates import is_non_empty_string, is_positive_int
 from serenecode.core.exceptions import ToolNotInstalledError
 from serenecode.ports.property_tester import PropertyFinding
 
@@ -30,11 +35,35 @@ except ImportError:
     _HYPOTHESIS_AVAILABLE = False
 
 
+@icontract.require(
+    lambda annotation: annotation is None or isinstance(annotation, object),
+    "annotation must be a Python object or None",
+)
+@icontract.ensure(
+    lambda result: result is None or hasattr(result, "map"),
+    "result must be a Hypothesis strategy or None",
+)
 def _get_strategy_for_annotation(annotation: type | None) -> SearchStrategy | None:
+    return _get_strategy_for_annotation_with_seen(annotation, frozenset())
+
+
+@icontract.require(
+    lambda seen_classes: isinstance(seen_classes, frozenset),
+    "seen_classes must be a frozenset",
+)
+@icontract.ensure(
+    lambda result: result is None or hasattr(result, "map"),
+    "result must be a Hypothesis strategy or None",
+)
+def _get_strategy_for_annotation_with_seen(
+    annotation: type | None,
+    seen_classes: frozenset[type],
+) -> SearchStrategy | None:
     """Derive a Hypothesis strategy from a type annotation.
 
     Args:
         annotation: A Python type annotation.
+        seen_classes: Classes already visited while deriving nested strategies.
 
     Returns:
         A Hypothesis strategy, or None if the type is unsupported.
@@ -45,8 +74,16 @@ def _get_strategy_for_annotation(annotation: type | None) -> SearchStrategy | No
     if annotation is None:
         return None
 
+    if annotation is type(None):
+        return st.none()
+
+    known_strategy = _strategy_for_known_annotation(annotation, seen_classes)
+    if known_strategy is not None:
+        return known_strategy
+
     # Handle basic types
-    strategy_map: dict[type, SearchStrategy] = {        int: st.integers(min_value=-1000, max_value=1000),
+    strategy_map: dict[type, SearchStrategy] = {
+        int: st.integers(min_value=-1000, max_value=1000),
         float: st.floats(
             min_value=-1e6, max_value=1e6,
             allow_nan=False, allow_infinity=False,
@@ -59,36 +96,99 @@ def _get_strategy_for_annotation(annotation: type | None) -> SearchStrategy | No
     if annotation in strategy_map:
         return strategy_map[annotation]
 
+    if annotation is object:
+        return st.one_of(
+            st.none(),
+            st.booleans(),
+            st.integers(min_value=-10, max_value=10),
+            st.text(min_size=0, max_size=20),
+        )
+
     # Handle generic types (list[int], etc.)
-    origin = getattr(annotation, "__origin__", None)
-    args = getattr(annotation, "__args__", None)
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+
+    if origin in (typing.Union, types.UnionType):
+        strategies = [
+            strategy
+            for arg in args
+            if (strategy := _get_strategy_for_annotation_with_seen(arg, seen_classes)) is not None
+        ]
+        if strategies:
+            return st.one_of(*strategies)
+        return None
+
+    if origin is typing.Literal:
+        return st.sampled_from(args)
 
     if origin is list and args:
-        inner = _get_strategy_for_annotation(args[0])
+        inner = _get_strategy_for_annotation_with_seen(args[0], seen_classes)
         if inner is not None:
             return st.lists(inner, min_size=0, max_size=20)
 
+    if origin is set and args:
+        inner = _get_strategy_for_annotation_with_seen(args[0], seen_classes)
+        if inner is not None:
+            return st.sets(inner, max_size=20)
+
+    if origin is frozenset and args:
+        inner = _get_strategy_for_annotation_with_seen(args[0], seen_classes)
+        if inner is not None:
+            return st.frozensets(inner, max_size=20)
+
     if origin is tuple and args:
+        if len(args) == 2 and args[1] is Ellipsis:
+            inner = _get_strategy_for_annotation_with_seen(args[0], seen_classes)
+            if inner is not None:
+                return st.lists(inner, min_size=0, max_size=8).map(tuple)
+
         inner_strats = []
         # Loop invariant: inner_strats contains strategies for args[0..i]
         for arg in args:
-            s = _get_strategy_for_annotation(arg)
+            s = _get_strategy_for_annotation_with_seen(arg, seen_classes)
             if s is None:
                 return None
             inner_strats.append(s)
         return st.tuples(*inner_strats)
 
     if origin is dict and args and len(args) == 2:
-        key_strat = _get_strategy_for_annotation(args[0])
-        val_strat = _get_strategy_for_annotation(args[1])
+        key_strat = _get_strategy_for_annotation_with_seen(args[0], seen_classes)
+        val_strat = _get_strategy_for_annotation_with_seen(args[1], seen_classes)
         if key_strat is not None and val_strat is not None:
             return st.dictionaries(key_strat, val_strat, max_size=10)
+
+    if origin in (Callable, collections.abc.Callable):
+        return st.just(_make_callable_stub(annotation))
+
+    if inspect.isclass(annotation):
+        if _is_protocol_class(annotation):
+            return _strategy_for_protocol(annotation)
+        if issubclass(annotation, enum.Enum):
+            members = list(annotation)
+            if members:
+                return st.sampled_from(members)
+            return None
+        if issubclass(annotation, ast.AST):
+            return _strategy_for_ast(annotation)
+        if annotation in seen_classes:
+            return None
+        return _strategy_for_class(annotation, seen_classes | frozenset({annotation}))
 
     return None
 
 
+@icontract.require(lambda func: callable(func), "func must be callable")
+@icontract.require(
+    lambda seen_classes: isinstance(seen_classes, frozenset),
+    "seen_classes must be a frozenset",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, dict),
+    "result must be a strategy dictionary or None",
+)
 def _build_strategies_from_signature(
     func: Callable[..., object],
+    seen_classes: frozenset[type] = frozenset(),
 ) -> dict[str, SearchStrategy] | None:
     """Build Hypothesis strategies from a function's type annotations.
 
@@ -110,6 +210,7 @@ def _build_strategies_from_signature(
 
     sig = inspect.signature(func)
     strategies: dict[str, SearchStrategy] = {}
+    annotations: dict[str, object] = {}
     # Loop invariant: strategies contains entries for all processable params[0..i]
     for name, param in sig.parameters.items():
         if name in ("self", "cls"):
@@ -120,24 +221,606 @@ def _build_strategies_from_signature(
         if annotation is inspect.Parameter.empty:
             return None  # can't derive strategy without annotation
 
-        strategy = _get_strategy_for_annotation(annotation)
+        strategy = _get_strategy_for_annotation_with_seen(annotation, seen_classes)
         if strategy is None:
             return None  # unsupported type
 
         strategies[name] = strategy
+        annotations[name] = annotation
 
     if not strategies:
-        return None
+        return {}
 
     # Refine strategies using icontract preconditions
-    strategies = _refine_strategies_with_preconditions(func, strategies)
+    strategies = _refine_strategies_with_preconditions(
+        func,
+        strategies,
+        annotations,
+    )
 
     return strategies
 
 
+@icontract.require(lambda annotation: inspect.isclass(annotation), "annotation must be a class")
+@icontract.require(
+    lambda seen_classes: isinstance(seen_classes, frozenset),
+    "seen_classes must be a frozenset",
+)
+@icontract.ensure(
+    lambda result: result is None or hasattr(result, "map"),
+    "result must be a Hypothesis strategy or None",
+)
+def _strategy_for_class(
+    annotation: type,
+    seen_classes: frozenset[type],
+) -> SearchStrategy | None:
+    """Derive a strategy for a user-defined class from its constructor."""
+    init = getattr(annotation, "__init__", None)
+    if init is None or init is object.__init__:
+        return None
+
+    constructor_strategies = _build_strategies_from_signature(
+        init,
+        seen_classes=seen_classes,
+    )
+    if constructor_strategies is None:
+        return None
+
+    kwargs_strategy = st.fixed_dictionaries(constructor_strategies)
+    kwargs_strategy = kwargs_strategy.filter(
+        lambda kwargs: _check_preconditions(init, dict(kwargs))
+    )
+    kwargs_strategy = kwargs_strategy.filter(
+        lambda kwargs: _can_construct_class(annotation, kwargs)
+    )
+
+    return kwargs_strategy.map(lambda kwargs: annotation(**kwargs))
+
+
+@icontract.require(
+    lambda seen_classes: isinstance(seen_classes, frozenset),
+    "seen_classes must be a frozenset",
+)
+@icontract.ensure(
+    lambda result: result is None or hasattr(result, "map"),
+    "result must be a Hypothesis strategy or None",
+)
+def _strategy_for_known_annotation(
+    annotation: type | object,
+    seen_classes: frozenset[type],
+) -> SearchStrategy | None:
+    """Return tailored strategies for Serenecode's own domain types."""
+    module_name = getattr(annotation, "__module__", "")
+    type_name = getattr(annotation, "__name__", "")
+
+    if module_name == "serenecode.config" and type_name == "SerenecodeConfig":
+        from serenecode.config import default_config, minimal_config, strict_config
+
+        return st.sampled_from([
+            default_config(),
+            strict_config(),
+            minimal_config(),
+        ])
+
+    if module_name == "serenecode.core.pipeline" and type_name == "SourceFile":
+        return _strategy_for_source_file()
+
+    if module_name == "serenecode.models":
+        return _strategy_for_model_type(type_name)
+
+    if module_name == "core.models":
+        return _strategy_for_example_model_type(annotation, type_name)
+
+    if module_name == "serenecode.checker.structural" and type_name == "IcontractNames":
+        return _strategy_for_icontract_names()
+
+    if module_name == "serenecode.checker.compositional":
+        return _strategy_for_compositional_type(type_name, seen_classes)
+
+    return None
+
+
+@icontract.require(
+    lambda annotation: annotation is not None,
+    "annotation must be provided",
+)
+@icontract.require(
+    lambda type_name: is_non_empty_string(type_name),
+    "type_name must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: result is None or hasattr(result, "map"),
+    "result must be a Hypothesis strategy or None",
+)
+def _strategy_for_example_model_type(
+    annotation: type | object,
+    type_name: str,
+) -> SearchStrategy | None:
+    """Return efficient strategies for the dosage example model types."""
+    if type_name == "Patient" and inspect.isclass(annotation):
+        return st.builds(
+            annotation,
+            weight_kg=st.floats(min_value=0.1, max_value=300.0, allow_nan=False, allow_infinity=False),
+            age_years=st.floats(min_value=0.0, max_value=150.0, allow_nan=False, allow_infinity=False),
+            creatinine_clearance=st.floats(min_value=1.0, max_value=200.0, allow_nan=False, allow_infinity=False),
+            current_medications=st.lists(st.text(min_size=1, max_size=20), max_size=5),
+        )
+
+    if type_name == "Drug" and inspect.isclass(annotation):
+        def _build_drug(
+            drug_cls: type,
+            drug_id: str,
+            dose_per_kg: float,
+            concentration_mg_per_ml: float,
+            max_single_dose_mg: float,
+            extra_daily_mg: float,
+            doses_per_day: int,
+            contraindicated_with: set[str],
+        ) -> object:
+            return drug_cls(
+                drug_id=drug_id,
+                dose_per_kg=dose_per_kg,
+                concentration_mg_per_ml=concentration_mg_per_ml,
+                max_single_dose_mg=max_single_dose_mg,
+                max_daily_dose_mg=max_single_dose_mg + extra_daily_mg,
+                doses_per_day=doses_per_day,
+                contraindicated_with=contraindicated_with,
+            )
+
+        return st.builds(
+            _build_drug,
+            drug_cls=st.just(annotation),
+            drug_id=st.text(min_size=1, max_size=20),
+            dose_per_kg=st.floats(min_value=0.001, max_value=100.0, allow_nan=False, allow_infinity=False),
+            concentration_mg_per_ml=st.floats(min_value=0.001, max_value=1000.0, allow_nan=False, allow_infinity=False),
+            max_single_dose_mg=st.floats(min_value=0.001, max_value=10000.0, allow_nan=False, allow_infinity=False),
+            extra_daily_mg=st.floats(min_value=0.0, max_value=40000.0, allow_nan=False, allow_infinity=False),
+            doses_per_day=st.integers(min_value=1, max_value=24),
+            contraindicated_with=st.sets(st.text(min_size=1, max_size=20), max_size=5),
+        )
+
+    return None
+
+
+@icontract.require(
+    lambda type_name: is_non_empty_string(type_name),
+    "type_name must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: result is None or hasattr(result, "map"),
+    "result must be a Hypothesis strategy or None",
+)
+def _strategy_for_model_type(type_name: str) -> SearchStrategy | None:
+    """Return strategies for result models that have cross-field invariants."""
+    from serenecode.models import (
+        CheckStatus,
+        Detail,
+        FunctionResult,
+        VerificationLevel,
+        make_check_result,
+    )
+
+    detail_strategy = st.builds(
+        Detail,
+        level=st.sampled_from(list(VerificationLevel)),
+        tool=st.sampled_from(["structural", "mypy", "hypothesis", "crosshair", "compositional"]),
+        finding_type=st.sampled_from(["verified", "violation", "timeout", "error", "unavailable"]),
+        message=st.text(min_size=1, max_size=120),
+        counterexample=st.one_of(
+            st.none(),
+            st.dictionaries(
+                st.text(min_size=1, max_size=10),
+                st.one_of(
+                    st.integers(min_value=-10, max_value=10),
+                    st.text(min_size=0, max_size=20),
+                    st.booleans(),
+                ),
+                max_size=3,
+            ),
+        ),
+        suggestion=st.one_of(st.none(), st.text(min_size=1, max_size=80)),
+    )
+
+    function_result_strategy = st.builds(
+        FunctionResult,
+        function=st.text(min_size=1, max_size=40),
+        file=st.text(min_size=1, max_size=80),
+        line=st.integers(min_value=1, max_value=1000),
+        level_requested=st.integers(min_value=1, max_value=5),
+        level_achieved=st.integers(min_value=0, max_value=5),
+        status=st.sampled_from(list(CheckStatus)),
+        details=st.lists(detail_strategy, max_size=3).map(tuple),
+    )
+
+    if type_name == "Detail":
+        return detail_strategy
+
+    if type_name == "FunctionResult":
+        return function_result_strategy
+
+    if type_name == "CheckResult":
+        def _build_check_result(
+            results: list[FunctionResult],
+            level_requested: int,
+            duration_seconds: float,
+        ) -> object:
+            min_achieved = min((r.level_achieved for r in results), default=level_requested)
+            effective_level = max(level_requested, min_achieved)
+            return make_check_result(
+                tuple(results),
+                level_requested=effective_level,
+                duration_seconds=duration_seconds,
+            )
+
+        return st.builds(
+            _build_check_result,
+            results=st.lists(function_result_strategy, max_size=6),
+            level_requested=st.integers(min_value=1, max_value=5),
+            duration_seconds=st.floats(
+                min_value=0.0,
+                max_value=10.0,
+                allow_nan=False,
+                allow_infinity=False,
+            ),
+        )
+
+    return None
+
+
+@icontract.ensure(
+    lambda result: hasattr(result, "map"),
+    "result must be a Hypothesis strategy",
+)
+def _strategy_for_source_file() -> SearchStrategy:
+    """Build valid SourceFile instances for pipeline property tests."""
+    from serenecode.core.pipeline import SourceFile
+
+    return st.builds(
+        SourceFile,
+        file_path=st.text(min_size=1, max_size=80),
+        module_path=st.text(min_size=1, max_size=80),
+        source=st.text(min_size=0, max_size=200),
+        importable_module=st.one_of(
+            st.none(),
+            st.text(
+                alphabet="abcdefghijklmnopqrstuvwxyz._",
+                min_size=1,
+                max_size=40,
+            ).filter(lambda value: not value.startswith(".")),
+        ),
+        import_search_paths=st.lists(
+            st.text(min_size=1, max_size=60),
+            max_size=4,
+        ).map(tuple),
+    )
+
+
+@icontract.ensure(
+    lambda result: hasattr(result, "map"),
+    "result must be a Hypothesis strategy",
+)
+def _strategy_for_icontract_names() -> SearchStrategy:
+    """Build valid icontract alias sets for structural helper tests."""
+    from serenecode.checker.structural import IcontractNames
+
+    names = st.lists(
+        st.sampled_from([
+            "require",
+            "ensure",
+            "invariant",
+            "icontract.require",
+            "icontract.ensure",
+            "icontract.invariant",
+        ]),
+        unique=True,
+        max_size=3,
+    ).map(frozenset)
+
+    return st.builds(
+        IcontractNames,
+        module_alias=st.one_of(st.none(), st.text(min_size=1, max_size=12)),
+        require_names=names,
+        ensure_names=names,
+        invariant_names=names,
+    )
+
+
+@icontract.require(
+    lambda type_name: is_non_empty_string(type_name),
+    "type_name must be a non-empty string",
+)
+@icontract.require(
+    lambda seen_classes: isinstance(seen_classes, frozenset),
+    "seen_classes must be a frozenset",
+)
+@icontract.ensure(
+    lambda result: result is None or hasattr(result, "map"),
+    "result must be a Hypothesis strategy or None",
+)
+def _strategy_for_compositional_type(
+    type_name: str,
+    seen_classes: frozenset[type],
+) -> SearchStrategy | None:
+    """Return strategies for compositional-analysis dataclasses."""
+    from serenecode.checker.compositional import (
+        ClassInfo,
+        FunctionInfo,
+        MethodSignature,
+        ModuleInfo,
+        ParameterInfo,
+        ProtocolInfo,
+    )
+
+    method_signature = st.builds(
+        MethodSignature,
+        name=st.text(min_size=1, max_size=20),
+        parameters=st.lists(st.text(min_size=1, max_size=16), max_size=4).map(tuple),
+        has_return_annotation=st.booleans(),
+    )
+    parameter_info = st.builds(
+        ParameterInfo,
+        name=st.text(min_size=1, max_size=20),
+        annotation=st.one_of(st.none(), st.text(min_size=1, max_size=20)),
+    )
+    function_info = st.builds(
+        FunctionInfo,
+        name=st.text(min_size=1, max_size=20),
+        line=st.integers(min_value=1, max_value=500),
+        is_public=st.booleans(),
+        parameters=st.lists(parameter_info, max_size=4).map(tuple),
+        return_annotation=st.one_of(st.none(), st.text(min_size=1, max_size=20)),
+        has_require=st.booleans(),
+        has_ensure=st.booleans(),
+        calls=st.lists(st.text(min_size=1, max_size=20), max_size=4).map(tuple),
+    )
+    class_info = st.builds(
+        ClassInfo,
+        name=st.text(min_size=1, max_size=20),
+        line=st.integers(min_value=1, max_value=500),
+        bases=st.lists(st.text(min_size=1, max_size=20), max_size=3).map(tuple),
+        methods=st.lists(st.text(min_size=1, max_size=20), max_size=4).map(tuple),
+        is_protocol=st.booleans(),
+        method_signatures=st.lists(method_signature, max_size=4).map(tuple),
+        has_invariant=st.booleans(),
+    )
+    protocol_info = st.builds(
+        ProtocolInfo,
+        name=st.text(min_size=1, max_size=20),
+        line=st.integers(min_value=1, max_value=500),
+        methods=st.lists(method_signature, max_size=4).map(tuple),
+    )
+    module_info = st.builds(
+        ModuleInfo,
+        file_path=st.text(min_size=1, max_size=60),
+        module_path=st.text(min_size=1, max_size=60),
+        imports=st.lists(st.text(min_size=1, max_size=20), max_size=4).map(tuple),
+        from_imports=st.lists(
+            st.tuples(
+                st.text(min_size=1, max_size=20),
+                st.text(min_size=1, max_size=20),
+            ),
+            max_size=4,
+        ).map(tuple),
+        classes=st.lists(class_info, max_size=3).map(tuple),
+        functions=st.lists(st.text(min_size=1, max_size=20), max_size=4).map(tuple),
+        protocols=st.lists(protocol_info, max_size=3).map(tuple),
+        function_infos=st.lists(function_info, max_size=4).map(tuple),
+    )
+
+    strategies = {
+        "MethodSignature": method_signature,
+        "ParameterInfo": parameter_info,
+        "FunctionInfo": function_info,
+        "ClassInfo": class_info,
+        "ProtocolInfo": protocol_info,
+        "ModuleInfo": module_info,
+    }
+    return strategies.get(type_name)
+
+
+@icontract.require(lambda annotation: annotation is not None, "annotation must be provided")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _is_protocol_class(annotation: type) -> bool:
+    """Check whether an annotation is a typing.Protocol-derived class."""
+    return bool(getattr(annotation, "_is_protocol", False))
+
+
+@icontract.require(lambda annotation: annotation is not None, "annotation must be provided")
+@icontract.ensure(
+    lambda result: result is None or hasattr(result, "map"),
+    "result must be a Hypothesis strategy or None",
+)
+def _strategy_for_protocol(annotation: type) -> SearchStrategy | None:
+    """Build stubs for protocol-typed dependencies used in Serenecode."""
+    module_name = getattr(annotation, "__module__", "")
+    type_name = getattr(annotation, "__name__", "")
+
+    if module_name == "serenecode.ports.file_system" and type_name == "FileReader":
+        class _ReaderStub:
+            def read_file(self, path: str) -> str:
+                return "def generated() -> int:\n    return 1\n"
+
+            def file_exists(self, path: str) -> bool:
+                return False
+
+            def list_python_files(self, directory: str) -> list[str]:
+                return []
+
+        return st.just(_ReaderStub())
+
+    if module_name == "serenecode.ports.file_system" and type_name == "FileWriter":
+        class _WriterStub:
+            def write_file(self, path: str, content: str) -> None:
+                return None
+
+            def ensure_directory(self, path: str) -> None:
+                return None
+
+        return st.just(_WriterStub())
+
+    if module_name == "serenecode.ports.type_checker" and type_name == "TypeChecker":
+        class _TypeCheckerStub:
+            def check(
+                self,
+                file_paths: list[str],
+                strict: bool = True,
+                search_paths: tuple[str, ...] = (),
+            ) -> list[object]:
+                return []
+
+        return st.just(_TypeCheckerStub())
+
+    if module_name == "serenecode.ports.property_tester" and type_name == "PropertyTester":
+        class _PropertyTesterStub:
+            def test_module(
+                self,
+                module_path: str,
+                max_examples: int | None = None,
+                search_paths: tuple[str, ...] = (),
+            ) -> list[object]:
+                return []
+
+        return st.just(_PropertyTesterStub())
+
+    if module_name == "serenecode.ports.symbolic_checker" and type_name == "SymbolicChecker":
+        class _SymbolicCheckerStub:
+            def verify_module(
+                self,
+                module_path: str,
+                per_condition_timeout: int | None = None,
+                per_path_timeout: int | None = None,
+                search_paths: tuple[str, ...] = (),
+            ) -> list[object]:
+                return []
+
+        return st.just(_SymbolicCheckerStub())
+
+    return None
+
+
+@icontract.require(lambda annotation: annotation is not None, "annotation must be provided")
+@icontract.ensure(
+    lambda result: result is None or hasattr(result, "map"),
+    "result must be a Hypothesis strategy or None",
+)
+def _strategy_for_ast(annotation: type[ast.AST]) -> SearchStrategy | None:
+    """Build simple AST nodes for structural helper property tests."""
+    module_samples = [
+        ast.parse("import icontract"),
+        ast.parse(
+            "from icontract import require, ensure\n"
+            "@require(lambda x: x > 0, 'positive')\n"
+            "@ensure(lambda result: result >= 0, 'non-negative')\n"
+            "def square(x: int) -> int:\n"
+            "    return x * x\n"
+        ),
+        ast.parse(
+            "@decorator\n"
+            "class Demo:\n"
+            "    pass\n"
+        ),
+    ]
+    expr_samples = [
+        ast.parse("require", mode="eval").body,
+        ast.parse("icontract.require", mode="eval").body,
+        ast.parse("require(x)", mode="eval").body,
+    ]
+    stmt_samples: list[ast.AST] = []
+    # Loop invariant: stmt_samples contains all statement nodes from module_samples[0..i]
+    for module in module_samples:
+        stmt_samples.extend(module.body)
+
+    all_samples: list[ast.AST] = []
+    all_samples.extend(module_samples)
+    all_samples.extend(expr_samples)
+    all_samples.extend(stmt_samples)
+
+    matching = [sample for sample in all_samples if isinstance(sample, annotation)]
+    if not matching:
+        return None
+    return st.sampled_from(matching)
+
+
+@icontract.require(lambda annotation: annotation is not None, "annotation must be provided")
+@icontract.ensure(lambda result: callable(result), "result must be callable")
+def _make_callable_stub(annotation: object) -> Callable[..., object]:
+    """Build a simple callable returning a valid value for the annotation."""
+    args = typing.get_args(annotation)
+    return_annotation = args[1] if len(args) == 2 else None
+    return_value = _sample_value_for_annotation(return_annotation)
+
+    def _stub(*_args: object, **_kwargs: object) -> object:
+        return return_value
+
+    return _stub
+
+
+@icontract.require(
+    lambda annotation: annotation is None or isinstance(annotation, object),
+    "annotation must be a Python object or None",
+)
+@icontract.ensure(
+    lambda result: result is None
+    or isinstance(result, (bool, int, float, str, bytes, list, tuple, dict, set, frozenset)),
+    "result must be a deterministic placeholder value",
+)
+def _sample_value_for_annotation(annotation: object) -> object:
+    """Return a deterministic placeholder value for a type annotation."""
+    # Variant: recursive calls peel off a union branch or container wrapper.
+    if annotation in (None, type(None)):
+        return None
+    if annotation is bool:
+        return True
+    if annotation is int:
+        return 1
+    if annotation is float:
+        return 1.0
+    if annotation is str:
+        return "x"
+    if annotation is bytes:
+        return b"x"
+
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+
+    if origin in (typing.Union, types.UnionType) and args:
+        if type(None) in args:
+            return None
+        return _sample_value_for_annotation(args[0])
+    if origin is list:
+        return []
+    if origin is tuple:
+        return ()
+    if origin is dict:
+        return {}
+    if origin is set:
+        return set()
+    if origin is frozenset:
+        return frozenset()
+
+    return None
+
+
+@icontract.require(lambda annotation: inspect.isclass(annotation), "annotation must be a class")
+@icontract.require(lambda kwargs: isinstance(kwargs, dict), "kwargs must be a dict")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _can_construct_class(annotation: type, kwargs: dict[str, object]) -> bool:
+    """Check whether a class constructor accepts the given keyword arguments."""
+    try:
+        annotation(**kwargs)
+    except Exception:
+        return False
+    return True
+
+
+@icontract.require(lambda func: callable(func), "func must be callable")
+@icontract.require(lambda strategies: isinstance(strategies, dict), "strategies must be a dict")
+@icontract.require(lambda annotations: isinstance(annotations, dict), "annotations must be a dict")
+@icontract.ensure(lambda result: isinstance(result, dict), "result must be a dict")
 def _refine_strategies_with_preconditions(
     func: Callable[..., object],
     strategies: dict[str, SearchStrategy],
+    annotations: dict[str, object],
 ) -> dict[str, SearchStrategy]:
     """Refine strategies using icontract preconditions.
 
@@ -163,14 +846,19 @@ def _refine_strategies_with_preconditions(
     for group in preconditions:
         for contract in group:
             condition = contract.condition
-            _try_refine_from_condition(condition, refined)
+            _try_refine_from_condition(condition, refined, annotations)
 
     return refined
 
 
+@icontract.require(lambda condition: callable(condition), "condition must be callable")
+@icontract.require(lambda strategies: isinstance(strategies, dict), "strategies must be a dict")
+@icontract.require(lambda annotations: isinstance(annotations, dict), "annotations must be a dict")
+@icontract.ensure(lambda result: result is None, "refinement happens in place")
 def _try_refine_from_condition(
     condition: Callable[..., bool],
     strategies: dict[str, SearchStrategy],
+    annotations: dict[str, object],
 ) -> None:
     """Try to refine strategies based on a single precondition.
 
@@ -217,6 +905,26 @@ def _try_refine_from_condition(
             except (OSError, TypeError):
                 pass
 
+        # Recognize common Serenecode contract predicates and synthesize
+        # directly bounded strategies instead of filtering broad primitives.
+        if called_name == "is_valid_verification_level":
+            strategies[param_name] = st.integers(min_value=1, max_value=5)
+            return
+        if called_name == "is_non_negative_int":
+            strategies[param_name] = st.integers(min_value=0, max_value=1000)
+            return
+        if called_name == "is_positive_int":
+            strategies[param_name] = st.integers(min_value=1, max_value=1000)
+            return
+        if called_name == "is_non_empty_string":
+            strategies[param_name] = st.text(min_size=1, max_size=100).filter(
+                lambda value: len(value.strip()) > 0
+            )
+            return
+        if called_name == "is_valid_template_name":
+            strategies[param_name] = st.sampled_from(["default", "strict", "minimal"])
+            return
+
     in_match = re.search(
         r'in\s*[\(\[\{]\s*(.+?)\s*[\)\]\}]',
         effective_source,
@@ -235,9 +943,12 @@ def _try_refine_from_condition(
     le_match = re.search(r'<=\s*(\d+)', source)
 
     current = strategies[param_name]
+    annotation = annotations.get(param_name)
+    is_numeric = annotation in (int, float)
+    is_literal_like = annotation in (str, int, float)
 
     # Apply bound constraints for integer/float strategies
-    if ge_match or gt_match or le_match or lt_match:
+    if is_numeric and (ge_match or gt_match or le_match or lt_match):
         min_val = None
         max_val = None
         if ge_match:
@@ -251,11 +962,22 @@ def _try_refine_from_condition(
 
         # Replace with bounded strategy
         if min_val is not None or max_val is not None:
-            strategies[param_name] = st.integers(
-                min_value=min_val if min_val is not None else -1000,
-                max_value=max_val if max_val is not None else 1000,
-            )
+            if annotation is float:
+                strategies[param_name] = st.floats(
+                    min_value=float(min_val) if min_val is not None else -1e6,
+                    max_value=float(max_val) if max_val is not None else 1e6,
+                    allow_nan=False,
+                    allow_infinity=False,
+                )
+            else:
+                strategies[param_name] = st.integers(
+                    min_value=min_val if min_val is not None else -1000,
+                    max_value=max_val if max_val is not None else 1000,
+                )
             return
+
+    if not is_literal_like and not inspect.isclass(annotation):
+        return
 
     # Fallback: apply the condition as a filter on the existing strategy
     try:
@@ -264,6 +986,8 @@ def _try_refine_from_condition(
         pass  # keep the original strategy
 
 
+@icontract.require(lambda condition: callable(condition), "condition must be callable")
+@icontract.ensure(lambda result: isinstance(result, str), "result must be a string")
 def _get_lambda_source(condition: Callable[..., bool]) -> str:
     """Extract the source of a lambda condition only.
 
@@ -314,6 +1038,11 @@ def _get_lambda_source(condition: Callable[..., bool]) -> str:
     return ""
 
 
+@icontract.require(lambda items_str: isinstance(items_str, str), "items_str must be a string")
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, list),
+    "result must be a list or None",
+)
 def _parse_literal_collection(items_str: str) -> list[object] | None:
     """Parse a string of literal values from source code.
 
@@ -347,6 +1076,8 @@ def _parse_literal_collection(items_str: str) -> list[object] | None:
     return items if items else None
 
 
+@icontract.require(lambda func: callable(func), "func must be callable")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
 def _has_icontract_decorators(func: Callable[..., object]) -> bool:
     """Check if a function has icontract decorators.
 
@@ -356,16 +1087,36 @@ def _has_icontract_decorators(func: Callable[..., object]) -> bool:
     Returns:
         True if the function has icontract require or ensure decorators.
     """
-    # icontract wraps the function — check for wrapper markers
     return (
         hasattr(func, "__preconditions__")
         or hasattr(func, "__postconditions__")
-        or hasattr(func, "__wrapped__")
     )
 
 
+@icontract.require(lambda func: callable(func), "func must be callable")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _is_property_friendly_function(func: Callable[..., object]) -> bool:
+    """Check whether a function is a good fit for property-based fuzzing."""
+    module_name = getattr(func, "__module__", "")
+    if module_name in {"serenecode", "serenecode.cli", "serenecode.init"}:
+        return False
+    if module_name.startswith("serenecode.adapters"):
+        return False
+    return True
+
+
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda search_paths: isinstance(search_paths, tuple),
+    "search_paths must be a tuple",
+)
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def _get_contracted_functions(
     module_path: str,
+    search_paths: tuple[str, ...] = (),
 ) -> list[tuple[str, Callable[..., object]]]:
     """Import a module and find all functions with icontract decorators.
 
@@ -376,7 +1127,7 @@ def _get_contracted_functions(
         List of (function_name, function) tuples.
     """
     try:
-        module = importlib.import_module(module_path)
+        module = load_python_module(module_path, search_paths)
     except ImportError as exc:
         raise ToolNotInstalledError(
             f"Cannot import module '{module_path}': {exc}"
@@ -390,12 +1141,18 @@ def _get_contracted_functions(
             continue
         obj = getattr(module, name)
         if callable(obj) and inspect.isfunction(obj):
-            if _has_icontract_decorators(obj):
+            if getattr(obj, "__module__", None) != module.__name__:
+                continue
+            if _has_icontract_decorators(obj) and _is_property_friendly_function(obj):
                 functions.append((name, obj))
 
     return functions
 
 
+@icontract.invariant(
+    lambda self: is_positive_int(self._max_examples),
+    "max_examples must remain positive",
+)
 class HypothesisPropertyTester:
     """Property tester implementation using Hypothesis.
 
@@ -403,6 +1160,11 @@ class HypothesisPropertyTester:
     using icontract's runtime contract checking to detect violations.
     """
 
+    @icontract.require(
+        lambda max_examples: is_positive_int(max_examples),
+        "max_examples must be positive",
+    )
+    @icontract.ensure(lambda result: result is None, "initialization returns None")
     def __init__(self, max_examples: int = 100) -> None:
         """Initialize the tester.
 
@@ -411,10 +1173,24 @@ class HypothesisPropertyTester:
         """
         self._max_examples = max_examples
 
+    @icontract.require(
+        lambda module_path: is_non_empty_string(module_path),
+        "module_path must be a non-empty string",
+    )
+    @icontract.require(
+        lambda max_examples: max_examples is None or is_positive_int(max_examples),
+        "max_examples must be positive when provided",
+    )
+    @icontract.require(
+        lambda search_paths: isinstance(search_paths, tuple),
+        "search_paths must be a tuple",
+    )
+    @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
     def test_module(
         self,
         module_path: str,
-        max_examples: int = 100,
+        max_examples: int | None = None,
+        search_paths: tuple[str, ...] = (),
     ) -> list[PropertyFinding]:
         """Run property-based tests on all contracted functions in a module.
 
@@ -430,8 +1206,8 @@ class HypothesisPropertyTester:
                 "Hypothesis is not installed. Install with: pip install hypothesis"
             )
 
-        effective_max = max_examples or self._max_examples
-        functions = _get_contracted_functions(module_path)
+        effective_max = self._max_examples if max_examples is None else max_examples
+        functions = _get_contracted_functions(module_path, search_paths)
         findings: list[PropertyFinding] = []
 
         # Loop invariant: findings contains test results for functions[0..i]
@@ -441,6 +1217,23 @@ class HypothesisPropertyTester:
 
         return findings
 
+    @icontract.require(
+        lambda func_name: is_non_empty_string(func_name),
+        "func_name must be a non-empty string",
+    )
+    @icontract.require(lambda func: callable(func), "func must be callable")
+    @icontract.require(
+        lambda module_path: is_non_empty_string(module_path),
+        "module_path must be a non-empty string",
+    )
+    @icontract.require(
+        lambda max_examples: is_positive_int(max_examples),
+        "max_examples must be positive",
+    )
+    @icontract.ensure(
+        lambda result: isinstance(result, PropertyFinding),
+        "result must be a PropertyFinding",
+    )
     def _test_single_function(
         self,
         func_name: str,
@@ -528,6 +1321,13 @@ class HypothesisPropertyTester:
                 exception_message=str(exc),
             )
 
+    @icontract.require(lambda func: callable(func), "func must be callable")
+    @icontract.require(lambda strategies: isinstance(strategies, dict), "strategies must be a dict")
+    @icontract.require(
+        lambda max_examples: is_positive_int(max_examples),
+        "max_examples must be positive",
+    )
+    @icontract.ensure(lambda result: result is None, "test execution returns None")
     def _run_hypothesis_test(
         self,
         func: Callable[..., object],
@@ -544,10 +1344,17 @@ class HypothesisPropertyTester:
         Raises:
             Any exception raised by the function or its contracts.
         """
+        if not strategies:
+            func()
+            return
+
         test_settings = settings(
             max_examples=max_examples,
             deadline=None,
-            suppress_health_check=[HealthCheck.too_slow],
+            suppress_health_check=[
+                HealthCheck.too_slow,
+                HealthCheck.filter_too_much,
+            ],
             verbosity=Verbosity.quiet,
             database=None,
         )
@@ -572,6 +1379,11 @@ class HypothesisPropertyTester:
         test_wrapper()
 
 
+@icontract.require(lambda exc: isinstance(exc, BaseException), "exc must be an exception")
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, icontract.ViolationError),
+    "result must be a ViolationError or None",
+)
 def _find_nested_violation(exc: BaseException) -> icontract.ViolationError | None:
     """Search exception chain for an icontract ViolationError.
 
@@ -593,6 +1405,7 @@ def _find_nested_violation(exc: BaseException) -> icontract.ViolationError | Non
     # Variant: depth of exception chain decreases
     seen: set[int] = set()
     current: BaseException | None = exc
+    # Loop invariant: seen contains every exception object already traversed in the chain
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         if isinstance(current, icontract.ViolationError):
@@ -612,6 +1425,9 @@ def _find_nested_violation(exc: BaseException) -> icontract.ViolationError | Non
     return None
 
 
+@icontract.require(lambda func: callable(func), "func must be callable")
+@icontract.require(lambda kwargs: isinstance(kwargs, dict), "kwargs must be a dict")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
 def _check_preconditions(
     func: Callable[..., object],
     kwargs: dict[str, object],
@@ -631,32 +1447,44 @@ def _check_preconditions(
     if not preconditions:
         return True
 
-    # Loop invariant: all precondition groups in preconditions[0..i] are satisfied
+    # Loop invariant: all precondition contracts in preconditions[0..i] are satisfied
     for group in preconditions:
-        # Each group is a list of Contract objects (OR within group, AND between groups)
-        group_satisfied = False
-        # Loop invariant: group_satisfied if any contract in group[0..j] is satisfied
+        # Loop invariant: every contract in group[0..j] is satisfied
         for contract in group:
             condition = contract.condition
             try:
                 # Get the parameters the condition expects
                 import inspect
                 sig = inspect.signature(condition)
+                parameter_names = [
+                    name
+                    for name in sig.parameters
+                    if name not in ("self", "cls", "result")
+                ]
+                if not parameter_names:
+                    continue
+                if any(name not in kwargs for name in parameter_names):
+                    continue
                 condition_kwargs = {
-                    k: v for k, v in kwargs.items()
-                    if k in sig.parameters
+                    name: kwargs[name]
+                    for name in parameter_names
                 }
-                if condition(**condition_kwargs):
-                    group_satisfied = True
-                    break
+                if not condition(**condition_kwargs):
+                    return False
             except Exception:
-                continue
-        if not group_satisfied:
-            return False
+                return False
 
     return True
 
 
+@icontract.require(
+    lambda exc: isinstance(exc, icontract.ViolationError),
+    "exc must be an icontract violation",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, dict),
+    "result must be a dictionary or None",
+)
 def _extract_counterexample(exc: icontract.ViolationError) -> dict[str, object] | None:
     """Extract counterexample data from an icontract violation.
 

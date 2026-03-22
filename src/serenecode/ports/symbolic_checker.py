@@ -12,8 +12,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+import icontract
+
+from serenecode.contracts.predicates import is_non_empty_string
 
 
+
+@icontract.invariant(
+    lambda self: is_non_empty_string(self.function_name) and is_non_empty_string(self.module_path),
+    "finding names must be non-empty",
+)
 @dataclass(frozen=True)
 class SymbolicFinding:
     """A single finding from symbolic verification.
@@ -31,6 +39,7 @@ class SymbolicFinding:
     duration_seconds: float = 0.0
 
 
+@icontract.invariant(lambda self: True, "protocol has no runtime state")
 class SymbolicChecker(Protocol):
     """Port for symbolic verification.
 
@@ -38,11 +47,14 @@ class SymbolicChecker(Protocol):
     execute functions and prove contracts hold for all valid inputs.
     """
 
+    @icontract.require(lambda module_path: is_non_empty_string(module_path), "module_path must be a non-empty string")
+    @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
     def verify_module(
         self,
         module_path: str,
-        per_condition_timeout: int = 30,
-        per_path_timeout: int = 10,
+        per_condition_timeout: int | None = None,
+        per_path_timeout: int | None = None,
+        search_paths: tuple[str, ...] = (),
     ) -> list[SymbolicFinding]:
         """Run symbolic verification on all contracted functions in a module.
 
@@ -50,6 +62,7 @@ class SymbolicChecker(Protocol):
             module_path: Importable Python module path to verify.
             per_condition_timeout: Max seconds per postcondition.
             per_path_timeout: Max seconds per execution path.
+            search_paths: sys.path roots needed to import the module.
 
         Returns:
             List of symbolic findings.

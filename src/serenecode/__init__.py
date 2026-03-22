@@ -8,15 +8,26 @@ to core logic via the pipeline.
 
 from __future__ import annotations
 
-import os
+import icontract
 
 from serenecode.adapters.local_fs import LocalFileReader, LocalFileWriter
 from serenecode.config import default_config, parse_serenecode_md
-from serenecode.core.pipeline import SourceFile, run_pipeline
+from serenecode.contracts.predicates import (
+    is_non_empty_string,
+    is_valid_file_path_string,
+    is_valid_template_name,
+    is_valid_verification_level,
+)
+from serenecode.core.pipeline import run_pipeline
 from serenecode.init import InitResult, initialize_project
 from serenecode.models import CheckResult
+from serenecode.source_discovery import build_source_files, find_serenecode_md
 
 
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
+@icontract.require(lambda template: is_valid_template_name(template), "template must be a valid template name")
+@icontract.ensure(lambda result: isinstance(result, InitResult), "result must be an InitResult")
 def init(path: str = ".", template: str = "default") -> InitResult:
     """Initialize a Serenecode project.
 
@@ -37,6 +48,10 @@ def init(path: str = ".", template: str = "default") -> InitResult:
     )
 
 
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
+@icontract.require(lambda level: is_valid_verification_level(level), "level must be between 1 and 5")
+@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
 def check(path: str = ".", level: int = 5) -> CheckResult:
     """Run verification up to the specified level.
 
@@ -53,6 +68,9 @@ def check(path: str = ".", level: int = 5) -> CheckResult:
     return _run_check(path, level)
 
 
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
+@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
 def check_structural(path: str = ".") -> CheckResult:
     """Run only the structural checker (Level 1).
 
@@ -65,6 +83,41 @@ def check_structural(path: str = ".") -> CheckResult:
     return _run_check(path, level=1)
 
 
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
+@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+def check_types(path: str = ".") -> CheckResult:
+    """Run the Level 2 type checker."""
+    return _run_check(path, level=2)
+
+
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
+@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+def check_properties(path: str = ".") -> CheckResult:
+    """Run property-based verification through Level 3."""
+    return _run_check(path, level=3)
+
+
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
+@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+def check_symbolic(path: str = ".") -> CheckResult:
+    """Run symbolic verification through Level 4."""
+    return _run_check(path, level=4)
+
+
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
+@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+def check_compositional(path: str = ".") -> CheckResult:
+    """Run compositional verification through Level 5."""
+    return _run_check(path, level=5)
+
+
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
+@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
 def status(path: str = ".") -> CheckResult:
     """Show verification status of the codebase.
 
@@ -77,6 +130,10 @@ def status(path: str = ".") -> CheckResult:
     return _run_check(path, level=1)
 
 
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
+@icontract.require(lambda level: is_valid_verification_level(level), "level must be between 1 and 5")
+@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
 def _run_check(path: str, level: int) -> CheckResult:
     """Internal helper to run checks via the real pipeline.
 
@@ -90,7 +147,7 @@ def _run_check(path: str, level: int) -> CheckResult:
     reader = LocalFileReader()
 
     # Load config
-    serenecode_path = _find_serenecode_md(path, reader)
+    serenecode_path = find_serenecode_md(path, reader)
     if serenecode_path:
         config_content = reader.read_file(serenecode_path)
         config = parse_serenecode_md(config_content)
@@ -99,7 +156,7 @@ def _run_check(path: str, level: int) -> CheckResult:
 
     # List and build source files
     files = reader.list_python_files(path)
-    source_files = _build_source_files(files, reader)
+    source_files = build_source_files(files, reader, path)
 
     # Wire up adapters for higher levels
     type_checker = None
@@ -130,102 +187,9 @@ def _run_check(path: str, level: int) -> CheckResult:
     return run_pipeline(
         source_files=source_files,
         level=level,
+        start_level=1,
         config=config,
         type_checker=type_checker,
         property_tester=property_tester,
         symbolic_checker=symbolic_checker,
     )
-
-
-def _build_source_files(
-    file_paths: list[str],
-    reader: LocalFileReader,
-) -> tuple[SourceFile, ...]:
-    """Build SourceFile objects from file paths.
-
-    Args:
-        file_paths: Paths to Python files.
-        reader: File reader for reading contents.
-
-    Returns:
-        Tuple of SourceFile objects.
-    """
-    source_files: list[SourceFile] = []
-
-    # Loop invariant: source_files contains SourceFile for file_paths[0..i]
-    for fp in file_paths:
-        try:
-            source = reader.read_file(fp)
-        except Exception:
-            continue
-
-        # Derive module path for architecture checks
-        module_path = fp
-        if "src/serenecode/" in fp:
-            module_path = fp.split("src/serenecode/")[-1]
-
-        # Derive importable module name
-        importable = _derive_importable_module(fp)
-
-        source_files.append(SourceFile(
-            file_path=fp,
-            module_path=module_path,
-            source=source,
-            importable_module=importable,
-        ))
-
-    return tuple(source_files)
-
-
-def _derive_importable_module(file_path: str) -> str | None:
-    """Derive an importable Python module path from a file path.
-
-    Args:
-        file_path: Path to a Python file.
-
-    Returns:
-        Importable module path, or None if it can't be determined.
-    """
-    fp = file_path.replace(os.sep, "/")
-
-    if "/src/" in fp:
-        module_part = fp.split("/src/")[-1]
-    elif fp.startswith("src/"):
-        module_part = fp[4:]
-    else:
-        module_part = fp
-
-    if module_part.endswith(".py"):
-        module_part = module_part[:-3]
-    else:
-        return None
-
-    module_path = module_part.replace("/", ".")
-
-    if module_path.endswith(".__init__"):
-        module_path = module_path[:-9]
-
-    return module_path if module_path else None
-
-
-def _find_serenecode_md(path: str, reader: LocalFileReader) -> str | None:
-    """Find SERENECODE.md by searching up from the given path."""
-    candidates: list[str] = []
-
-    current = os.path.abspath(path)
-    # Loop invariant: candidates contains checked paths from path upward
-    for _ in range(10):
-        candidate = os.path.join(current, "SERENECODE.md")
-        if candidate not in candidates:
-            candidates.append(candidate)
-        parent = os.path.dirname(current)
-        if parent == current:
-            break
-        current = parent
-
-    # Loop invariant: checked candidates[0..i]
-    for candidate in candidates:
-        if reader.file_exists(candidate):
-            return candidate
-
-    return None

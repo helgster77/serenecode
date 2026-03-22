@@ -13,7 +13,11 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import os
 
+import icontract
+
+from serenecode.contracts.predicates import is_positive_int
 from serenecode.core.exceptions import ToolNotInstalledError
 from serenecode.ports.type_checker import TypeIssue
 
@@ -22,6 +26,7 @@ _MYPY_OUTPUT_PATTERN = re.compile(
 )
 
 
+@icontract.invariant(lambda self: is_positive_int(self._timeout), "timeout must be positive")
 class MypyTypeChecker:
     """Type checker implementation using mypy.
 
@@ -29,6 +34,8 @@ class MypyTypeChecker:
     its output into structured TypeIssue objects.
     """
 
+    @icontract.require(lambda timeout: is_positive_int(timeout), "timeout must be positive")
+    @icontract.ensure(lambda result: result is None, "result must be None")
     def __init__(self, timeout: int = 120) -> None:
         """Initialize the checker.
 
@@ -37,16 +44,20 @@ class MypyTypeChecker:
         """
         self._timeout = timeout
 
+    @icontract.require(lambda file_paths: isinstance(file_paths, list), "file_paths must be a list")
+    @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
     def check(
         self,
         file_paths: list[str],
         strict: bool = True,
+        search_paths: tuple[str, ...] = (),
     ) -> list[TypeIssue]:
         """Run mypy type checking on the given files.
 
         Args:
             file_paths: Paths to Python files to check.
             strict: Whether to use strict mode.
+            search_paths: Import roots needed to resolve project-local modules.
 
         Returns:
             List of type issues found.
@@ -68,11 +79,19 @@ class MypyTypeChecker:
         cmd.extend(file_paths)
 
         try:
+            env = dict(os.environ)
+            existing = env.get("MYPYPATH", "")
+            if search_paths:
+                combined = list(search_paths)
+                if existing:
+                    combined.append(existing)
+                env["MYPYPATH"] = os.pathsep.join(combined)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=self._timeout,
+                env=env,
             )
         except FileNotFoundError as exc:
             raise ToolNotInstalledError(
@@ -89,6 +108,8 @@ class MypyTypeChecker:
 
         return self._parse_output(result.stdout)
 
+    @icontract.require(lambda output: isinstance(output, str), "output must be a string")
+    @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
     def _parse_output(self, output: str) -> list[TypeIssue]:
         """Parse mypy stdout into TypeIssue objects.
 

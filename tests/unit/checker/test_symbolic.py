@@ -53,9 +53,10 @@ class TestTransformSymbolicResults:
             ),
         ]
         result = transform_symbolic_results(findings, "test.py", 30.0)
-        assert result.passed is True
-        assert result.summary.passed_count == 1
-        assert result.summary.skipped_count == 0
+        assert result.passed is False
+        assert result.summary.passed_count == 0
+        assert result.summary.skipped_count == 1
+        assert result.results[0].status == CheckStatus.SKIPPED
         assert result.results[0].level_achieved == 3
 
     def test_unsupported_finding(self) -> None:
@@ -69,9 +70,10 @@ class TestTransformSymbolicResults:
             ),
         ]
         result = transform_symbolic_results(findings, "test.py", 0.1)
-        assert result.passed is True
-        assert result.summary.passed_count == 1
-        assert result.summary.skipped_count == 0
+        assert result.passed is False
+        assert result.summary.passed_count == 0
+        assert result.summary.skipped_count == 1
+        assert result.results[0].status == CheckStatus.SKIPPED
         assert result.results[0].level_achieved == 3
 
     def test_error_finding(self) -> None:
@@ -112,9 +114,9 @@ class TestTransformSymbolicResults:
         ]
         result = transform_symbolic_results(findings, "test.py", 5.0)
         assert result.passed is False
-        assert result.summary.passed_count == 2  # verified + timeout-as-passed
+        assert result.summary.passed_count == 1
         assert result.summary.failed_count == 1
-        assert result.summary.skipped_count == 0
+        assert result.summary.skipped_count == 1
 
     def test_counterexample_never_reclassified_as_passed(self) -> None:
         """Regression: counterexamples must always be FAILED, never PASSED."""

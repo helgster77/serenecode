@@ -8,21 +8,30 @@ must have type annotations and pass mypy.
 
 from __future__ import annotations
 
-import os
 import sys
 import time
 
 import click
+import icontract
 
 from serenecode.adapters.local_fs import LocalFileReader, LocalFileWriter
 from serenecode.config import parse_serenecode_md
-from serenecode.core.pipeline import SourceFile, run_pipeline
+from serenecode.contracts.predicates import (
+    is_non_empty_string,
+    is_positive_int,
+    is_valid_exit_code,
+    is_valid_template_name,
+    is_valid_verification_level,
+)
+from serenecode.core.pipeline import run_pipeline
 from serenecode.init import initialize_project
 from serenecode.models import ExitCode
 from serenecode.reporter import format_html, format_human, format_json
+from serenecode.source_discovery import build_source_files, find_serenecode_md
 
 
 @click.group()
+@icontract.ensure(lambda result: result is None, "CLI entrypoint returns None")
 def main() -> None:
     """Serenecode — formal verification for AI-generated Python code."""
 
@@ -31,6 +40,12 @@ def main() -> None:
 @click.option("--strict", "template", flag_value="strict", help="Use strict template (all rules mandatory)")
 @click.option("--minimal", "template", flag_value="minimal", help="Use minimal template (contracts + types only)")
 @click.argument("path", default=".")
+@icontract.require(
+    lambda template: template is None or is_valid_template_name(template),
+    "template must be a recognized template name when provided",
+)
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.ensure(lambda result: result is None, "CLI commands return None")
 def init(template: str | None, path: str) -> None:
     """Initialize a Serenecode project."""
     if template is None:
@@ -71,10 +86,36 @@ def init(template: str | None, path: str) -> None:
 )
 @click.option("--structural", is_flag=True, help="Run only structural check (Level 1)")
 @click.option("--verify", is_flag=True, help="Run Levels 3-5 only")
-@click.option("--per-condition-timeout", type=int, default=120, show_default=True, help="Timeout in seconds per condition for symbolic verification (Level 4)")
-@click.option("--per-path-timeout", type=int, default=60, show_default=True, help="Timeout in seconds per execution path for symbolic verification (Level 4)")
-@click.option("--module-timeout", type=int, default=600, show_default=True, help="Timeout in seconds per module for symbolic verification (Level 4)")
+@click.option("--per-condition-timeout", type=int, default=30, show_default=True, help="Timeout in seconds per condition for symbolic verification (Level 4)")
+@click.option("--per-path-timeout", type=int, default=10, show_default=True, help="Timeout in seconds per execution path for symbolic verification (Level 4)")
+@click.option("--module-timeout", type=int, default=300, show_default=True, help="Timeout in seconds per module for symbolic verification (Level 4)")
 @click.option("--workers", type=int, default=4, show_default=True, help="Number of parallel workers for symbolic verification (Level 4)")
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(
+    lambda level: level is None or is_valid_verification_level(level),
+    "level must be between 1 and 5 when provided",
+)
+@icontract.require(
+    lambda output_format: output_format in {"human", "json"},
+    "output_format must be human or json",
+)
+@icontract.require(
+    lambda per_condition_timeout: is_positive_int(per_condition_timeout),
+    "per_condition_timeout must be at least 1",
+)
+@icontract.require(
+    lambda per_path_timeout: is_positive_int(per_path_timeout),
+    "per_path_timeout must be at least 1",
+)
+@icontract.require(
+    lambda module_timeout: is_positive_int(module_timeout),
+    "module_timeout must be at least 1",
+)
+@icontract.require(
+    lambda workers: is_positive_int(workers),
+    "workers must be at least 1",
+)
+@icontract.ensure(lambda result: result is None, "CLI commands return None")
 def check(
     path: str,
     level: int | None,
@@ -91,7 +132,7 @@ def check(
     reader = LocalFileReader()
 
     # Load config first (needed to resolve default level)
-    serenecode_md_path = _find_serenecode_md(path, reader)
+    serenecode_md_path = find_serenecode_md(path, reader)
     if serenecode_md_path:
         config_content = reader.read_file(serenecode_md_path)
         config = parse_serenecode_md(config_content)
@@ -112,6 +153,7 @@ def check(
         if verify:
             effective_level = max(effective_level, 3)
     level = effective_level
+    start_level = 3 if verify and not structural else 1
 
     # List files
     try:
@@ -125,7 +167,11 @@ def check(
         sys.exit(ExitCode.PASSED)
 
     # Build source file objects
-    source_files = _build_source_files(files, reader)
+    try:
+        source_files = build_source_files(files, reader, path)
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(ExitCode.INTERNAL)
 
     # Wire up adapters for higher levels
     type_checker = None
@@ -164,6 +210,7 @@ def check(
     final_result = run_pipeline(
         source_files=source_files,
         level=level,
+        start_level=start_level,
         config=config,
         type_checker=type_checker,
         property_tester=property_tester,
@@ -203,12 +250,18 @@ def check(
     default="human",
     help="Output format",
 )
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(
+    lambda output_format: output_format in {"human", "json"},
+    "output_format must be human or json",
+)
+@icontract.ensure(lambda result: result is None, "CLI commands return None")
 def status(path: str, output_format: str) -> None:
     """Show verification status of the codebase."""
     reader = LocalFileReader()
 
     # Load config
-    serenecode_md_path = _find_serenecode_md(path, reader)
+    serenecode_md_path = find_serenecode_md(path, reader)
     if serenecode_md_path:
         config_content = reader.read_file(serenecode_md_path)
         config = parse_serenecode_md(config_content)
@@ -227,8 +280,12 @@ def status(path: str, output_format: str) -> None:
         click.echo("No Python files found.")
         return
 
-    source_files = _build_source_files(files, reader)
-    result = run_pipeline(source_files, level=1, config=config)
+    try:
+        source_files = build_source_files(files, reader, path)
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(ExitCode.INTERNAL)
+    result = run_pipeline(source_files, level=1, start_level=1, config=config)
 
     if output_format == "json":
         click.echo(format_json(result))
@@ -246,12 +303,22 @@ def status(path: str, output_format: str) -> None:
     help="Report format",
 )
 @click.option("--output", "output_file", default=None, help="Write report to file")
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(
+    lambda output_format: output_format in {"human", "json", "html"},
+    "output_format must be human, json, or html",
+)
+@icontract.require(
+    lambda output_file: output_file is None or is_non_empty_string(output_file),
+    "output_file must be a non-empty string when provided",
+)
+@icontract.ensure(lambda result: result is None, "CLI commands return None")
 def report(path: str, output_format: str, output_file: str | None) -> None:
     """Generate a verification report for the entire project."""
     reader = LocalFileReader()
 
     # Load config
-    serenecode_md_path = _find_serenecode_md(path, reader)
+    serenecode_md_path = find_serenecode_md(path, reader)
     if serenecode_md_path:
         config_content = reader.read_file(serenecode_md_path)
         config = parse_serenecode_md(config_content)
@@ -270,8 +337,48 @@ def report(path: str, output_format: str, output_file: str | None) -> None:
         click.echo("No Python files found.")
         return
 
-    source_files = _build_source_files(files, reader)
-    final_result = run_pipeline(source_files, level=1, config=config)
+    try:
+        source_files = build_source_files(files, reader, path)
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(ExitCode.INTERNAL)
+    # Reports use the project's recommended verification depth rather than
+    # silently truncating to structural checks only.
+    level = config.recommended_level
+    type_checker = None
+    property_tester = None
+    symbolic_checker = None
+
+    if level >= 2:
+        try:
+            from serenecode.adapters.mypy_adapter import MypyTypeChecker
+            type_checker = MypyTypeChecker()
+        except ImportError:
+            pass
+
+    if level >= 3:
+        try:
+            from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
+            property_tester = HypothesisPropertyTester()
+        except ImportError:
+            pass
+
+    if level >= 4:
+        try:
+            from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
+            symbolic_checker = CrossHairSymbolicChecker()
+        except ImportError:
+            pass
+
+    final_result = run_pipeline(
+        source_files,
+        level=level,
+        start_level=1,
+        config=config,
+        type_checker=type_checker,
+        property_tester=property_tester,
+        symbolic_checker=symbolic_checker,
+    )
 
     # Format output
     if output_format == "json":
@@ -290,7 +397,9 @@ def report(path: str, output_format: str, output_file: str | None) -> None:
         click.echo(formatted)
 
 
-def _determine_exit_code(result: object) -> int:
+@icontract.require(lambda check_result_obj: check_result_obj is not None, "result must be provided")
+@icontract.ensure(lambda result: is_valid_exit_code(result), "exit code must be valid")
+def _determine_exit_code(check_result_obj: object) -> int:
     """Determine the CLI exit code from a failed CheckResult.
 
     Uses the verification level of the first failure to determine
@@ -304,7 +413,7 @@ def _determine_exit_code(result: object) -> int:
     """
     from serenecode.models import CheckResult, CheckStatus, VerificationLevel
 
-    check_result: CheckResult = result  # type: ignore[assignment]
+    check_result: CheckResult = check_result_obj  # type: ignore[assignment]
 
     # Find the lowest failing level across all failed results
     min_level = 10  # start above any valid level
@@ -319,116 +428,6 @@ def _determine_exit_code(result: object) -> int:
 
     if min_level <= 5:
         return min_level
+    if check_result.level_achieved < check_result.level_requested:
+        return min(check_result.level_achieved + 1, ExitCode.COMPOSITIONAL)
     return ExitCode.STRUCTURAL  # default to structural
-
-
-def _build_source_files(
-    file_paths: list[str],
-    reader: LocalFileReader,
-) -> tuple[SourceFile, ...]:
-    """Build SourceFile objects from file paths.
-
-    Args:
-        file_paths: Paths to Python files.
-        reader: File reader for reading contents.
-
-    Returns:
-        Tuple of SourceFile objects.
-    """
-    source_files: list[SourceFile] = []
-
-    # Loop invariant: source_files contains SourceFile for file_paths[0..i]
-    for fp in file_paths:
-        try:
-            source = reader.read_file(fp)
-        except Exception:
-            continue
-
-        # Derive module path for architecture checks
-        module_path = fp
-        if "src/serenecode/" in fp:
-            module_path = fp.split("src/serenecode/")[-1]
-
-        # Derive importable module name
-        importable = _derive_importable_module(fp)
-
-        source_files.append(SourceFile(
-            file_path=fp,
-            module_path=module_path,
-            source=source,
-            importable_module=importable,
-        ))
-
-    return tuple(source_files)
-
-
-def _derive_importable_module(file_path: str) -> str | None:
-    """Derive an importable Python module path from a file path.
-
-    Args:
-        file_path: Path to a Python file.
-
-    Returns:
-        Importable module path, or None if it can't be determined.
-    """
-    # Normalize path
-    fp = file_path.replace(os.sep, "/")
-
-    # Handle src/ layout
-    if "/src/" in fp:
-        module_part = fp.split("/src/")[-1]
-    elif fp.startswith("src/"):
-        module_part = fp[4:]
-    else:
-        module_part = fp
-
-    # Remove .py extension and convert to dotted path
-    if module_part.endswith(".py"):
-        module_part = module_part[:-3]
-    else:
-        return None
-
-    # Replace / with .
-    module_path = module_part.replace("/", ".")
-
-    # Handle __init__
-    if module_path.endswith(".__init__"):
-        module_path = module_path[:-9]
-
-    return module_path if module_path else None
-
-
-def _find_serenecode_md(path: str, reader: LocalFileReader) -> str | None:
-    """Find SERENECODE.md by searching up from the given path.
-
-    Args:
-        path: Starting path to search from.
-        reader: File reader for checking existence.
-
-    Returns:
-        Path to SERENECODE.md if found, None otherwise.
-    """
-    # Check common locations
-    candidates = [
-        os.path.join(path, "SERENECODE.md"),
-        "SERENECODE.md",
-    ]
-
-    # Also check parent directories
-    current = os.path.abspath(path)
-    # Loop invariant: candidates contains all checked paths so far
-    for _ in range(10):  # max 10 levels up
-        candidate = os.path.join(current, "SERENECODE.md")
-        if candidate not in candidates:
-            candidates.append(candidate)
-        parent = os.path.dirname(current)
-        if parent == current:
-            break
-        current = parent
-
-    # Loop invariant: we've checked candidates[0..i] for existence
-    for candidate in candidates:
-        if reader.file_exists(candidate):
-            return candidate
-
-    return None

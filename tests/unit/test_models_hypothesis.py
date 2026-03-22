@@ -211,7 +211,7 @@ class TestMakeCheckResultProperty:
         assert check.summary.passed_count == n_passed
         assert check.summary.failed_count == n_failed
         assert check.summary.skipped_count == n_skipped
-        assert check.passed == (n_failed == 0)
+        assert check.passed == (n_failed == 0 and n_skipped == 0)
 
     @given(duration=st.floats(min_value=0, max_value=100, allow_nan=False))
     def test_empty_results_always_passes(self, duration: float) -> None:

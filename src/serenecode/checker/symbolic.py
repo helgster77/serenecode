@@ -78,22 +78,22 @@ def transform_symbolic_results(
                 suggestion=_suggest_fix_symbolic(finding),
             ))
         elif finding.outcome == "timeout":
-            status = CheckStatus.PASSED
+            status = CheckStatus.SKIPPED
             level_achieved = 3
             details.append(Detail(
                 level=VerificationLevel.SYMBOLIC,
                 tool="crosshair",
                 finding_type="timeout",
-                message=f"Verified at Level 3; symbolic verification timed out for '{finding.function_name}'",
+                message=f"Symbolic verification timed out for '{finding.function_name}'",
             ))
         elif finding.outcome == "unsupported":
-            status = CheckStatus.PASSED
+            status = CheckStatus.SKIPPED
             level_achieved = 3
             details.append(Detail(
                 level=VerificationLevel.SYMBOLIC,
                 tool="crosshair",
                 finding_type="unsupported",
-                message=f"Verified at Level 3; unsupported by solver for '{finding.function_name}'",
+                message=f"Symbolic verification unsupported for '{finding.function_name}'",
             ))
         else:
             status = CheckStatus.FAILED

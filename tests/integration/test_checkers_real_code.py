@@ -138,6 +138,10 @@ class TestPropertiesCheckerWithRealHypothesis:
     def test_broken_postcondition_found(self) -> None:
         from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
         from serenecode.checker.properties import transform_property_results
+        from tests.conftest import icontract_enabled
+
+        if not icontract_enabled():
+            pytest.skip("icontract invariants disabled by CrossHair monkey-patching")
 
         tester = HypothesisPropertyTester()
         findings = tester.test_module(

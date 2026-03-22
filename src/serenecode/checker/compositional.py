@@ -23,6 +23,7 @@ from serenecode.checker.structural import (
     resolve_icontract_aliases,
 )
 from serenecode.config import SerenecodeConfig, is_core_module, is_exempt_module
+from serenecode.contracts.predicates import is_non_empty_string, is_valid_file_path_string
 from serenecode.models import (
     CheckResult,
     CheckStatus,
@@ -122,7 +123,7 @@ class ModuleInfo:
     file_path: str
     module_path: str
     imports: tuple[str, ...]
-    from_imports: tuple[tuple[str, str], ...]  # (module, name) pairs
+    from_imports: tuple[tuple[str, str], ...]  # (resolved_module, imported_name) pairs
     classes: tuple[ClassInfo, ...]
     functions: tuple[str, ...]
     protocols: tuple[ProtocolInfo, ...]
@@ -137,6 +138,22 @@ class ModuleInfo:
 @icontract.require(
     lambda source: isinstance(source, str),
     "source must be a string",
+)
+@icontract.require(
+    lambda file_path: is_non_empty_string(file_path),
+    "file_path must be a non-empty string",
+)
+@icontract.require(
+    lambda file_path: is_valid_file_path_string(file_path),
+    "file_path must be a valid path string",
+)
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda module_path: is_valid_file_path_string(module_path),
+    "module_path must be a valid module path string",
 )
 @icontract.ensure(
     lambda result: isinstance(result, ModuleInfo),
@@ -159,7 +176,7 @@ def parse_module_info(
     """
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except (SyntaxError, TypeError, ValueError):
         return ModuleInfo(
             file_path=file_path,
             module_path=module_path,
@@ -186,10 +203,11 @@ def parse_module_info(
             for alias in node.names:
                 imports.append(alias.name)
         elif isinstance(node, ast.ImportFrom):
-            if node.module:
+            resolved_module = _resolve_from_import_module(node, module_path)
+            if resolved_module:
                 # Loop invariant: from_imports updated for names[0..i]
                 for alias in node.names:
-                    from_imports.append((node.module, alias.name))
+                    from_imports.append((resolved_module, alias.name))
         elif isinstance(node, ast.ClassDef):
             class_info = _parse_class(node, aliases)
             classes.append(class_info)
@@ -197,7 +215,7 @@ def parse_module_info(
                 protocol_info = _parse_protocol(node)
                 protocols.append(protocol_info)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            is_public = not node.name.startswith("_")
+            is_public = _is_public_function_name(node.name)
             if is_public:
                 functions.append(node.name)
             func_info = _parse_function_info(node, aliases)
@@ -215,6 +233,143 @@ def parse_module_info(
     )
 
 
+@icontract.require(
+    lambda node: isinstance(node, ast.ImportFrom),
+    "node must be an ImportFrom node",
+)
+@icontract.require(
+    lambda module_path: isinstance(module_path, str),
+    "module_path must be a string",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, str),
+    "result must be a string or None",
+)
+def _resolve_from_import_module(
+    node: ast.ImportFrom,
+    module_path: str,
+) -> str | None:
+    """Resolve an ImportFrom node to a module name relative to module_path."""
+    if node.level == 0:
+        return node.module
+
+    current_package = _module_package_name(module_path)
+    package_parts = [part for part in current_package.split(".") if part]
+    ascend = node.level - 1
+
+    if ascend > len(package_parts):
+        base_parts: list[str] = []
+    else:
+        base_parts = package_parts[:len(package_parts) - ascend]
+
+    resolved_parts = list(base_parts)
+    if node.module:
+        resolved_parts.extend(part for part in node.module.split(".") if part)
+
+    if not resolved_parts:
+        return None
+
+    return ".".join(resolved_parts)
+
+
+@icontract.require(
+    lambda module_path: isinstance(module_path, str),
+    "module_path must be a string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, str),
+    "result must be a string",
+)
+def _module_package_name(module_path: str) -> str:
+    """Get the dotted package path for a module path."""
+    normalized = _normalize_module_name(module_path)
+
+    if normalized.endswith(".__init__"):
+        return normalized[:-9]
+
+    if "." in normalized:
+        return normalized.rsplit(".", 1)[0]
+
+    return ""
+
+
+@icontract.require(
+    lambda name: is_non_empty_string(name),
+    "name must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_public_function_name(name: str) -> bool:
+    """Check whether a function should count as public API."""
+    if name.startswith("_") and not name.startswith("__"):
+        return False
+    if name.startswith("__") and name.endswith("__") and name != "__init__":
+        return False
+    return True
+
+
+@icontract.require(
+    lambda func_info: isinstance(func_info, FunctionInfo),
+    "func_info must be a FunctionInfo",
+)
+@icontract.require(
+    lambda config: isinstance(config, SerenecodeConfig),
+    "config must be a SerenecodeConfig",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _should_check_function_contracts(
+    func_info: FunctionInfo,
+    config: SerenecodeConfig,
+) -> bool:
+    """Check whether contract completeness applies to a function."""
+    if config.contract_requirements.require_on_private:
+        return not (
+            func_info.name.startswith("__")
+            and func_info.name.endswith("__")
+            and func_info.name != "__init__"
+        )
+    return _is_public_function_name(func_info.name)
+
+
+@icontract.require(
+    lambda cls: isinstance(cls, ClassInfo),
+    "cls must be a ClassInfo",
+)
+@icontract.require(
+    lambda config: isinstance(config, SerenecodeConfig),
+    "config must be a SerenecodeConfig",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _should_check_class_invariants(
+    cls: ClassInfo,
+    config: SerenecodeConfig,
+) -> bool:
+    """Check whether invariant completeness applies to a class."""
+    if config.contract_requirements.require_on_private:
+        return True
+    return not cls.name.startswith("_")
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.require(
+    lambda aliases: isinstance(aliases, IcontractNames),
+    "aliases must be IcontractNames",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, FunctionInfo),
+    "result must be a FunctionInfo",
+)
 def _parse_function_info(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     aliases: IcontractNames,
@@ -237,7 +392,7 @@ def _parse_function_info(
     return FunctionInfo(
         name=node.name,
         line=node.lineno,
-        is_public=not node.name.startswith("_"),
+        is_public=_is_public_function_name(node.name),
         parameters=parameters,
         return_annotation=return_ann,
         has_require=has_req,
@@ -246,6 +401,14 @@ def _parse_function_info(
     )
 
 
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, tuple),
+    "result must be a tuple",
+)
 def _parse_parameters(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> tuple[ParameterInfo, ...]:
@@ -267,6 +430,14 @@ def _parse_parameters(
     return tuple(params)
 
 
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, tuple),
+    "result must be a tuple",
+)
 def _extract_calls(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> tuple[str, ...]:
@@ -288,6 +459,14 @@ def _extract_calls(
     return tuple(calls)
 
 
+@icontract.require(
+    lambda node: isinstance(node, ast.AST),
+    "node must be an AST node",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, str),
+    "result must be a string",
+)
 def _get_call_target_name(node: ast.expr) -> str:
     """Resolve an AST call target to a dotted name string.
 
@@ -308,6 +487,15 @@ def _get_call_target_name(node: ast.expr) -> str:
     return ""
 
 
+@icontract.require(lambda node: isinstance(node, ast.ClassDef), "node must be a class definition")
+@icontract.require(
+    lambda aliases: isinstance(aliases, IcontractNames),
+    "aliases must be IcontractNames",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, ClassInfo),
+    "result must be a ClassInfo",
+)
 def _parse_class(node: ast.ClassDef, aliases: IcontractNames) -> ClassInfo:
     """Parse a class definition into a ClassInfo.
 
@@ -359,6 +547,11 @@ def _parse_class(node: ast.ClassDef, aliases: IcontractNames) -> ClassInfo:
     )
 
 
+@icontract.require(lambda node: isinstance(node, ast.ClassDef), "node must be a class definition")
+@icontract.ensure(
+    lambda result: isinstance(result, ProtocolInfo),
+    "result must be a ProtocolInfo",
+)
 def _parse_protocol(node: ast.ClassDef) -> ProtocolInfo:
     """Parse a Protocol class into a ProtocolInfo with method signatures.
 
@@ -392,6 +585,14 @@ def _parse_protocol(node: ast.ClassDef) -> ProtocolInfo:
     )
 
 
+@icontract.require(
+    lambda node: isinstance(node, ast.AST),
+    "node must be an AST node",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, str),
+    "result must be a string",
+)
 def _get_name(node: ast.expr) -> str:
     """Get a simple name from an AST expression.
 
@@ -498,6 +699,14 @@ def check_dependency_direction(
     return results
 
 
+@icontract.require(
+    lambda imported: is_non_empty_string(imported),
+    "imported must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _is_adapter_import(imported: str) -> bool:
     """Check if an import refers to an adapter module by segment matching.
 
@@ -513,6 +722,14 @@ def _is_adapter_import(imported: str) -> bool:
     return "adapters" in segments
 
 
+@icontract.require(
+    lambda imported: is_non_empty_string(imported),
+    "imported must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _is_cli_import(imported: str) -> bool:
     """Check if an import refers to a CLI module by segment matching.
 
@@ -529,6 +746,16 @@ def _is_cli_import(imported: str) -> bool:
     return "cli" in segments
 
 
+@icontract.require(
+    lambda imported: is_non_empty_string(imported),
+    "imported must be a non-empty string",
+)
+@icontract.require(lambda is_core: isinstance(is_core, bool), "is_core must be a bool")
+@icontract.require(lambda is_port: isinstance(is_port, bool), "is_port must be a bool")
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, str),
+    "result must be a string or None",
+)
 def _check_import_direction(
     imported: str,
     is_core: bool,
@@ -674,6 +901,18 @@ def check_interface_compliance(
     return results
 
 
+@icontract.require(
+    lambda adapter_sig: isinstance(adapter_sig, MethodSignature),
+    "adapter_sig must be a MethodSignature",
+)
+@icontract.require(
+    lambda proto_sig: isinstance(proto_sig, MethodSignature),
+    "proto_sig must be a MethodSignature",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
 def _check_signature_compatibility(
     adapter_sig: MethodSignature,
     proto_sig: MethodSignature,
@@ -702,6 +941,15 @@ def _check_signature_compatibility(
     return issues
 
 
+@icontract.require(lambda cls: isinstance(cls, ClassInfo), "cls must be a ClassInfo")
+@icontract.require(
+    lambda proto: isinstance(proto, ProtocolInfo),
+    "proto must be a ProtocolInfo",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _class_likely_implements(cls: ClassInfo, proto: ProtocolInfo) -> bool:
     """Heuristic to check if a class likely implements a protocol.
 
@@ -735,6 +983,11 @@ _ENUM_BASE_NAMES = frozenset({
 })
 
 
+@icontract.require(lambda cls: isinstance(cls, ClassInfo), "cls must be a ClassInfo")
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
 def _is_enum_class(cls: ClassInfo) -> bool:
     """Check if a class is an Enum subclass based on its bases.
 
@@ -786,7 +1039,7 @@ def check_contract_completeness(
         # Check functions for contract presence
         # Loop invariant: results contains findings for function_infos[0..j]
         for func_info in mod.function_infos:
-            if not func_info.is_public:
+            if not _should_check_function_contracts(func_info, config):
                 continue
 
             details: list[Detail] = []
@@ -830,9 +1083,9 @@ def check_contract_completeness(
         # Check classes for invariants (skip Enum classes)
         # Loop invariant: results contains findings for classes[0..j]
         for cls in mod.classes:
-            if cls.name.startswith("_"):
+            if not _should_check_class_invariants(cls, config):
                 continue
-            if _is_enum_class(cls):
+            if _is_enum_class(cls) or _is_exception_class(cls):
                 continue
             if not cls.has_invariant:
                 results.append(FunctionResult(
@@ -926,8 +1179,12 @@ def check_circular_dependencies(
             if resolved and resolved != mod.module_path:
                 graph[mod.module_path].add(resolved)
         # Loop invariant: graph[mod] updated for from_imports[0..j]
-        for from_mod, _ in mod.from_imports:
-            resolved = _resolve_to_known_module(from_mod, known_modules)
+        for from_mod, imported_name in mod.from_imports:
+            resolved = _resolve_from_import_target(
+                from_mod,
+                imported_name,
+                known_modules,
+            )
             if resolved and resolved != mod.module_path:
                 graph[mod.module_path].add(resolved)
 
@@ -964,6 +1221,18 @@ def check_circular_dependencies(
     return results
 
 
+@icontract.require(
+    lambda import_name: is_non_empty_string(import_name),
+    "import_name must be a non-empty string",
+)
+@icontract.require(
+    lambda known_modules: isinstance(known_modules, dict),
+    "known_modules must be a dictionary",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, str),
+    "result must be a string or None",
+)
 def _resolve_to_known_module(
     import_name: str,
     known_modules: dict[str, ModuleInfo],
@@ -1003,6 +1272,48 @@ def _resolve_to_known_module(
     return None
 
 
+@icontract.require(
+    lambda from_module: isinstance(from_module, str),
+    "from_module must be a string",
+)
+@icontract.require(
+    lambda imported_name: is_non_empty_string(imported_name),
+    "imported_name must be a non-empty string",
+)
+@icontract.require(
+    lambda known_modules: isinstance(known_modules, dict),
+    "known_modules must be a dictionary",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, str),
+    "result must be a string or None",
+)
+def _resolve_from_import_target(
+    from_module: str,
+    imported_name: str,
+    known_modules: dict[str, ModuleInfo],
+) -> str | None:
+    """Resolve a from-import to the most specific known internal module."""
+    if from_module:
+        combined = _resolve_to_known_module(f"{from_module}.{imported_name}", known_modules)
+        if combined is not None:
+            return combined
+
+        resolved = _resolve_to_known_module(from_module, known_modules)
+        if resolved is not None:
+            return resolved
+
+    return _resolve_to_known_module(imported_name, known_modules)
+
+
+@icontract.require(
+    lambda graph: isinstance(graph, dict),
+    "graph must be a dictionary",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
 def _find_cycles(graph: dict[str, set[str]]) -> list[tuple[str, ...]]:
     """Find all cycles in a directed graph using DFS coloring.
 
@@ -1179,6 +1490,14 @@ def check_assume_guarantee(
     return results
 
 
+@icontract.require(
+    lambda modules: isinstance(modules, list),
+    "modules must be a list",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, dict),
+    "result must be a dictionary",
+)
 def _build_module_function_map(
     modules: list[ModuleInfo],
 ) -> dict[str, dict[str, FunctionInfo]]:
@@ -1201,6 +1520,14 @@ def _build_module_function_map(
     return result
 
 
+@icontract.require(
+    lambda modules: isinstance(modules, list),
+    "modules must be a list",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, dict),
+    "result must be a dictionary",
+)
 def _build_import_resolution_map(
     modules: list[ModuleInfo],
 ) -> dict[str, dict[str, tuple[str, str]]]:
@@ -1223,6 +1550,11 @@ def _build_import_resolution_map(
     return result
 
 
+@icontract.require(lambda name: isinstance(name, str), "name must be a string")
+@icontract.ensure(
+    lambda result: isinstance(result, str),
+    "result must be a string",
+)
 def _normalize_module_name(name: str) -> str:
     """Normalize a module name for comparison by converting to dot-separated form.
 
@@ -1237,6 +1569,26 @@ def _normalize_module_name(name: str) -> str:
     return name.removesuffix(".py").replace("/", ".")
 
 
+@icontract.require(
+    lambda call_target: isinstance(call_target, str),
+    "call_target must be a string",
+)
+@icontract.require(
+    lambda caller_module: isinstance(caller_module, ModuleInfo),
+    "caller_module must be a ModuleInfo",
+)
+@icontract.require(
+    lambda import_map: isinstance(import_map, dict),
+    "import_map must be a dictionary",
+)
+@icontract.require(
+    lambda module_functions: isinstance(module_functions, dict),
+    "module_functions must be a dictionary",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, tuple),
+    "result must be a tuple or None",
+)
 def _resolve_call_target(
     call_target: str,
     caller_module: ModuleInfo,
@@ -1420,6 +1772,18 @@ def check_data_flow(
     return results
 
 
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda modules: isinstance(modules, list),
+    "modules must be a list",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, str),
+    "result must be a string",
+)
 def _find_file_for_module(
     module_path: str,
     modules: list[ModuleInfo],
@@ -1665,3 +2029,17 @@ def check_compositional(
         level_requested=5,
         duration_seconds=elapsed,
     )
+@icontract.require(lambda cls: isinstance(cls, ClassInfo), "cls must be a ClassInfo")
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_exception_class(cls: ClassInfo) -> bool:
+    """Check if a class participates in an exception hierarchy."""
+    # Loop invariant: checked bases[0..i] for exception-like base names
+    for base in cls.bases:
+        if base in {"Exception", "BaseException"}:
+            return True
+        if base.endswith(("Error", "Exception")):
+            return True
+    return False

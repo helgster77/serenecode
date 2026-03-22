@@ -64,3 +64,18 @@ class TestTransformTypeResults:
         ]
         result = transform_type_results(issues, 0.3)
         assert result.summary.failed_count == 2
+
+    def test_empty_message_does_not_request_suggestion(self) -> None:
+        issues = [
+            TypeIssue(
+                file="test.py",
+                line=10,
+                column=5,
+                severity="error",
+                message="",
+                code="arg-type",
+            ),
+        ]
+        result = transform_type_results(issues, 0.3)
+        assert result.summary.failed_count == 1
+        assert result.results[0].details[0].suggestion is None

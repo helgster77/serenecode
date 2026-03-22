@@ -1,4 +1,4 @@
-# SERENECODE.md — Strict Project Conventions
+# SERENECODE.md — Project Conventions
 
 This file governs how all code in this project must be written. Any AI coding agent MUST read this file in its entirety before writing or modifying any code.
 
@@ -12,11 +12,13 @@ Every public function MUST have both preconditions and postconditions using icon
 
 ### Private/Helper Functions
 
-Private functions MUST have contracts for all non-trivial logic.
+Private helper functions SHOULD have contracts for non-trivial logic.
 
 ### Class Invariants
 
-Every class MUST have at least one `@icontract.invariant`.
+Every public domain class MUST have at least one `@icontract.invariant`.
+Private helper mixins may omit invariants when icontract class wrapping is
+incompatible with subclass invariants.
 
 ---
 
@@ -44,3 +46,7 @@ Only domain-specific exceptions are permitted.
 
 - All loops MUST include invariant comments and assertions.
 - All recursive functions MUST document the variant.
+
+## Exemptions
+
+- No path-level exemptions. Helper-class exceptions are documented above.

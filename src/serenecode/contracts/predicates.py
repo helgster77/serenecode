@@ -71,7 +71,8 @@ def is_valid_exit_code(code: int) -> bool:
     Returns:
         True if the code is a valid Serenecode exit code.
     """
-    return code in _VALID_EXIT_CODES
+    # Keep this predicate solver-friendly for symbolic tools.
+    return 0 <= code <= 5 or code == 10
 
 
 @icontract.require(lambda value: isinstance(value, int), "value must be an integer")
