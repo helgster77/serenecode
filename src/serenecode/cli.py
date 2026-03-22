@@ -306,15 +306,19 @@ def _determine_exit_code(result: object) -> int:
 
     check_result: CheckResult = result  # type: ignore[assignment]
 
-    # Find the lowest failing level
-    # Loop invariant: min_level tracks the lowest failure level seen in results[0..i]
+    # Find the lowest failing level across all failed results
+    min_level = 10  # start above any valid level
+    # Loop invariant: min_level is the lowest failure level seen in results[0..i]
     for func_result in check_result.results:
         if func_result.status == CheckStatus.FAILED:
             # Loop invariant: checked details[0..j] for level
             for detail in func_result.details:
                 level_val = detail.level.value
-                if 1 <= level_val <= 5:
-                    return level_val
+                if 1 <= level_val <= 5 and level_val < min_level:
+                    min_level = level_val
+
+    if min_level <= 5:
+        return min_level
     return ExitCode.STRUCTURAL  # default to structural
 
 

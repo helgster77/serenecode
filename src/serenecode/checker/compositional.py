@@ -38,7 +38,6 @@ from serenecode.models import (
 # ---------------------------------------------------------------------------
 
 
-@icontract.invariant(lambda self: True, "frozen method signature data carrier")
 @dataclass(frozen=True)
 class MethodSignature:
     """A method signature from a Protocol or class."""
@@ -48,7 +47,6 @@ class MethodSignature:
     has_return_annotation: bool
 
 
-@icontract.invariant(lambda self: True, "frozen parameter info data carrier")
 @dataclass(frozen=True)
 class ParameterInfo:
     """A single function parameter with its type annotation."""
@@ -57,7 +55,6 @@ class ParameterInfo:
     annotation: str | None  # type annotation as string, or None if untyped
 
 
-@icontract.invariant(lambda self: True, "frozen function info data carrier")
 @dataclass(frozen=True)
 class FunctionInfo:
     """Full information about a function definition."""
@@ -72,7 +69,6 @@ class FunctionInfo:
     calls: tuple[str, ...]  # call target names extracted from body
 
 
-@icontract.invariant(lambda self: True, "frozen class info data carrier")
 @dataclass(frozen=True)
 class ClassInfo:
     """Information about a class definition."""
@@ -86,7 +82,6 @@ class ClassInfo:
     has_invariant: bool = False
 
 
-@icontract.invariant(lambda self: True, "frozen protocol info data carrier")
 @dataclass(frozen=True)
 class ProtocolInfo:
     """Information about a Protocol definition."""
@@ -96,7 +91,6 @@ class ProtocolInfo:
     methods: tuple[MethodSignature, ...]
 
 
-@icontract.invariant(lambda self: True, "frozen module info data carrier")
 @dataclass(frozen=True)
 class ModuleInfo:
     """Parsed information about a single module for compositional analysis."""

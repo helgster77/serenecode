@@ -36,7 +36,6 @@ from serenecode.models import (
 # ---------------------------------------------------------------------------
 
 
-@icontract.invariant(lambda self: True, "frozen data carrier")
 @dataclass(frozen=True)
 class IcontractNames:
     """Resolved icontract decorator names for a module.

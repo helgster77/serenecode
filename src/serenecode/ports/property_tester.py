@@ -12,10 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-import icontract
 
 
-@icontract.invariant(lambda self: True, "frozen property finding data carrier")
 @dataclass(frozen=True)
 class PropertyFinding:
     """A single finding from property-based testing.

@@ -67,10 +67,6 @@ class Detail:
     counterexample: dict[str, object] | None = None
     suggestion: str | None = None
 
-    @icontract.require(
-        lambda self: True,
-        "self must exist",
-    )
     @icontract.ensure(
         lambda result: isinstance(result, dict),
         "result must be a dictionary",
@@ -117,10 +113,6 @@ class FunctionResult:
     status: CheckStatus
     details: tuple[Detail, ...] = ()
 
-    @icontract.require(
-        lambda self: True,
-        "self must exist",
-    )
     @icontract.ensure(
         lambda result: isinstance(result, dict),
         "result must be a dictionary",
@@ -168,10 +160,6 @@ class CheckSummary:
     skipped_count: int
     duration_seconds: float
 
-    @icontract.require(
-        lambda self: True,
-        "self must exist",
-    )
     @icontract.ensure(
         lambda result: isinstance(result, dict),
         "result must be a dictionary",
@@ -183,10 +171,14 @@ class CheckSummary:
             "passed": self.passed_count,
             "failed": self.failed_count,
             "skipped": self.skipped_count,
+            "duration_seconds": self.duration_seconds,
         }
 
 
-@icontract.invariant(lambda self: True, "frozen result data carrier")
+@icontract.invariant(
+    lambda self: self.level_achieved <= self.level_requested,
+    "level_achieved must not exceed level_requested",
+)
 @dataclass(frozen=True)
 class CheckResult:
     """Complete result of a verification run.
@@ -208,10 +200,6 @@ class CheckResult:
         # Loop invariant: accumulated list contains only FAILED results seen so far
         return [r for r in self.results if r.status == CheckStatus.FAILED]
 
-    @icontract.require(
-        lambda self: True,
-        "self must exist",
-    )
     @icontract.ensure(
         lambda result: isinstance(result, dict),
         "result must be a dictionary",
@@ -220,14 +208,13 @@ class CheckResult:
         """Convert to a plain dictionary matching the JSON output spec."""
         return {
             "version": self.version,
+            "passed": self.passed,
+            "level_requested": self.level_requested,
+            "level_achieved": self.level_achieved,
             "summary": self.summary.to_dict(),
             "results": [r.to_dict() for r in self.results],
         }
 
-    @icontract.require(
-        lambda self: True,
-        "self must exist",
-    )
     @icontract.ensure(
         lambda result: isinstance(result, str),
         "result must be a string",
@@ -286,8 +273,12 @@ def make_check_result(
         duration_seconds=duration_seconds,
     )
 
+    # Only report as passed if at least one function passed and none failed
+    all_skipped = passed_count == 0 and failed_count == 0 and skipped_count > 0
+    passed = failed_count == 0 and not all_skipped
+
     return CheckResult(
-        passed=failed_count == 0,
+        passed=passed,
         level_requested=level_requested,
         level_achieved=min_achieved if failed_count > 0 else level_requested,
         results=results,

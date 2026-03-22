@@ -116,7 +116,6 @@ If issues are found, fix them before moving on.
 # ---------------------------------------------------------------------------
 
 
-@icontract.invariant(lambda self: True, "frozen result data carrier")
 @dataclass(frozen=True)
 class InitResult:
     """Result of project initialization.

@@ -12,10 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-import icontract
 
 
-@icontract.invariant(lambda self: True, "frozen type issue data carrier")
 @dataclass(frozen=True)
 class TypeIssue:
     """A single type checking issue reported by a backend like mypy.

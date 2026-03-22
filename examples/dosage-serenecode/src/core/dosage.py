@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import icontract
 
-from src.core.models import (
+from core.models import (
     ContraindicationResult,
     DoseResult,
     Drug,

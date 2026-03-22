@@ -12,10 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-import icontract
 
 
-@icontract.invariant(lambda self: True, "frozen symbolic finding data carrier")
 @dataclass(frozen=True)
 class SymbolicFinding:
     """A single finding from symbolic verification.

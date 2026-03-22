@@ -24,12 +24,13 @@ from serenecode.contracts.predicates import is_valid_verification_level
 from serenecode.models import (
     CheckResult,
     CheckStatus,
+    Detail,
     FunctionResult,
+    VerificationLevel,
     make_check_result,
 )
 
 
-@icontract.invariant(lambda self: True, "frozen source file data carrier")
 @dataclass(frozen=True)
 class SourceFile:
     """A source file to be verified.
@@ -85,7 +86,6 @@ def run_pipeline(
     """
     start_time = time.monotonic()
     all_results: list[FunctionResult] = []
-    current_level_achieved = level
 
     def _emit(msg: str) -> None:
         if progress is not None:
@@ -98,7 +98,6 @@ def run_pipeline(
         all_results.extend(level_1_results)
 
         if early_termination and _has_failures(level_1_results):
-            current_level_achieved = 1
             elapsed = time.monotonic() - start_time
             return make_check_result(
                 tuple(all_results),
@@ -113,7 +112,6 @@ def run_pipeline(
         all_results.extend(level_2_results)
 
         if early_termination and _has_failures(level_2_results):
-            current_level_achieved = 2
             elapsed = time.monotonic() - start_time
             return make_check_result(
                 tuple(all_results),
@@ -128,7 +126,6 @@ def run_pipeline(
         all_results.extend(level_3_results)
 
         if early_termination and _has_failures(level_3_results):
-            current_level_achieved = 3
             elapsed = time.monotonic() - start_time
             return make_check_result(
                 tuple(all_results),
@@ -143,7 +140,6 @@ def run_pipeline(
         all_results.extend(level_4_results)
 
         if early_termination and _has_failures(level_4_results):
-            current_level_achieved = 4
             elapsed = time.monotonic() - start_time
             return make_check_result(
                 tuple(all_results),
@@ -251,8 +247,22 @@ def _run_level_3(
             findings = property_tester.test_module(sf.importable_module)
             check_result = transform_property_results(findings, sf.file_path, 0.0)
             results.extend(check_result.results)
-        except Exception:
-            pass  # Skip modules that can't be tested
+        except Exception as exc:
+            # Record the error as a skipped result rather than silently dropping it
+            results.append(FunctionResult(
+                function="<module>",
+                file=sf.file_path,
+                line=1,
+                level_requested=3,
+                level_achieved=0,
+                status=CheckStatus.SKIPPED,
+                details=(Detail(
+                    level=VerificationLevel.PROPERTIES,
+                    tool="hypothesis",
+                    finding_type="error",
+                    message=f"Property testing skipped for '{sf.importable_module}': {exc}",
+                ),),
+            ))
     return results
 
 
@@ -287,7 +297,8 @@ def _run_level_4(
     completed = 0
 
     def _verify_one(sf: SourceFile) -> tuple[SourceFile, list[SymbolicFinding] | None, str | None]:
-        assert sf.importable_module is not None
+        if sf.importable_module is None:
+            return (sf, None, "No importable module")
         try:
             findings = symbolic_checker.verify_module(sf.importable_module)
             return (sf, findings, None)
@@ -305,8 +316,7 @@ def _run_level_4(
             module_name = sf.importable_module
             if error is not None:
                 emit(f"  [{completed}/{total}] Skipped {module_name}: {error}")
-            else:
-                assert findings is not None
+            elif findings is not None:
                 emit(f"  [{completed}/{total}] Done {module_name}")
                 check_result = transform_symbolic_results(findings, sf.file_path, 0.0)
                 results.extend(check_result.results)

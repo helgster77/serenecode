@@ -19,7 +19,6 @@ import icontract
 from serenecode.contracts.predicates import is_non_empty_string
 
 
-@icontract.invariant(lambda self: True, "frozen configuration data carrier")
 @dataclass(frozen=True)
 class ContractConfig:
     """Configuration for contract requirements."""
@@ -30,7 +29,6 @@ class ContractConfig:
     require_on_private: bool
 
 
-@icontract.invariant(lambda self: True, "frozen configuration data carrier")
 @dataclass(frozen=True)
 class TypeConfig:
     """Configuration for type annotation requirements."""
@@ -40,7 +38,6 @@ class TypeConfig:
     require_parameterized_generics: bool
 
 
-@icontract.invariant(lambda self: True, "frozen configuration data carrier")
 @dataclass(frozen=True)
 class ArchitectureConfig:
     """Configuration for architectural rules."""
@@ -49,7 +46,6 @@ class ArchitectureConfig:
     core_module_patterns: tuple[str, ...]
 
 
-@icontract.invariant(lambda self: True, "frozen configuration data carrier")
 @dataclass(frozen=True)
 class ErrorHandlingConfig:
     """Configuration for error handling rules."""
@@ -58,7 +54,6 @@ class ErrorHandlingConfig:
     forbidden_exception_types: tuple[str, ...]
 
 
-@icontract.invariant(lambda self: True, "frozen configuration data carrier")
 @dataclass(frozen=True)
 class LoopRecursionConfig:
     """Configuration for loop and recursion documentation rules."""
@@ -67,7 +62,6 @@ class LoopRecursionConfig:
     require_recursion_variant_comments: bool
 
 
-@icontract.invariant(lambda self: True, "frozen configuration data carrier")
 @dataclass(frozen=True)
 class NamingConfig:
     """Configuration for naming conventions."""
@@ -77,7 +71,6 @@ class NamingConfig:
     function_style: str
 
 
-@icontract.invariant(lambda self: True, "frozen configuration data carrier")
 @dataclass(frozen=True)
 class ExemptionConfig:
     """Configuration for exempt paths."""
@@ -85,7 +78,6 @@ class ExemptionConfig:
     exempt_paths: tuple[str, ...]
 
 
-@icontract.invariant(lambda self: True, "frozen configuration data carrier")
 @dataclass(frozen=True)
 class SerenecodeConfig:
     """Complete Serenecode configuration parsed from SERENECODE.md.

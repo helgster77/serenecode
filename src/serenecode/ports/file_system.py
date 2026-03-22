@@ -15,7 +15,6 @@ from typing import Protocol
 import icontract
 
 
-@icontract.invariant(lambda self: True, "protocol interface")
 class FileReader(Protocol):
     """Port for reading file contents.
 
@@ -63,7 +62,6 @@ class FileReader(Protocol):
         ...
 
 
-@icontract.invariant(lambda self: True, "protocol interface")
 class FileWriter(Protocol):
     """Port for writing file contents.
 
