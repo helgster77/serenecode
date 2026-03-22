@@ -36,6 +36,10 @@ from serenecode.models import (
 # ---------------------------------------------------------------------------
 
 
+@icontract.invariant(
+    lambda self: isinstance(self.require_names, frozenset) and isinstance(self.ensure_names, frozenset),
+    "Decorator name sets must be frozensets",
+)
 @dataclass(frozen=True)
 class IcontractNames:
     """Resolved icontract decorator names for a module.

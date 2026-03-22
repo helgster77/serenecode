@@ -31,6 +31,10 @@ from serenecode.models import (
 )
 
 
+@icontract.invariant(
+    lambda self: len(self.file_path) > 0,
+    "Source file must have a non-empty file path",
+)
 @dataclass(frozen=True)
 class SourceFile:
     """A source file to be verified.

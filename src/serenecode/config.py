@@ -19,6 +19,10 @@ import icontract
 from serenecode.contracts.predicates import is_non_empty_string
 
 
+@icontract.invariant(
+    lambda self: not self.require_on_private or self.require_on_public_functions,
+    "Private contract requirements imply public contract requirements",
+)
 @dataclass(frozen=True)
 class ContractConfig:
     """Configuration for contract requirements."""
@@ -29,6 +33,10 @@ class ContractConfig:
     require_on_private: bool
 
 
+@icontract.invariant(
+    lambda self: not self.forbid_any_in_core or self.require_annotations,
+    "Forbidding Any in core implies annotations are required",
+)
 @dataclass(frozen=True)
 class TypeConfig:
     """Configuration for type annotation requirements."""
@@ -38,6 +46,11 @@ class TypeConfig:
     require_parameterized_generics: bool
 
 
+@icontract.invariant(
+    lambda self: isinstance(self.forbidden_imports_in_core, tuple)
+    and isinstance(self.core_module_patterns, tuple),
+    "Import and pattern lists must be tuples",
+)
 @dataclass(frozen=True)
 class ArchitectureConfig:
     """Configuration for architectural rules."""
@@ -46,6 +59,10 @@ class ArchitectureConfig:
     core_module_patterns: tuple[str, ...]
 
 
+@icontract.invariant(
+    lambda self: isinstance(self.forbidden_exception_types, tuple),
+    "Forbidden exception types must be a tuple",
+)
 @dataclass(frozen=True)
 class ErrorHandlingConfig:
     """Configuration for error handling rules."""
@@ -54,6 +71,11 @@ class ErrorHandlingConfig:
     forbidden_exception_types: tuple[str, ...]
 
 
+@icontract.invariant(
+    lambda self: not self.require_recursion_variant_comments
+    or self.require_loop_invariant_comments,
+    "Recursion variant requirements imply loop invariant requirements",
+)
 @dataclass(frozen=True)
 class LoopRecursionConfig:
     """Configuration for loop and recursion documentation rules."""
@@ -62,6 +84,12 @@ class LoopRecursionConfig:
     require_recursion_variant_comments: bool
 
 
+@icontract.invariant(
+    lambda self: self.module_style in ("snake_case", "PascalCase", "UPPER_SNAKE_CASE")
+    and self.class_style in ("snake_case", "PascalCase", "UPPER_SNAKE_CASE")
+    and self.function_style in ("snake_case", "PascalCase", "UPPER_SNAKE_CASE"),
+    "Naming styles must be recognized conventions",
+)
 @dataclass(frozen=True)
 class NamingConfig:
     """Configuration for naming conventions."""
@@ -71,6 +99,10 @@ class NamingConfig:
     function_style: str
 
 
+@icontract.invariant(
+    lambda self: isinstance(self.exempt_paths, tuple),
+    "Exempt paths must be a tuple",
+)
 @dataclass(frozen=True)
 class ExemptionConfig:
     """Configuration for exempt paths."""
@@ -78,6 +110,14 @@ class ExemptionConfig:
     exempt_paths: tuple[str, ...]
 
 
+@icontract.invariant(
+    lambda self: 1 <= self.recommended_level <= 5,
+    "Recommended level must be between 1 and 5",
+)
+@icontract.invariant(
+    lambda self: self.template_name in ("default", "strict", "minimal"),
+    "Template name must be a recognized template",
+)
 @dataclass(frozen=True)
 class SerenecodeConfig:
     """Complete Serenecode configuration parsed from SERENECODE.md.

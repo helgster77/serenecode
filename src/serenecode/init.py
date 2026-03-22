@@ -116,6 +116,10 @@ If issues are found, fix them before moving on.
 # ---------------------------------------------------------------------------
 
 
+@icontract.invariant(
+    lambda self: not (self.claude_md_created and self.claude_md_updated),
+    "CLAUDE.md cannot be both created and updated in the same operation",
+)
 @dataclass(frozen=True)
 class InitResult:
     """Result of project initialization.

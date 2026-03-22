@@ -38,6 +38,10 @@ from serenecode.models import (
 # ---------------------------------------------------------------------------
 
 
+@icontract.invariant(
+    lambda self: len(self.name) > 0,
+    "Method name must be non-empty",
+)
 @dataclass(frozen=True)
 class MethodSignature:
     """A method signature from a Protocol or class."""
@@ -47,6 +51,10 @@ class MethodSignature:
     has_return_annotation: bool
 
 
+@icontract.invariant(
+    lambda self: len(self.name) > 0,
+    "Parameter name must be non-empty",
+)
 @dataclass(frozen=True)
 class ParameterInfo:
     """A single function parameter with its type annotation."""
@@ -55,6 +63,10 @@ class ParameterInfo:
     annotation: str | None  # type annotation as string, or None if untyped
 
 
+@icontract.invariant(
+    lambda self: len(self.name) > 0 and self.line >= 1,
+    "Function must have a non-empty name and valid line number",
+)
 @dataclass(frozen=True)
 class FunctionInfo:
     """Full information about a function definition."""
@@ -69,6 +81,10 @@ class FunctionInfo:
     calls: tuple[str, ...]  # call target names extracted from body
 
 
+@icontract.invariant(
+    lambda self: len(self.name) > 0 and self.line >= 1,
+    "Class must have a non-empty name and valid line number",
+)
 @dataclass(frozen=True)
 class ClassInfo:
     """Information about a class definition."""
@@ -82,6 +98,10 @@ class ClassInfo:
     has_invariant: bool = False
 
 
+@icontract.invariant(
+    lambda self: len(self.name) > 0 and self.line >= 1,
+    "Protocol must have a non-empty name and valid line number",
+)
 @dataclass(frozen=True)
 class ProtocolInfo:
     """Information about a Protocol definition."""
@@ -91,6 +111,10 @@ class ProtocolInfo:
     methods: tuple[MethodSignature, ...]
 
 
+@icontract.invariant(
+    lambda self: len(self.file_path) > 0 and len(self.module_path) > 0,
+    "Module must have non-empty file and module paths",
+)
 @dataclass(frozen=True)
 class ModuleInfo:
     """Parsed information about a single module for compositional analysis."""
