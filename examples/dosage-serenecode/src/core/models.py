@@ -33,23 +33,6 @@ class DosageError(_DosageErrorBase):
         """Initialize DosageError with a non-empty message."""
         super().__init__(message)
 
-class _Frozen:
-    """Mixin that prevents attribute modification after ``__init__`` completes.
-
-    Subclasses must set ``self._frozen = True`` as the last line of ``__init__``.
-    The invariant on ``_Frozen`` is omitted because icontract's class
-    wrapper conflicts with subclass invariants for this mixin pattern.
-    Immutability itself is enforced structurally by ``__setattr__``.
-    """
-
-    def __setattr__(self, name: str, value: object) -> None:
-        """Set attribute only if the instance is not yet frozen."""
-        if getattr(self, "_frozen", False):
-            raise DosageError(
-                f"Cannot modify attribute '{name}' on frozen {type(self).__name__}"
-            )
-        object.__setattr__(self, name, value)
-
 
 @icontract.invariant(
     lambda self: self.dose_mg > 0,
@@ -67,7 +50,7 @@ class _Frozen:
     lambda self: math.isfinite(self.volume_ml),
     "Volume must be finite",
 )
-class DoseResult(_Frozen):
+class DoseResult:
     """Result of a dose calculation."""
 
     @icontract.require(
@@ -100,6 +83,14 @@ class DoseResult(_Frozen):
         self.volume_ml = volume_ml
         self.was_capped = was_capped
         self._frozen = True
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Prevent mutation after initialization."""
+        if getattr(self, "_frozen", False):
+            raise DosageError(
+                f"Cannot modify attribute '{name}' on frozen {type(self).__name__}"
+            )
+        object.__setattr__(self, name, value)
 
 
 @icontract.invariant(
@@ -134,7 +125,7 @@ class DoseResult(_Frozen):
     lambda self: self.is_safe == (self.daily_total_mg <= self.max_daily_mg),
     "is_safe must be True iff daily total is within max",
 )
-class SafetyResult(_Frozen):
+class SafetyResult:
     """Result of a daily safety check."""
 
     @icontract.require(
@@ -183,12 +174,24 @@ class SafetyResult(_Frozen):
         self.utilization_pct = utilization_pct
         self._frozen = True
 
+    def __setattr__(self, name: str, value: object) -> None:
+        """Prevent mutation after initialization."""
+        if getattr(self, "_frozen", False):
+            raise DosageError(
+                f"Cannot modify attribute '{name}' on frozen {type(self).__name__}"
+            )
+        object.__setattr__(self, name, value)
+
 
 @icontract.invariant(
     lambda self: self.is_safe == (len(self.conflicts) == 0),
     "is_safe must be True iff conflicts is empty",
 )
-class ContraindicationResult(_Frozen):
+@icontract.invariant(
+    lambda self: isinstance(self.conflicts, tuple),
+    "conflicts must be stored immutably",
+)
+class ContraindicationResult:
     """Result of a contraindication check."""
 
     @icontract.require(
@@ -203,11 +206,19 @@ class ContraindicationResult(_Frozen):
         lambda self: self.is_safe == (len(self.conflicts) == 0),
         "is_safe must be True iff conflicts is empty",
     )
-    def __init__(self, is_safe: bool, conflicts: list[str]) -> None:
+    def __init__(self, is_safe: bool, conflicts: tuple[str, ...]) -> None:
         """Initialize a ContraindicationResult with safety status and conflict list."""
         self.is_safe = is_safe
-        self.conflicts = list(conflicts)
+        self.conflicts = tuple(conflicts)
         self._frozen = True
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Prevent mutation after initialization."""
+        if getattr(self, "_frozen", False):
+            raise DosageError(
+                f"Cannot modify attribute '{name}' on frozen {type(self).__name__}"
+            )
+        object.__setattr__(self, name, value)
 
 
 @icontract.invariant(
@@ -234,7 +245,11 @@ class ContraindicationResult(_Frozen):
     lambda self: self.creatinine_clearance <= 200,
     "Creatinine clearance must be at most 200 mL/min",
 )
-class Patient(_Frozen):
+@icontract.invariant(
+    lambda self: isinstance(self.current_medications, tuple),
+    "current_medications must be stored immutably",
+)
+class Patient:
     """A patient with weight, age, kidney function, and current medications."""
 
     @icontract.require(
@@ -262,14 +277,22 @@ class Patient(_Frozen):
         weight_kg: float,
         age_years: float,
         creatinine_clearance: float,
-        current_medications: list[str],
+        current_medications: tuple[str, ...],
     ) -> None:
         """Initialize a Patient with weight, age, kidney function, and medications."""
         self.weight_kg = weight_kg
         self.age_years = age_years
         self.creatinine_clearance = creatinine_clearance
-        self.current_medications = list(current_medications)
+        self.current_medications = tuple(current_medications)
         self._frozen = True
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Prevent mutation after initialization."""
+        if getattr(self, "_frozen", False):
+            raise DosageError(
+                f"Cannot modify attribute '{name}' on frozen {type(self).__name__}"
+            )
+        object.__setattr__(self, name, value)
 
 
 @icontract.invariant(
@@ -340,7 +363,11 @@ class Patient(_Frozen):
     lambda self: self.doses_per_day <= 24,
     "Doses per day must be at most 24",
 )
-class Drug(_Frozen):
+@icontract.invariant(
+    lambda self: isinstance(self.contraindicated_with, frozenset),
+    "contraindicated_with must be stored immutably",
+)
+class Drug:
     """A drug with dosing parameters and contraindication information."""
 
     @icontract.require(
@@ -434,3 +461,11 @@ class Drug(_Frozen):
         self.doses_per_day = doses_per_day
         self.contraindicated_with = frozenset(contraindicated_with)
         self._frozen = True
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Prevent mutation after initialization."""
+        if getattr(self, "_frozen", False):
+            raise DosageError(
+                f"Cannot modify attribute '{name}' on frozen {type(self).__name__}"
+            )
+        object.__setattr__(self, name, value)

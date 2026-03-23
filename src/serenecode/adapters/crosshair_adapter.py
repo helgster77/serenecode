@@ -11,6 +11,7 @@ subprocess execution) and is exempt from full contract requirements.
 
 from __future__ import annotations
 
+import collections.abc
 import inspect
 import multiprocessing
 import multiprocessing.queues
@@ -19,7 +20,9 @@ import re
 import subprocess
 import sys
 import time
+import types
 import typing
+from pathlib import Path
 from typing import Any
 
 import icontract
@@ -90,9 +93,37 @@ def _discover_cli_targets(
             and _has_icontract_contracts(obj)
             and _is_symbolic_friendly_target(obj)
         ):
-            targets.append((f"{module_path}.{name}", name))
+            targets.append((_cli_target_reference(module_path, name, obj), name))
 
     return targets
+
+
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda function_name: is_non_empty_string(function_name),
+    "function_name must be a non-empty string",
+)
+@icontract.require(lambda func: callable(func), "func must be callable")
+@icontract.ensure(lambda result: is_non_empty_string(result), "result must be a non-empty string")
+def _cli_target_reference(
+    module_path: str,
+    function_name: str,
+    func: Any,
+) -> str:
+    """Build a CrossHair CLI target for a module/function pair."""
+    path = Path(module_path)
+    if path.is_absolute() and path.suffix == ".py":
+        line_number: int | None
+        try:
+            line_number = inspect.getsourcelines(inspect.unwrap(func))[1]
+        except (OSError, TypeError):
+            line_number = getattr(getattr(inspect.unwrap(func), "__code__", None), "co_firstlineno", None)
+        if isinstance(line_number, int) and line_number >= 1:
+            return f"{module_path}:{line_number}"
+    return f"{module_path}.{function_name}"
 
 
 @icontract.require(lambda func: callable(func), "func must be callable")
@@ -118,7 +149,8 @@ def _is_symbolic_friendly_target(func: Any) -> bool:
         resolved_hints = typing.get_type_hints(func)
         signature = inspect.signature(func)
     except Exception:
-        return True
+        resolved_hints = {}
+        signature = inspect.signature(func)
 
     # Loop invariant: every parameter seen so far is either primitive-like or has
     # caused the function to be rejected as too object-heavy for CLI verification.
@@ -126,14 +158,47 @@ def _is_symbolic_friendly_target(func: Any) -> bool:
         if name in ("self", "cls"):
             continue
         annotation = resolved_hints.get(name, parameter.annotation)
-        if annotation is inspect.Parameter.empty or not inspect.isclass(annotation):
-            continue
-
-        module_name = getattr(annotation, "__module__", "")
-        if module_name not in {"builtins", "typing", "types", "collections.abc"}:
+        if not _is_symbolic_friendly_annotation(annotation):
             return False
 
     return True
+
+
+@icontract.require(
+    lambda annotation: annotation is inspect.Parameter.empty or isinstance(annotation, object),
+    "annotation must be a Python annotation object",
+)
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _is_symbolic_friendly_annotation(annotation: Any) -> bool:
+    """Check whether an annotation is simple enough for direct CLI verification."""
+    # Variant: the remaining annotation nesting decreases on each recursive call into args.
+    if annotation is inspect.Parameter.empty or annotation is typing.Any:
+        return True
+    if annotation in {bool, int, float, str, bytes, object, type(None)}:
+        return True
+
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+
+    if origin is typing.Literal:
+        return True
+    if origin in (typing.Union, types.UnionType):
+        return all(_is_symbolic_friendly_annotation(arg) for arg in args)
+    if origin in (list, set, frozenset):
+        return len(args) == 1 and _is_symbolic_friendly_annotation(args[0])
+    if origin is tuple:
+        if len(args) == 2 and args[1] is Ellipsis:
+            return _is_symbolic_friendly_annotation(args[0])
+        return all(arg is not Ellipsis and _is_symbolic_friendly_annotation(arg) for arg in args)
+    if origin is dict:
+        return len(args) == 2 and all(_is_symbolic_friendly_annotation(arg) for arg in args)
+    if origin in (typing.Callable, collections.abc.Callable):
+        return False
+    if inspect.isclass(annotation):
+        module_name = getattr(annotation, "__module__", "")
+        return module_name in {"builtins", "typing", "types", "collections.abc"}
+
+    return False
 
 
 @icontract.invariant(
@@ -385,9 +450,20 @@ class CrossHairSymbolicChecker:
             return []
 
         findings: list[SymbolicFinding] = []
+        deadline = time.monotonic() + self._module_timeout
+        base_timeout = max(per_condition_timeout * 4, per_path_timeout * 8)
 
         # Loop invariant: findings contains results for targets[0..i]
         for target, function_name in targets:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                findings.append(_make_module_timeout_finding(
+                    module_path,
+                    self._module_timeout,
+                ))
+                break
+
+            timeout_seconds = min(base_timeout, remaining)
             try:
                 env = _subprocess_env(search_paths)
                 result = subprocess.run(
@@ -400,10 +476,16 @@ class CrossHairSymbolicChecker:
                     ],
                     capture_output=True,
                     text=True,
-                    timeout=max(per_condition_timeout * 4, per_path_timeout * 8),
+                    timeout=timeout_seconds,
                     env=env,
                 )
             except subprocess.TimeoutExpired:
+                if timeout_seconds < base_timeout:
+                    findings.append(_make_module_timeout_finding(
+                        module_path,
+                        self._module_timeout,
+                    ))
+                    break
                 findings.append(SymbolicFinding(
                     function_name=function_name,
                     module_path=module_path,
@@ -918,6 +1000,32 @@ def _parse_cli_output(
         ))
 
     return findings
+
+
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda module_timeout: is_positive_int(module_timeout),
+    "module_timeout must be positive",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, SymbolicFinding),
+    "result must be a SymbolicFinding",
+)
+def _make_module_timeout_finding(
+    module_path: str,
+    module_timeout: int,
+) -> SymbolicFinding:
+    """Create a module-level timeout finding for CLI-backed verification."""
+    return SymbolicFinding(
+        function_name="<module>",
+        module_path=module_path,
+        outcome="timeout",
+        message=f"Module verification timed out after {module_timeout}s",
+        duration_seconds=float(module_timeout),
+    )
 
 
 @icontract.require(

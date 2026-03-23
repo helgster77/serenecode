@@ -355,9 +355,9 @@ def config_for_template(template_name: str) -> SerenecodeConfig:
 def parse_serenecode_md(content: str) -> SerenecodeConfig:
     """Parse a SERENECODE.md file content into a SerenecodeConfig.
 
-    Phase 1 implementation: detects which template the content most
-    closely matches by looking for key section headings, and extracts
-    exemption paths from the Exemptions section.
+    Uses template detection as a starting point, then applies supported
+    rule overrides extracted from the file content so local edits still
+    influence the active verification policy.
 
     Args:
         content: The full text content of a SERENECODE.md file.
@@ -369,21 +369,157 @@ def parse_serenecode_md(content: str) -> SerenecodeConfig:
     template = _detect_template(content)
     config = config_for_template(template)
     exempt_paths = _extract_exemptions(content)
+    return _apply_content_overrides(content, config, exempt_paths)
 
-    if exempt_paths is not None:
-        config = SerenecodeConfig(
-            contract_requirements=config.contract_requirements,
-            type_requirements=config.type_requirements,
-            architecture_rules=config.architecture_rules,
-            error_handling_rules=config.error_handling_rules,
-            loop_recursion_rules=config.loop_recursion_rules,
-            naming_conventions=config.naming_conventions,
-            exemptions=ExemptionConfig(exempt_paths=exempt_paths),
-            template_name=config.template_name,
-            recommended_level=config.recommended_level,
+
+@icontract.require(
+    lambda content: isinstance(content, str),
+    "content must be a string",
+)
+@icontract.require(
+    lambda config: isinstance(config, SerenecodeConfig),
+    "config must be a SerenecodeConfig",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, SerenecodeConfig),
+    "result must be a SerenecodeConfig",
+)
+def _apply_content_overrides(
+    content: str,
+    config: SerenecodeConfig,
+    exempt_paths: tuple[str, ...] | None,
+) -> SerenecodeConfig:
+    """Apply supported rule overrides derived from SERENECODE.md content."""
+    require_domain_exceptions = _matches_rule(
+        content,
+        r"Core domain functions raise domain-specific exceptions",
+        config.error_handling_rules.require_domain_exceptions,
+    )
+    forbidden_exception_types = _extract_forbidden_exception_types(content)
+
+    contract_requirements = ContractConfig(
+        require_on_public_functions=config.contract_requirements.require_on_public_functions,
+        require_on_classes=_matches_rule(
+            content,
+            r"Every class[^\n]*MUST[^\n]*@icontract\.invariant",
+            config.contract_requirements.require_on_classes,
+        ),
+        require_description_strings=_matches_rule(
+            content,
+            r"Every `@icontract\.require` and `@icontract\.ensure` MUST include a human-readable description string",
+            config.contract_requirements.require_description_strings,
+        ),
+        require_on_private=_matches_rule(
+            content,
+            r"Private(?:/Helper)?\s+Functions?[^\n]*MUST\s+have\s+contracts|Private(?: functions|/Helper Functions)[^\n]*MUST\s+have\s+contracts",
+            config.contract_requirements.require_on_private,
+        ),
+    )
+
+    type_requirements = TypeConfig(
+        require_annotations=config.type_requirements.require_annotations,
+        forbid_any_in_core=_matches_rule(
+            content,
+            r"No use of `Any` in core modules|No use of `Any` anywhere",
+            config.type_requirements.forbid_any_in_core,
+        ),
+        require_parameterized_generics=_matches_rule(
+            content,
+            r"Generic types must be fully parameterized",
+            config.type_requirements.require_parameterized_generics,
+        ),
+    )
+
+    error_handling_rules = ErrorHandlingConfig(
+        require_domain_exceptions=require_domain_exceptions,
+        forbidden_exception_types=(
+            forbidden_exception_types
+            if forbidden_exception_types is not None
+            else config.error_handling_rules.forbidden_exception_types
+            if require_domain_exceptions
+            else ()
+        ),
+    )
+
+    loop_recursion_rules = LoopRecursionConfig(
+        require_loop_invariant_comments=_matches_rule(
+            content,
+            r"Loops? MUST include a comment describing the loop invariant|Every loop MUST include a comment describing the loop invariant",
+            config.loop_recursion_rules.require_loop_invariant_comments,
+        ),
+        require_recursion_variant_comments=_matches_rule(
+            content,
+            r"Recursive functions MUST include a comment documenting the variant|Recursive functions MUST document the variant",
+            config.loop_recursion_rules.require_recursion_variant_comments,
+        ),
+    )
+
+    needs_core_patterns = (
+        (
+            type_requirements.forbid_any_in_core
+            or error_handling_rules.require_domain_exceptions
         )
+        and len(config.architecture_rules.core_module_patterns) == 0
+    )
+    architecture_rules = ArchitectureConfig(
+        forbidden_imports_in_core=config.architecture_rules.forbidden_imports_in_core,
+        core_module_patterns=(
+            _DEFAULT_CORE_PATTERNS
+            if needs_core_patterns
+            else config.architecture_rules.core_module_patterns
+        ),
+    )
 
-    return config
+    exemptions = ExemptionConfig(
+        exempt_paths=(
+            config.exemptions.exempt_paths
+            if exempt_paths is None
+            else exempt_paths
+        ),
+    )
+
+    return SerenecodeConfig(
+        contract_requirements=contract_requirements,
+        type_requirements=type_requirements,
+        architecture_rules=architecture_rules,
+        error_handling_rules=error_handling_rules,
+        loop_recursion_rules=loop_recursion_rules,
+        naming_conventions=config.naming_conventions,
+        exemptions=exemptions,
+        template_name=config.template_name,
+        recommended_level=config.recommended_level,
+    )
+
+
+@icontract.require(
+    lambda content: isinstance(content, str),
+    "content must be a string",
+)
+@icontract.require(
+    lambda pattern: isinstance(pattern, str),
+    "pattern must be a string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _matches_rule(content: str, pattern: str, default: bool) -> bool:
+    """Return a parsed rule value when the file mentions it, else keep default."""
+    if re.search(pattern, content, re.IGNORECASE):
+        return True
+    return default
+
+
+@icontract.require(lambda content: isinstance(content, str), "content must be a string")
+@icontract.ensure(lambda result: result is None or isinstance(result, tuple), "result must be a tuple or None")
+def _extract_forbidden_exception_types(content: str) -> tuple[str, ...] | None:
+    """Extract explicitly forbidden exception type names from SERENECODE.md content."""
+    line_match = re.search(r"(?:Never raise bare|never bare)([^\n]+)", content)
+    if line_match is None:
+        return None
+
+    exception_types = tuple(re.findall(r"`([^`]+)`", line_match.group(0)))
+    return exception_types if exception_types else None
 
 
 @icontract.require(lambda content: isinstance(content, str), "content must be a string")
@@ -411,9 +547,7 @@ def _detect_template(content: str) -> str:
 
     # Check for strict indicators
     has_private_must = bool(re.search(r"Private.*MUST\s+have\s+contracts", content))
-    has_no_exemptions = "## Exemptions" not in content
-
-    if has_private_must and has_no_exemptions:
+    if has_private_must:
         return "strict"
 
     return "default"
@@ -455,6 +589,66 @@ def _extract_exemptions(content: str) -> tuple[str, ...] | None:
 
 
 @icontract.require(
+    lambda path: isinstance(path, str),
+    "path must be a string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, tuple),
+    "result must be a tuple",
+)
+def _path_segments(path: str) -> tuple[str, ...]:
+    """Normalize a path-like string into slash-separated segments."""
+    normalized = path.replace("\\", "/").strip("/")
+    if not normalized:
+        return ()
+    return tuple(segment for segment in normalized.split("/") if segment and segment != ".")
+
+
+@icontract.require(
+    lambda module_path: isinstance(module_path, str),
+    "module_path must be a string",
+)
+@icontract.require(
+    lambda pattern: isinstance(pattern, str),
+    "pattern must be a string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _path_pattern_matches(module_path: str, pattern: str) -> bool:
+    """Check whether a configured path pattern matches a module path by segments."""
+    module_segments = _path_segments(module_path)
+    pattern_segments = _path_segments(pattern)
+    if not module_segments or not pattern_segments:
+        return False
+
+    if pattern.endswith(("/", "\\")):
+        window_size = len(pattern_segments)
+        if window_size > len(module_segments):
+            return False
+
+        # Loop invariant: no prior window of module_segments matched pattern_segments.
+        for index in range(len(module_segments) - window_size + 1):
+            if module_segments[index:index + window_size] == pattern_segments:
+                return True
+        return False
+
+    if len(pattern_segments) == 1:
+        return module_segments[-1] == pattern_segments[0]
+
+    window_size = len(pattern_segments)
+    if window_size > len(module_segments):
+        return False
+
+    # Loop invariant: no prior window of module_segments matched pattern_segments.
+    for index in range(len(module_segments) - window_size + 1):
+        if module_segments[index:index + window_size] == pattern_segments:
+            return True
+    return False
+
+
+@icontract.require(
     lambda module_path: isinstance(module_path, str),
     "module_path must be a string",
 )
@@ -474,7 +668,7 @@ def is_core_module(module_path: str, config: SerenecodeConfig) -> bool:
     """
     # Loop invariant: result is True if any pattern in patterns[0..i] matches
     for pattern in config.architecture_rules.core_module_patterns:
-        if pattern in module_path:
+        if _path_pattern_matches(module_path, pattern):
             return True
     return False
 
@@ -499,6 +693,6 @@ def is_exempt_module(module_path: str, config: SerenecodeConfig) -> bool:
     """
     # Loop invariant: result is True if any path in exempt_paths[0..i] matches
     for exempt_path in config.exemptions.exempt_paths:
-        if exempt_path in module_path:
+        if _path_pattern_matches(module_path, exempt_path):
             return True
     return False

@@ -7,6 +7,8 @@ error handling, and edge cases.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from serenecode.adapters.hypothesis_adapter import (
@@ -104,6 +106,33 @@ class TestHypothesisAdapter:
                 "verified", "postcondition_violated", "crash",
                 "skipped", "precondition_error",
             )
+
+    def test_result_model_function_is_actually_property_tested(self, tmp_path: Path) -> None:
+        module_file = tmp_path / "non_property_friendly.py"
+        module_file.write_text(
+            '''\
+"""Module docstring."""
+
+import icontract
+from serenecode.models import CheckResult
+
+
+@icontract.require(lambda x: True, "accept any result")
+@icontract.ensure(lambda result: result >= 0, "result stays non-negative")
+def count_result(x: CheckResult) -> int:
+    """Return a stable count for the supplied result graph."""
+    return 0
+''',
+            encoding="utf-8",
+        )
+
+        tester = HypothesisPropertyTester(allow_code_execution=True)
+        findings = tester.test_module(str(module_file), max_examples=5)
+
+        assert len(findings) == 1
+        assert findings[0].function_name == "count_result"
+        assert findings[0].passed is True
+        assert findings[0].finding_type == "verified"
 
 
 class TestStrategyDerivation:

@@ -111,6 +111,14 @@ class TestFormatJson:
         parsed = json.loads(output)
         assert "timestamp" in parsed
 
+    def test_has_top_level_status_and_levels(self) -> None:
+        result = _make_sample_result()
+        output = format_json(result)
+        parsed = json.loads(output)
+        assert parsed["passed"] is False
+        assert parsed["level_requested"] == 1
+        assert parsed["level_achieved"] == 0
+
     def test_has_summary(self) -> None:
         result = _make_sample_result()
         output = format_json(result)

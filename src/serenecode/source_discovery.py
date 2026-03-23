@@ -103,23 +103,17 @@ def build_source_files(
 )
 def find_serenecode_md(path: str, reader: FileReader) -> str | None:
     """Find SERENECODE.md by searching up from the given path."""
-    candidates: list[str] = []
     current = _normalize_search_root(path)
 
-    # Loop invariant: candidates contains unique SERENECODE.md paths from current and checked parents
-    for _ in range(10):
+    # Loop invariant: no ancestor directory checked so far contains SERENECODE.md
+    while True:
         candidate = os.path.join(current, "SERENECODE.md")
-        if candidate not in candidates:
-            candidates.append(candidate)
+        if reader.file_exists(candidate):
+            return candidate
         parent = os.path.dirname(current)
         if parent == current:
             break
         current = parent
-
-    # Loop invariant: no candidate in candidates[0..i] has been found on disk yet
-    for candidate in candidates:
-        if reader.file_exists(candidate):
-            return candidate
 
     return None
 
@@ -142,7 +136,7 @@ def _determine_context_root(path: str) -> str:
 
     current = search_root
     # Loop invariant: current is an ancestor of search_root already checked for markers
-    for _ in range(10):
+    while True:
         if _has_project_marker(current):
             return current
 

@@ -43,6 +43,10 @@ from serenecode.models import (
     lambda self: len(self.name) > 0,
     "Method name must be non-empty",
 )
+@icontract.invariant(
+    lambda self: 0 <= self.required_parameters <= len(self.parameters),
+    "required parameter count must fit within the signature",
+)
 @dataclass(frozen=True)
 class MethodSignature:
     """A method signature from a Protocol or class."""
@@ -50,6 +54,14 @@ class MethodSignature:
     name: str
     parameters: tuple[str, ...]  # parameter names (excluding self)
     has_return_annotation: bool
+    required_parameters: int = -1
+    return_annotation: str | None = None
+
+    @icontract.ensure(lambda result: result is None, "post-init returns None")
+    def __post_init__(self) -> None:
+        """Fill in backwards-compatible defaults for optional metadata."""
+        if self.required_parameters < 0:
+            object.__setattr__(self, "required_parameters", len(self.parameters))
 
 
 @icontract.invariant(
@@ -128,6 +140,7 @@ class ModuleInfo:
     functions: tuple[str, ...]
     protocols: tuple[ProtocolInfo, ...]
     function_infos: tuple[FunctionInfo, ...] = ()
+    import_bindings: tuple[tuple[str, str, str | None], ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +204,7 @@ def parse_module_info(
 
     imports: list[str] = []
     from_imports: list[tuple[str, str]] = []
+    import_bindings: list[tuple[str, str, str | None]] = []
     classes: list[ClassInfo] = []
     functions: list[str] = []
     function_infos: list[FunctionInfo] = []
@@ -202,12 +216,17 @@ def parse_module_info(
             # Loop invariant: imports list updated for aliases[0..i]
             for alias in node.names:
                 imports.append(alias.name)
+                bound_name = alias.asname if alias.asname else alias.name.split(".")[0]
+                import_bindings.append((bound_name, alias.name, None))
         elif isinstance(node, ast.ImportFrom):
             resolved_module = _resolve_from_import_module(node, module_path)
             if resolved_module:
                 # Loop invariant: from_imports updated for names[0..i]
                 for alias in node.names:
                     from_imports.append((resolved_module, alias.name))
+                    if alias.name != "*":
+                        bound_name = alias.asname if alias.asname else alias.name
+                        import_bindings.append((bound_name, resolved_module, alias.name))
         elif isinstance(node, ast.ClassDef):
             class_info = _parse_class(node, aliases)
             classes.append(class_info)
@@ -230,6 +249,7 @@ def parse_module_info(
         functions=tuple(functions),
         protocols=tuple(protocols),
         function_infos=tuple(function_infos),
+        import_bindings=tuple(import_bindings),
     )
 
 
@@ -526,22 +546,7 @@ def _parse_class(node: ast.ClassDef, aliases: IcontractNames) -> ClassInfo:
     for item in node.body:
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
             methods.append(item.name)
-            params: list[str] = []
-            signature_params = list(item.args.posonlyargs) + list(item.args.args) + list(item.args.kwonlyargs)
-            if item.args.vararg is not None:
-                signature_params.append(item.args.vararg)
-            if item.args.kwarg is not None:
-                signature_params.append(item.args.kwarg)
-
-            # Loop invariant: params contains non-self arg names from signature_params[0..j]
-            for arg in signature_params:
-                if arg.arg not in ("self", "cls"):
-                    params.append(arg.arg)
-            method_sigs.append(MethodSignature(
-                name=item.name,
-                parameters=tuple(params),
-                has_return_annotation=item.returns is not None,
-            ))
+            method_sigs.append(_parse_method_signature(item))
 
     is_protocol = "Protocol" in bases or any(
         b.endswith(".Protocol") for b in bases
@@ -578,23 +583,7 @@ def _parse_protocol(node: ast.ClassDef) -> ProtocolInfo:
     # Loop invariant: methods contains signatures for all method nodes processed
     for item in node.body:
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            params: list[str] = []
-            signature_params = list(item.args.posonlyargs) + list(item.args.args) + list(item.args.kwonlyargs)
-            if item.args.vararg is not None:
-                signature_params.append(item.args.vararg)
-            if item.args.kwarg is not None:
-                signature_params.append(item.args.kwarg)
-
-            # Loop invariant: params contains non-self arg names from signature_params[0..j]
-            for arg in signature_params:
-                if arg.arg not in ("self", "cls"):
-                    params.append(arg.arg)
-
-            methods.append(MethodSignature(
-                name=item.name,
-                parameters=tuple(params),
-                has_return_annotation=item.returns is not None,
-            ))
+            methods.append(_parse_method_signature(item))
 
     return ProtocolInfo(
         name=node.name,
@@ -626,6 +615,74 @@ def _get_name(node: ast.expr) -> str:
     elif isinstance(node, ast.Attribute):
         return f"{_get_name(node.value)}.{node.attr}"
     return "<unknown>"
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, MethodSignature),
+    "result must be a MethodSignature",
+)
+def _parse_method_signature(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> MethodSignature:
+    """Extract parameter and return-shape metadata for interface checks."""
+    params: list[str] = []
+    required_parameters = 0
+
+    positional_params = list(node.args.posonlyargs) + list(node.args.args)
+    first_optional_index = len(positional_params) - len(node.args.defaults)
+    # Loop invariant: params and required_parameters reflect positional_params[0..i].
+    for index, arg in enumerate(positional_params):
+        if arg.arg in ("self", "cls"):
+            continue
+        params.append(arg.arg)
+        if index < first_optional_index:
+            required_parameters += 1
+
+    # Loop invariant: params and required_parameters reflect kwonlyargs[0..i].
+    for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
+        if arg.arg in ("self", "cls"):
+            continue
+        params.append(arg.arg)
+        if default is None:
+            required_parameters += 1
+
+    if node.args.vararg is not None and node.args.vararg.arg not in ("self", "cls"):
+        params.append(node.args.vararg.arg)
+    if node.args.kwarg is not None and node.args.kwarg.arg not in ("self", "cls"):
+        params.append(node.args.kwarg.arg)
+
+    return MethodSignature(
+        name=node.name,
+        parameters=tuple(params),
+        has_return_annotation=node.returns is not None,
+        required_parameters=required_parameters,
+        return_annotation=ast.unparse(node.returns) if node.returns else None,
+    )
+
+
+@icontract.require(
+    lambda module_path: isinstance(module_path, str),
+    "module_path must be a string",
+)
+@icontract.require(
+    lambda segment: isinstance(segment, str) and len(segment) > 0,
+    "segment must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _module_path_has_segment(module_path: str, segment: str) -> bool:
+    """Check whether a slash-separated path contains an exact segment."""
+    normalized = module_path.replace("\\", "/").strip("/")
+    if not normalized:
+        return False
+    segments = tuple(part for part in normalized.split("/") if part and part != ".")
+    return segment in segments
 
 
 # ---------------------------------------------------------------------------
@@ -667,7 +724,7 @@ def check_dependency_direction(
     # Loop invariant: results contains dependency violations for modules[0..i]
     for mod in modules:
         is_core = is_core_module(mod.module_path, config)
-        is_port = "ports/" in mod.module_path
+        is_port = _module_path_has_segment(mod.module_path, "ports")
 
         if not is_core and not is_port:
             continue
@@ -831,7 +888,7 @@ def check_interface_compliance(
     protocols: list[tuple[str, ProtocolInfo]] = []
     # Loop invariant: protocols contains all Protocol defs from ports modules[0..i]
     for mod in modules:
-        if "ports/" in mod.module_path:
+        if _module_path_has_segment(mod.module_path, "ports"):
             # Loop invariant: protocols updated for mod.protocols[0..j]
             for proto in mod.protocols:
                 protocols.append((mod.file_path, proto))
@@ -843,7 +900,7 @@ def check_interface_compliance(
     adapter_classes: list[tuple[str, ClassInfo]] = []
     # Loop invariant: adapter_classes contains classes from adapter modules[0..i]
     for mod in modules:
-        if "adapters/" in mod.module_path:
+        if _module_path_has_segment(mod.module_path, "adapters"):
             # Loop invariant: adapter_classes updated for mod.classes[0..j]
             for cls in mod.classes:
                 adapter_classes.append((mod.file_path, cls))
@@ -951,10 +1008,26 @@ def _check_signature_compatibility(
             f"{len(adapter_sig.parameters)} parameters but Protocol "
             f"requires {len(proto_sig.parameters)}"
         )
+    if adapter_sig.required_parameters > proto_sig.required_parameters:
+        issues.append(
+            f"Method '{proto_sig.name}' implementation requires "
+            f"{adapter_sig.required_parameters} parameters but Protocol "
+            f"requires only {proto_sig.required_parameters}"
+        )
     if proto_sig.has_return_annotation and not adapter_sig.has_return_annotation:
         issues.append(
             f"Method '{proto_sig.name}' missing return annotation "
             f"(Protocol specifies one)"
+        )
+    if (
+        proto_sig.return_annotation is not None
+        and adapter_sig.return_annotation is not None
+        and "".join(proto_sig.return_annotation.split()) != "".join(adapter_sig.return_annotation.split())
+    ):
+        issues.append(
+            f"Method '{proto_sig.name}' return annotation "
+            f"'{adapter_sig.return_annotation}' does not match Protocol "
+            f"annotation '{proto_sig.return_annotation}'"
         )
     return issues
 
@@ -981,6 +1054,11 @@ def _class_likely_implements(cls: ClassInfo, proto: ProtocolInfo) -> bool:
     Returns:
         True if the class likely implements the protocol.
     """
+    # Loop invariant: no base seen so far explicitly names the protocol.
+    for base in cls.bases:
+        if base == proto.name or base.endswith(f".{proto.name}"):
+            return True
+
     # Name-based heuristic
     proto_base = proto.name.replace("Protocol", "")
     if proto_base and proto_base.lower() in cls.name.lower():
@@ -1548,22 +1626,28 @@ def _build_module_function_map(
 )
 def _build_import_resolution_map(
     modules: list[ModuleInfo],
-) -> dict[str, dict[str, tuple[str, str]]]:
+) -> dict[str, dict[str, tuple[str, str | None]]]:
     """Build a map of what names are imported into each module.
 
     Args:
         modules: List of parsed module information.
 
     Returns:
-        Dict of module_path -> {imported_name -> (source_module, original_name)}.
+        Dict of module_path -> {bound_name -> (source_module, original_name)}.
     """
-    result: dict[str, dict[str, tuple[str, str]]] = {}
+    result: dict[str, dict[str, tuple[str, str | None]]] = {}
     # Loop invariant: result contains entries for modules[0..i]
     for mod in modules:
-        names: dict[str, tuple[str, str]] = {}
-        # Loop invariant: names contains entries for from_imports[0..j]
-        for from_mod, name in mod.from_imports:
-            names[name] = (from_mod, name)
+        names: dict[str, tuple[str, str | None]] = {}
+        if mod.import_bindings:
+            # Loop invariant: names contains entries for import_bindings[0..j]
+            for bound_name, source_mod, original_name in mod.import_bindings:
+                names[bound_name] = (source_mod, original_name)
+        else:
+            # Backward-compatible fallback for tests that build ModuleInfo manually.
+            # Loop invariant: names contains entries for from_imports[0..j]
+            for from_mod, name in mod.from_imports:
+                names[name] = (from_mod, name)
         result[mod.module_path] = names
     return result
 
@@ -1585,6 +1669,24 @@ def _normalize_module_name(name: str) -> str:
         Normalized dot-separated module name.
     """
     return name.removesuffix(".py").replace("/", ".")
+
+
+@icontract.require(lambda module_name: isinstance(module_name, str), "module_name must be a string")
+@icontract.require(lambda reference: isinstance(reference, str), "reference must be a string")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _module_name_matches_reference(module_name: str, reference: str) -> bool:
+    """Check whether a module name matches a reference on full segment boundaries."""
+    normalized_module = _normalize_module_name(module_name)
+    normalized_reference = _normalize_module_name(reference)
+    if not normalized_module or not normalized_reference:
+        return False
+
+    module_parts = tuple(part for part in normalized_module.split(".") if part)
+    reference_parts = tuple(part for part in normalized_reference.split(".") if part)
+    if not module_parts or not reference_parts or len(reference_parts) > len(module_parts):
+        return False
+
+    return module_parts[-len(reference_parts):] == reference_parts
 
 
 @icontract.require(
@@ -1610,7 +1712,7 @@ def _normalize_module_name(name: str) -> str:
 def _resolve_call_target(
     call_target: str,
     caller_module: ModuleInfo,
-    import_map: dict[str, dict[str, tuple[str, str]]],
+    import_map: dict[str, dict[str, tuple[str, str | None]]],
     module_functions: dict[str, dict[str, FunctionInfo]],
 ) -> tuple[str, FunctionInfo] | None:
     """Try to resolve a call target to a specific module and FunctionInfo.
@@ -1629,31 +1731,30 @@ def _resolve_call_target(
         imports = import_map.get(caller_module.module_path, {})
         if call_target in imports:
             source_mod, orig_name = imports[call_target]
-            normalized_source = _normalize_module_name(source_mod)
+            target_name = orig_name if orig_name is not None else call_target
             # Loop invariant: checked module_functions entries[0..i]
             for mod_path, funcs in module_functions.items():
-                normalized_path = _normalize_module_name(mod_path)
-                if (
-                    normalized_source == normalized_path
-                    or normalized_source.endswith(normalized_path)
-                    or normalized_path.endswith(normalized_source)
-                ):
-                    if orig_name in funcs:
-                        return (mod_path, funcs[orig_name])
+                if _module_name_matches_reference(mod_path, source_mod):
+                    if target_name in funcs:
+                        return (mod_path, funcs[target_name])
         return None
 
     # Case 2: dotted name — e.g., "module.function"
     parts = call_target.rsplit(".", 1)
     if len(parts) == 2:
         module_part, func_name = parts
-        normalized_part = _normalize_module_name(module_part)
+        imports = import_map.get(caller_module.module_path, {})
+        if module_part in imports:
+            source_mod, orig_name = imports[module_part]
+            if orig_name is not None:
+                normalized_part = _normalize_module_name(f"{source_mod}.{orig_name}")
+            else:
+                normalized_part = _normalize_module_name(source_mod)
+        else:
+            normalized_part = _normalize_module_name(module_part)
         # Loop invariant: checked module_functions entries[0..i]
         for mod_path, funcs in module_functions.items():
-            normalized_path = _normalize_module_name(mod_path)
-            if (
-                normalized_part in normalized_path
-                or normalized_path.endswith(normalized_part)
-            ) and func_name in funcs:
+            if _module_name_matches_reference(mod_path, normalized_part) and func_name in funcs:
                 return (mod_path, funcs[func_name])
 
     return None
@@ -1859,7 +1960,7 @@ def check_system_invariants(
     all_protocols: dict[str, tuple[str, ProtocolInfo]] = {}
     # Loop invariant: all_protocols and non-protocol findings updated for modules[0..i]
     for mod in modules:
-        if "ports/" not in mod.module_path:
+        if not _module_path_has_segment(mod.module_path, "ports"):
             continue
         # Loop invariant: all_protocols updated for mod.protocols[0..j]
         for proto in mod.protocols:
@@ -1899,7 +2000,7 @@ def check_system_invariants(
     adapter_classes: list[ClassInfo] = []
     # Loop invariant: adapter_classes contains classes from adapter modules[0..i]
     for mod in modules:
-        if "adapters/" in mod.module_path:
+        if _module_path_has_segment(mod.module_path, "adapters"):
             adapter_classes.extend(mod.classes)
 
     # Loop invariant: results updated for all_protocols entries[0..i]

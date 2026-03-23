@@ -166,6 +166,69 @@ Loop rules.
         assert "adapters/" in config.exemptions.exempt_paths
         assert "scripts/" in config.exemptions.exempt_paths
 
+    def test_strict_with_exemptions_keeps_private_contract_requirement(self) -> None:
+        content = """# SERENECODE.md
+
+## Contract Standards
+Private functions MUST have contracts.
+
+## Architecture Standards
+Hexagonal architecture.
+
+## Exemptions
+- `cli.py` — Thin CLI layer.
+"""
+        config = parse_serenecode_md(content)
+        assert config.template_name == "strict"
+        assert config.contract_requirements.require_on_private is True
+        assert config.exemptions.exempt_paths == ("cli.py",)
+
+    def test_minimal_override_extracts_forbidden_exception_types(self) -> None:
+        content = """# SERENECODE.md
+
+## Contract Standards
+Public functions SHOULD have contracts.
+
+## Error Handling Standards
+Core domain functions raise domain-specific exceptions and never bare `Exception`, `ValueError`, or `TypeError`.
+"""
+        config = parse_serenecode_md(content)
+        assert config.template_name == "minimal"
+        assert config.error_handling_rules.require_domain_exceptions is True
+        assert config.error_handling_rules.forbidden_exception_types == (
+            "Exception",
+            "ValueError",
+            "TypeError",
+        )
+
+    def test_minimal_core_overrides_restore_core_patterns(self) -> None:
+        content = """# SERENECODE.md
+
+## Contract Standards
+Public functions SHOULD have contracts.
+
+## Type Standards
+No use of `Any` in core modules.
+"""
+        config = parse_serenecode_md(content)
+        assert config.template_name == "minimal"
+        assert config.type_requirements.forbid_any_in_core is True
+        assert "core/" in config.architecture_rules.core_module_patterns
+
+    def test_minimal_domain_exception_override_restores_core_patterns(self) -> None:
+        content = """# SERENECODE.md
+
+## Contract Standards
+Public functions SHOULD have contracts.
+
+## Error Handling Standards
+Core domain functions raise domain-specific exceptions.
+"""
+        config = parse_serenecode_md(content)
+        assert config.template_name == "minimal"
+        assert config.error_handling_rules.require_domain_exceptions is True
+        assert "core/" in config.architecture_rules.core_module_patterns
+
     def test_empty_content_returns_minimal(self) -> None:
         config = parse_serenecode_md("")
         assert config.template_name == "minimal"
@@ -198,6 +261,11 @@ class TestIsCoreModule:
         config = minimal_config()
         assert is_core_module("src/serenecode/core/engine.py", config) is False
 
+    def test_core_matching_is_segment_aware(self) -> None:
+        config = default_config()
+        assert is_core_module("src/domain/viewmodels.py", config) is False
+        assert is_core_module("src/domain/models.py", config) is True
+
 
 class TestIsExemptModule:
     """Tests for is_exempt_module helper."""
@@ -217,3 +285,8 @@ class TestIsExemptModule:
     def test_strict_nothing_exempt(self) -> None:
         config = strict_config()
         assert is_exempt_module("src/serenecode/cli.py", config) is False
+
+    def test_exempt_matching_is_segment_aware(self) -> None:
+        config = default_config()
+        assert is_exempt_module("src/domain/notcli.py", config) is False
+        assert is_exempt_module("src/domain/real_cli.py", config) is False

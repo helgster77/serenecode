@@ -43,6 +43,15 @@ class TestParseModuleInfo:
         assert "ast" in info.imports
         assert ("pathlib", "Path") in info.from_imports
 
+    def test_parses_import_alias_bindings(self) -> None:
+        source = textwrap.dedent("""\
+            import core.helpers as helpers
+            from core.validators import validate as guarded
+        """)
+        info = parse_module_info(source, "test.py", "test.py")
+        assert ("helpers", "core.helpers", None) in info.import_bindings
+        assert ("guarded", "core.validators", "validate") in info.import_bindings
+
     def test_parses_classes(self) -> None:
         source = textwrap.dedent("""\
             class MyClass:
@@ -172,6 +181,8 @@ class TestParseModuleInfoEnhanced:
         sig_a = next(s for s in cls.method_signatures if s.name == "method_a")
         assert sig_a.parameters == ("x",)
         assert sig_a.has_return_annotation is True
+        assert sig_a.required_parameters == 1
+        assert sig_a.return_annotation == "str"
 
     def test_detects_class_invariant(self) -> None:
         source = textwrap.dedent("""\
@@ -309,7 +320,21 @@ class TestDependencyDirectionFixes:
         ]
         results = check_dependency_direction(modules, default_config())
         assert len(results) >= 1
-        assert "cli" in results[0].details[0].message.lower()
+
+    def test_transports_directory_not_treated_as_ports(self) -> None:
+        modules = [
+            ModuleInfo(
+                file_path="src/transports/client.py",
+                module_path="transports/client.py",
+                imports=("serenecode.adapters.local_fs",),
+                from_imports=(),
+                classes=(),
+                functions=(),
+                protocols=(),
+            ),
+        ]
+        results = check_dependency_direction(modules, default_config())
+        assert len(results) == 0
 
     def test_pycli_import_not_flagged(self) -> None:
         modules = [
@@ -423,6 +448,51 @@ class TestCheckInterfaceCompliance:
         missing_methods = {r.details[0].message for r in results}
         assert any("file_exists" in m for m in missing_methods)
 
+    def test_explicit_protocol_inheritance_triggers_missing_method_check(self) -> None:
+        modules = [
+            ModuleInfo(
+                file_path="ports/reader.py",
+                module_path="ports/reader.py",
+                imports=(),
+                from_imports=(),
+                classes=(),
+                functions=(),
+                protocols=(
+                    ProtocolInfo(
+                        name="ReadableProtocol",
+                        line=5,
+                        methods=(
+                            MethodSignature(
+                                name="read",
+                                parameters=(),
+                                has_return_annotation=True,
+                                return_annotation="str",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            ModuleInfo(
+                file_path="adapters/file_io.py",
+                module_path="adapters/file_io.py",
+                imports=(),
+                from_imports=(),
+                classes=(
+                    ClassInfo(
+                        name="FileIO",
+                        line=10,
+                        bases=("ReadableProtocol",),
+                        methods=(),
+                        is_protocol=False,
+                    ),
+                ),
+                functions=(),
+                protocols=(),
+            ),
+        ]
+        results = check_interface_compliance(modules, default_config())
+        assert any("missing method 'read'" in r.details[0].message for r in results)
+
 
 class TestInterfaceComplianceSignatures:
     """Tests for method signature matching in interface compliance."""
@@ -513,7 +583,7 @@ class TestInterfaceComplianceSignatures:
         results = check_interface_compliance(modules, default_config())
         assert any("return annotation" in r.details[0].message for r in results)
 
-    def test_extra_parameters_allowed(self) -> None:
+    def test_extra_optional_parameters_allowed(self) -> None:
         modules = [
             ModuleInfo(
                 file_path="ports/fs.py",
@@ -545,7 +615,12 @@ class TestInterfaceComplianceSignatures:
                         methods=("read_file",),
                         is_protocol=False,
                         method_signatures=(
-                            MethodSignature(name="read_file", parameters=("path", "encoding"), has_return_annotation=True),
+                            MethodSignature(
+                                name="read_file",
+                                parameters=("path", "encoding"),
+                                has_return_annotation=True,
+                                required_parameters=1,
+                            ),
                         ),
                     ),
                 ),
@@ -555,6 +630,107 @@ class TestInterfaceComplianceSignatures:
         ]
         results = check_interface_compliance(modules, default_config())
         assert len(results) == 0
+
+    def test_extra_required_parameters_detected(self) -> None:
+        modules = [
+            ModuleInfo(
+                file_path="ports/fs.py",
+                module_path="ports/fs.py",
+                imports=(),
+                from_imports=(),
+                classes=(),
+                functions=(),
+                protocols=(
+                    ProtocolInfo(
+                        name="FileReader",
+                        line=5,
+                        methods=(
+                            MethodSignature(name="read_file", parameters=("path",), has_return_annotation=True),
+                        ),
+                    ),
+                ),
+            ),
+            ModuleInfo(
+                file_path="adapters/local_fs.py",
+                module_path="adapters/local_fs.py",
+                imports=(),
+                from_imports=(),
+                classes=(
+                    ClassInfo(
+                        name="LocalFileReader",
+                        line=10,
+                        bases=(),
+                        methods=("read_file",),
+                        is_protocol=False,
+                        method_signatures=(
+                            MethodSignature(
+                                name="read_file",
+                                parameters=("path", "encoding"),
+                                has_return_annotation=True,
+                                required_parameters=2,
+                            ),
+                        ),
+                    ),
+                ),
+                functions=(),
+                protocols=(),
+            ),
+        ]
+        results = check_interface_compliance(modules, default_config())
+        assert any("requires only" in r.details[0].message for r in results)
+
+    def test_return_annotation_mismatch_detected(self) -> None:
+        modules = [
+            ModuleInfo(
+                file_path="ports/fs.py",
+                module_path="ports/fs.py",
+                imports=(),
+                from_imports=(),
+                classes=(),
+                functions=(),
+                protocols=(
+                    ProtocolInfo(
+                        name="FileReader",
+                        line=5,
+                        methods=(
+                            MethodSignature(
+                                name="read_file",
+                                parameters=("path",),
+                                has_return_annotation=True,
+                                return_annotation="str",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            ModuleInfo(
+                file_path="adapters/local_fs.py",
+                module_path="adapters/local_fs.py",
+                imports=(),
+                from_imports=(),
+                classes=(
+                    ClassInfo(
+                        name="LocalFileReader",
+                        line=10,
+                        bases=(),
+                        methods=("read_file",),
+                        is_protocol=False,
+                        method_signatures=(
+                            MethodSignature(
+                                name="read_file",
+                                parameters=("path",),
+                                has_return_annotation=True,
+                                return_annotation="bytes",
+                            ),
+                        ),
+                    ),
+                ),
+                functions=(),
+                protocols=(),
+            ),
+        ]
+        results = check_interface_compliance(modules, default_config())
+        assert any("return annotation" in r.details[0].message for r in results)
 
 
 class TestContractCompleteness:
@@ -914,6 +1090,37 @@ class TestAssumeGuarantee:
             for r in results if r.status == CheckStatus.FAILED
         )
 
+    def test_from_import_alias_is_resolved(self) -> None:
+        callee = parse_module_info(
+            textwrap.dedent("""\
+                import icontract
+
+                @icontract.require(lambda x: x > 0, "x must be positive")
+                @icontract.ensure(lambda result: result > 0, "result must be positive")
+                def validate(x: int) -> int:
+                    return x
+            """),
+            "core/helpers.py",
+            "core/helpers.py",
+        )
+        caller = parse_module_info(
+            textwrap.dedent("""\
+                from core.helpers import validate as guarded
+
+                def process(x: int) -> int:
+                    return guarded(x)
+            """),
+            "core/engine.py",
+            "core/engine.py",
+        )
+
+        results = check_assume_guarantee([caller, callee], default_config())
+
+        assert any(
+            "lacks postconditions" in r.details[0].message
+            for r in results if r.status == CheckStatus.FAILED
+        )
+
 
 class TestDataFlow:
     """Tests for data flow verification."""
@@ -1059,6 +1266,63 @@ class TestDataFlow:
         results = check_data_flow(modules, default_config())
         assert len(results) == 0
 
+    def test_import_alias_is_resolved(self) -> None:
+        callee = parse_module_info(
+            textwrap.dedent("""\
+                import icontract
+
+                @icontract.require(lambda x: x > 0, "x must be positive")
+                @icontract.ensure(lambda result: result > 0, "result must be positive")
+                def validate(x: int) -> int:
+                    return x
+            """),
+            "core/helpers.py",
+            "core/helpers.py",
+        )
+        caller = parse_module_info(
+            textwrap.dedent("""\
+                import core.helpers as helpers
+
+                def process(x: int):
+                    return helpers.validate(x)
+            """),
+            "core/engine.py",
+            "core/engine.py",
+        )
+
+        results = check_data_flow([caller, callee], default_config())
+
+        assert any(
+            "return type" in r.details[0].message
+            for r in results if r.status == CheckStatus.FAILED
+        )
+
+    def test_unimported_dotted_calls_do_not_bind_by_substring(self) -> None:
+        caller = parse_module_info(
+            textwrap.dedent("""\
+                def process(x: int) -> int:
+                    return helpers.validate(x)
+            """),
+            "core/engine.py",
+            "core/engine.py",
+        )
+        unrelated_callee = parse_module_info(
+            textwrap.dedent("""\
+                import icontract
+
+                @icontract.require(lambda x: x > 0, "x must be positive")
+                @icontract.ensure(lambda result: result > 0, "result must be positive")
+                def validate(x: int) -> int:
+                    return x
+            """),
+            "core/helpers_extra.py",
+            "core/helpers_extra.py",
+        )
+
+        results = check_data_flow([caller, unrelated_callee], default_config())
+
+        assert len(results) == 0
+
 
 class TestSystemInvariants:
     """Tests for system invariant checking."""
@@ -1137,6 +1401,29 @@ class TestSystemInvariants:
         results = check_system_invariants(modules, default_config())
         failed = [r for r in results if r.status == CheckStatus.FAILED]
         assert len(failed) == 0
+
+    def test_transports_directory_not_treated_as_ports(self) -> None:
+        modules = [
+            ModuleInfo(
+                file_path="transports/client.py",
+                module_path="transports/client.py",
+                imports=(),
+                from_imports=(),
+                classes=(
+                    ClassInfo(
+                        name="Client",
+                        line=3,
+                        bases=(),
+                        methods=("connect",),
+                        is_protocol=False,
+                    ),
+                ),
+                functions=(),
+                protocols=(),
+            ),
+        ]
+        results = check_system_invariants(modules, default_config())
+        assert len(results) == 0
 
 
 class TestCheckCompositionalOrchestrator:

@@ -122,12 +122,16 @@ def format_json(check_result: CheckResult) -> str:
         A JSON string matching the specification output format.
     """
     timestamp = datetime.now(timezone.utc).isoformat()
+    base = check_result.to_dict()
 
     output: dict[str, object] = {
-        "version": check_result.version,
+        "version": base["version"],
         "timestamp": timestamp,
-        "summary": check_result.summary.to_dict(),
-        "results": [r.to_dict() for r in check_result.results],
+        "passed": base["passed"],
+        "level_requested": base["level_requested"],
+        "level_achieved": base["level_achieved"],
+        "summary": base["summary"],
+        "results": base["results"],
     }
 
     return json.dumps(output, indent=2)

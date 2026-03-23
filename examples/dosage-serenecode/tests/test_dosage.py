@@ -45,13 +45,13 @@ def _make_patient(
     weight_kg: float = 70.0,
     age_years: float = 30.0,
     creatinine_clearance: float = 90.0,
-    meds: list[str] | None = None,
+    meds: tuple[str, ...] | None = None,
 ) -> Patient:
     return Patient(
         weight_kg=weight_kg,
         age_years=age_years,
         creatinine_clearance=creatinine_clearance,
-        current_medications=meds or [],
+        current_medications=meds or (),
     )
 
 
@@ -174,33 +174,33 @@ class TestCheckContraindications:
 
     def test_no_conflicts(self) -> None:
         drug = _make_drug(contras={"penicillin"})
-        result = check_contraindications(drug, ["aspirin"])
+        result = check_contraindications(drug, ("aspirin",))
         assert result.is_safe is True
-        assert result.conflicts == []
+        assert result.conflicts == ()
 
     def test_with_conflicts(self) -> None:
         drug = _make_drug(contras={"aspirin", "ibuprofen"})
-        result = check_contraindications(drug, ["aspirin", "paracetamol"])
+        result = check_contraindications(drug, ("aspirin", "paracetamol"))
         assert result.is_safe is False
-        assert result.conflicts == ["aspirin"]
+        assert result.conflicts == ("aspirin",)
 
     def test_multiple_conflicts(self) -> None:
         drug = _make_drug(contras={"aspirin", "ibuprofen"})
-        result = check_contraindications(drug, ["aspirin", "ibuprofen"])
+        result = check_contraindications(drug, ("aspirin", "ibuprofen"))
         assert set(result.conflicts) == {"aspirin", "ibuprofen"}
 
     def test_empty_medications(self) -> None:
         drug = _make_drug(contras={"aspirin"})
-        result = check_contraindications(drug, [])
+        result = check_contraindications(drug, ())
         assert result.is_safe is True
 
     def test_empty_contraindications(self) -> None:
         drug = _make_drug(contras=set())
-        result = check_contraindications(drug, ["aspirin"])
+        result = check_contraindications(drug, ("aspirin",))
         assert result.is_safe is True
 
     def test_result_is_frozen(self) -> None:
-        result = check_contraindications(_make_drug(), [])
+        result = check_contraindications(_make_drug(), ())
         with pytest.raises(DosageError, match="frozen"):
             result.is_safe = False
 
@@ -317,9 +317,9 @@ class TestCheckContraindicationsHypothesis:
 
     @given(drug=drugs())
     def test_empty_meds_always_safe(self, drug: Drug) -> None:
-        result = check_contraindications(drug, [])
+        result = check_contraindications(drug, ())
         assert result.is_safe is True
-        assert result.conflicts == []
+        assert result.conflicts == ()
 
     @given(drug=drugs(), patient=patients())
     def test_conflicts_subset_of_both(self, drug: Drug, patient: Patient) -> None:

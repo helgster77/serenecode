@@ -6,8 +6,10 @@ from dataclasses import dataclass
 
 from serenecode.config import default_config, minimal_config
 from serenecode.core.pipeline import SourceFile, run_pipeline
-from serenecode.models import CheckStatus
+from serenecode.models import CheckResult, CheckStatus, make_check_result
 from serenecode.ports.property_tester import PropertyFinding
+from serenecode.ports.symbolic_checker import SymbolicFinding
+from serenecode.ports.type_checker import TypeIssue
 from tests.conftest import assert_violation_or_skip
 
 
@@ -18,7 +20,7 @@ class _NoIssuesTypeChecker:
         file_paths: list[str],
         strict: bool = True,
         search_paths: tuple[str, ...] = (),
-    ) -> list[object]:
+    ) -> list[TypeIssue]:
         return []
 
 
@@ -31,7 +33,7 @@ class _CapturingTypeChecker:
         file_paths: list[str],
         strict: bool = True,
         search_paths: tuple[str, ...] = (),
-    ) -> list[object]:
+    ) -> list[TypeIssue]:
         self.captured_search_paths.append(search_paths)
         return []
 
@@ -69,6 +71,29 @@ class _CapturingPropertyTester:
                 message="ok",
             )
         ]
+
+
+@dataclass
+class _EmptyPropertyTester:
+    def test_module(
+        self,
+        module_path: str,
+        max_examples: int | None = None,
+        search_paths: tuple[str, ...] = (),
+    ) -> list[PropertyFinding]:
+        return []
+
+
+@dataclass
+class _EmptySymbolicChecker:
+    def verify_module(
+        self,
+        module_path: str,
+        per_condition_timeout: int | None = None,
+        per_path_timeout: int | None = None,
+        search_paths: tuple[str, ...] = (),
+    ) -> list[SymbolicFinding]:
+        return []
 
 
 def _make_valid_source() -> str:
@@ -170,6 +195,34 @@ class TestPipelineLevel1:
             config=default_config(),
             max_workers=0,
         ))
+
+    def test_uses_injected_structural_checker(self) -> None:
+        sf = SourceFile(
+            file_path="test.py",
+            module_path="test.py",
+            source=_make_invalid_source(),
+        )
+        captured: list[tuple[str, str]] = []
+
+        def fake_structural_checker(
+            source: str,
+            config: object,
+            module_path: str,
+            file_path: str,
+        ) -> CheckResult:
+            captured.append((module_path, file_path))
+            return make_check_result((), level_requested=1, duration_seconds=0.0)
+
+        result = run_pipeline(
+            (sf,),
+            level=1,
+            start_level=1,
+            config=default_config(),
+            structural_checker=fake_structural_checker,
+        )
+
+        assert result.passed is True
+        assert captured == [("test.py", "test.py")]
 
 
 class TestPipelineEarlyTermination:
@@ -318,3 +371,46 @@ class TestPipelineWithMockAdapters:
         )
         result = run_pipeline((sf,), level=1, start_level=1, config=default_config())
         assert result.summary.duration_seconds >= 0
+
+    def test_empty_symbolic_results_do_not_claim_level_four(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/mod.py",
+            module_path="pkg/mod.py",
+            source=_make_valid_source(),
+            importable_module="pkg.mod",
+        )
+        property_tester = _CapturingPropertyTester(captured_search_paths=[])
+        symbolic_checker = _EmptySymbolicChecker()
+
+        result = run_pipeline(
+            (sf,),
+            level=4,
+            start_level=1,
+            config=minimal_config(),
+            type_checker=_NoIssuesTypeChecker(),
+            property_tester=property_tester,
+            symbolic_checker=symbolic_checker,
+        )
+
+        assert result.passed is False
+        assert result.level_achieved == 3
+
+    def test_empty_property_results_do_not_claim_level_three(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/mod.py",
+            module_path="pkg/mod.py",
+            source=_make_valid_source(),
+            importable_module="pkg.mod",
+        )
+
+        result = run_pipeline(
+            (sf,),
+            level=3,
+            start_level=1,
+            config=minimal_config(),
+            type_checker=_NoIssuesTypeChecker(),
+            property_tester=_EmptyPropertyTester(),
+        )
+
+        assert result.passed is False
+        assert result.level_achieved == 2

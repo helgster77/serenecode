@@ -31,6 +31,8 @@ from serenecode.models import (
     make_check_result,
 )
 
+StructuralChecker = Callable[[str, SerenecodeConfig, str, str], CheckResult]
+
 
 @icontract.invariant(
     lambda self: len(self.file_path) > 0,
@@ -75,7 +77,7 @@ def run_pipeline(
     level: int,
     start_level: int,
     config: SerenecodeConfig,
-    structural_checker: object | None = None,
+    structural_checker: StructuralChecker | None = None,
     type_checker: TypeChecker | None = None,
     property_tester: PropertyTester | None = None,
     symbolic_checker: SymbolicChecker | None = None,
@@ -115,7 +117,7 @@ def run_pipeline(
     # Level 1: Structural check
     if start_level <= 1 <= level:
         _emit(f"Level 1: Structural check ({len(source_files)} files)...")
-        level_1_results = _run_level_1(source_files, config)
+        level_1_results = _run_level_1(source_files, config, structural_checker)
         all_results.extend(level_1_results)
 
         if early_termination and _has_failures(level_1_results):
@@ -179,7 +181,7 @@ def run_pipeline(
                 duration_seconds=elapsed,
                 level_achieved=achieved_level,
             )
-        if not _has_skips(level_3_results):
+        if level_3_results and not _has_skips(level_3_results):
             achieved_level = 3
 
     # Level 4: Symbolic verification
@@ -206,7 +208,7 @@ def run_pipeline(
                 duration_seconds=elapsed,
                 level_achieved=achieved_level,
             )
-        if not _has_skips(level_4_results):
+        if level_4_results and not _has_skips(level_4_results):
             achieved_level = 4
 
     # Level 5: Compositional verification
@@ -342,6 +344,7 @@ def _make_unavailable_results(
 def _run_level_1(
     source_files: tuple[SourceFile, ...],
     config: SerenecodeConfig,
+    structural_checker: StructuralChecker | None = None,
 ) -> list[FunctionResult]:
     """Run Level 1 structural checks on all source files.
 
@@ -352,12 +355,16 @@ def _run_level_1(
     Returns:
         List of function results from structural checking.
     """
-    from serenecode.checker.structural import check_structural
+    checker = structural_checker
+    if checker is None:
+        from serenecode.checker.structural import check_structural
+
+        checker = check_structural
 
     results: list[FunctionResult] = []
     # Loop invariant: results contains structural check results for source_files[0..i]
     for sf in source_files:
-        check_result = check_structural(
+        check_result = checker(
             sf.source, config, sf.module_path, sf.file_path,
         )
         results.extend(check_result.results)

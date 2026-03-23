@@ -35,7 +35,7 @@ def patients(draw: st.DrawFn) -> Patient:
         weight_kg=weight_kg,
         age_years=age_years,
         creatinine_clearance=creatinine_clearance,
-        current_medications=meds,
+        current_medications=tuple(meds),
     )
 
 

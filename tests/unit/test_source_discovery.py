@@ -105,3 +105,41 @@ class TestFindSerenecodeMd:
         found = find_serenecode_md(str(source_file), LocalFileReader())
 
         assert found == str(config_file)
+
+    def test_finds_config_more_than_ten_levels_up(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "SERENECODE.md"
+        config_file.write_text("# config\n", encoding="utf-8")
+
+        nested_dir = tmp_path
+        for index in range(11):
+            nested_dir = nested_dir / f"level_{index}"
+            nested_dir.mkdir()
+
+        source_file = nested_dir / "app.py"
+        source_file.write_text("print('hi')\n", encoding="utf-8")
+
+        found = find_serenecode_md(str(source_file), LocalFileReader())
+
+        assert found == str(config_file)
+
+    def test_build_source_files_preserves_deep_project_root_context(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.0.0'\n", encoding="utf-8")
+
+        nested_dir = tmp_path
+        for index in range(11):
+            nested_dir = nested_dir / f"level_{index}"
+            nested_dir.mkdir()
+
+        source_file = nested_dir / "app.py"
+        source_file.write_text('"""Module docstring."""\n', encoding="utf-8")
+
+        source_files = build_source_files(
+            [str(source_file)],
+            LocalFileReader(),
+            str(source_file),
+        )
+
+        assert len(source_files) == 1
+        assert source_files[0].module_path.endswith("app.py")
+        assert source_files[0].importable_module is not None
+        assert source_files[0].import_search_paths == (str(tmp_path),)

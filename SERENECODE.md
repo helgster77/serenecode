@@ -16,7 +16,10 @@ This repository has two jobs at the same time:
 That means contributors must optimize for more than “the tests pass”:
 
 - Preserve trust in the verification pipeline itself. Changes to checking, reporting, module loading, source discovery, or configuration must keep the tool's own verification results meaningful.
+- Preserve trust in path-scoped policy decisions. Core-module and exemption rules must match on real path segments, not accidental filename substrings.
+- Preserve trust in interface-compliance reporting. Explicit `Protocol` inheritance and substitutability claims must be checked directly, not guessed only from naming overlap.
 - Preserve trust in the project's claims. README examples, SERENECODE.md guidance, CLI help text, and example-project assertions must stay aligned with current behavior and runnable evidence.
+- Preserve trust in verification-level reporting. If a verification stage produced no real evidence, the tool must not overstate that stage as achieved.
 - Prefer designs that stay analyzable. Simpler, verification-friendly code is usually better than clever abstractions that weaken property testing, symbolic checking, or compositional analysis.
 
 ---
@@ -25,7 +28,7 @@ That means contributors must optimize for more than “the tests pass”:
 
 ### Public Functions
 
-Every public function MUST have both preconditions and postconditions using icontract decorators.
+Every public function MUST have postconditions using icontract decorators. Public functions with caller-supplied inputs MUST also have preconditions.
 
 ```python
 import icontract
@@ -43,6 +46,7 @@ Rules:
 - Every `@icontract.require` and `@icontract.ensure` MUST include a human-readable description string as the second argument.
 - Preconditions define what the function expects from callers.
 - Postconditions define what the function guarantees to callers.
+- Functions with no meaningful parameters may omit `@icontract.require` or use a trivial one.
 - Postconditions may reference both the input parameters and `result` (the return value).
 - Postconditions may reference `OLD` for capturing pre-call state when needed (e.g., `@icontract.ensure(lambda OLD, result: len(result) == OLD.len_items + 1)`).
 - Contracts must be pure boolean expressions — no side effects, no I/O, no exceptions.
@@ -110,7 +114,7 @@ src/serenecode/
 ├── adapters/    # I/O implementations. Integration-tested.
 ├── checker/     # Verification engines. Verified where possible.
 ├── contracts/   # Shared contract predicates.
-├── models.py    # Data models (dataclasses). Verified.
+├── models.py    # Data models. Verified.
 ├── cli.py       # CLI entry point. Thin adapter layer.
 └── __init__.py  # Public API surface.
 ```
@@ -147,6 +151,7 @@ class FileReader(Protocol):
 ### Adapter Modules (`adapters/`, `cli.py`)
 
 - Implement the Protocols defined in `ports/`.
+- If an adapter claims to implement a `Protocol`, it must remain substitutable for that port: explicit protocol inheritance counts, extra required parameters are forbidden, and return annotations must stay compatible with the port surface.
 - Handle all I/O, subprocess calls, and external library integration.
 - Are exempt from the same contract-completeness expectations as pure core modules, but they are still part of the shipped product and must not break repo-wide verification.
 - MUST have type annotations and pass mypy.
@@ -214,10 +219,10 @@ def find_index(items: list[int], target: int) -> int:
 
 ## Data Model Standards
 
-- All data models MUST be `@dataclass` classes (or `@dataclass` with `frozen=True` for immutable data).
-- Prefer immutable data models (`frozen=True`) in core modules.
-- Mutable dataclasses must have class invariants via `@icontract.invariant`.
-- No raw dictionaries for structured data in core modules — define a dataclass instead.
+- All data models MUST be `@dataclass` classes, or equivalent explicitly typed classes when custom initialization, constructor validation, or immutability enforcement makes dataclasses impractical.
+- Prefer immutable data models (`frozen=True`) or classes whose stored fields are themselves immutable values in core modules.
+- Mutable dataclasses or mutable classes must have class invariants via `@icontract.invariant`.
+- No raw dictionaries for structured data in core modules — define a typed data model instead.
 - Enum types must be used for fixed sets of values (e.g., verification levels, status codes).
 
 ```python
@@ -270,6 +275,7 @@ class Detail:
 - Public-facing documentation must describe current behavior, not desired future behavior.
 - Strong product claims in docs must be backed by runnable evidence in the repository.
 - When commands, verification results, example numbers, or limitations change, update the relevant docs in the same change.
+- If CLI report or JSON output fields change, update README examples and schema expectations in the same change.
 
 ```python
 """Structural checker for Serenecode conventions.
@@ -294,15 +300,17 @@ Every meaningful code change in this project MUST come with verification. Writin
 ### Repository-Level Targets
 
 - The checked-in project configuration should stay clean under `uv run serenecode check src --level 5 --allow-code-execution`.
-- The repository should continue to pass `uv run mypy src`.
+- The shipped SereneCode dosage example should stay clean under `uv run serenecode check examples/dosage-serenecode/src --level 5 --allow-code-execution`.
+- The repository should continue to pass `uv run mypy src`, and shipped examples should stay clean under their documented mypy invocation when applicable.
 - The repository should continue to pass `uv run pytest -q`.
+- The shipped SereneCode dosage example should continue to pass `uv run pytest -q` from `examples/dosage-serenecode/`.
 - If a change affects verification semantics, discovery, loading, reporting, or example claims, verify those paths explicitly rather than assuming the full suite is enough.
 - Levels 3-5 import and execute project modules. Use those levels only on trusted code, and pass `--allow-code-execution` or `allow_code_execution=True` explicitly.
 
 ### Verification Tiers by Module Type
 
 **Pure core modules** (`core/`, `checker/`, `models.py`, `contracts/`, `config.py`, `reporter.py`, `source_discovery.py`) should remain friendly to Serenecode's full pipeline:
-1. Structural check — contracts present on all public functions and classes.
+1. Structural check — required contracts present on public functions and classes.
 2. `mypy --strict` — zero errors.
 3. Property-based verification through Serenecode's Hypothesis adapter, plus explicit property tests where they add signal.
 4. Symbolic verification through CrossHair for symbolic-friendly contracted top-level functions within analysis bounds.
@@ -362,6 +370,7 @@ tests/
 - If a new domain type or function signature is hard for the adapter to generate, extend the strategy derivation in the adapter or add a focused explicit Hypothesis test.
 - Use explicit Hypothesis tests for reusable predicates, strategy builders, and bug-prone helpers where they give clearer regression coverage than only relying on the pipeline.
 - When Hypothesis finds a failing example, preserve it as a regression test or a dedicated strategy/example in the relevant test suite.
+- Do not claim Level 3 was achieved for a run that produced no property-testing findings at all.
 
 ```python
 from hypothesis import example, given, settings
@@ -385,7 +394,10 @@ def test_compute_mean_contract(items: list[float]) -> None:
 
 - Levels 3-5 load project modules into a real Python interpreter. Treat deep verification as code execution, not as a passive static analysis step.
 - Design top-level contracted functions so they remain as symbolic-friendly as practical: pure inputs, explicit contracts, and minimal hidden state.
+- Standalone files and non-package modules must remain verifiable. If a backend needs file-and-line targeting instead of a dotted import path, use it.
 - Keep the default CrossHair budgets in mind: 30 seconds per condition, 10 seconds per path, 300 seconds per module.
+- The module timeout is a true whole-module budget, including the CLI fallback path.
+- Do not claim Level 4 was achieved for a scoped run that produced no symbolic findings at all.
 - When CrossHair finds a counterexample, the fix loop is:
   1. Examine the counterexample.
   2. Determine if the contract is wrong (fix the contract) or the implementation is wrong (fix the code).
@@ -397,7 +409,7 @@ def test_compute_mean_contract(items: list[float]) -> None:
 When writing any new function or class, the AI agent MUST follow this sequence:
 
 1. Write the function signature with type annotations.
-2. Write the icontract preconditions and postconditions.
+2. Write the required icontract postconditions and any necessary preconditions.
 3. Write the implementation.
 4. Add the most appropriate verification coverage:
    - explicit unit/integration/e2e tests,
@@ -449,7 +461,7 @@ Steps 1-3 may be done together, but steps 4-8 MUST NOT be skipped or deferred.
 - Commit messages follow conventional commits format: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`.
 - All code must pass `uv run serenecode check src --structural` before committing.
 - All code must pass `uv run mypy src` before committing.
-- Changes that affect the verification engine, source discovery, configuration, docs claims, or shipped examples should keep `uv run serenecode check src --level 5 --allow-code-execution` green.
+- Changes that affect the verification engine, source discovery, configuration, docs claims, or shipped examples should keep `uv run serenecode check src --level 5 --allow-code-execution` green and preserve the shipped example's strict Level 5 check.
 
 ---
 

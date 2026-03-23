@@ -6,6 +6,8 @@ Marked as slow since symbolic execution can take significant time.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
@@ -43,4 +45,44 @@ class TestCrossHairAdapter:
         verified = [f for f in findings if f.outcome == "verified"]
         failed = [f for f in findings if f.outcome == "counterexample"]
         # Simple function should verify successfully
+        assert len(failed) == 0
+
+    def test_standalone_file_with_non_importable_name_is_verified(self, tmp_path: Path) -> None:
+        module_file = tmp_path / "bad-name.py"
+        module_file.write_text(
+            '''"""Standalone verification module."""
+import icontract
+
+
+@icontract.require(lambda x: x >= 0, "x must be non-negative")
+@icontract.ensure(lambda result: result >= 0, "result must be non-negative")
+def identity(x: int) -> int:
+    """Return the input unchanged."""
+    return x
+''',
+            encoding="utf-8",
+        )
+
+        checker = CrossHairSymbolicChecker(
+            per_condition_timeout=10,
+            per_path_timeout=5,
+            allow_code_execution=True,
+        )
+        findings = checker.verify_module(
+            str(module_file),
+            search_paths=(str(tmp_path),),
+        )
+
+        verified = [
+            finding
+            for finding in findings
+            if finding.outcome == "verified" and finding.function_name == "identity"
+        ]
+        failed = [
+            finding
+            for finding in findings
+            if finding.outcome in {"counterexample", "error"}
+        ]
+
+        assert verified
         assert len(failed) == 0

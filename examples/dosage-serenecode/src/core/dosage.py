@@ -238,7 +238,7 @@ def check_daily_safety(dose_mg: float, drug: Drug) -> SafetyResult:
     "If current_medications is empty, result must be safe",
 )
 def check_contraindications(
-    drug: Drug, current_medications: list[str]
+    drug: Drug, current_medications: tuple[str, ...]
 ) -> ContraindicationResult:
     """Check whether the drug is safe alongside the patient's current medications.
 
@@ -258,4 +258,4 @@ def check_contraindications(
             conflicts.append(med)
 
     is_safe: bool = len(conflicts) == 0
-    return ContraindicationResult(is_safe=is_safe, conflicts=conflicts)
+    return ContraindicationResult(is_safe=is_safe, conflicts=tuple(conflicts))

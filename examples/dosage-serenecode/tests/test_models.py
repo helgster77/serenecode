@@ -114,23 +114,28 @@ class TestContraindicationResult:
     """Tests for ContraindicationResult construction and invariants."""
 
     def test_safe_no_conflicts(self) -> None:
-        r = ContraindicationResult(is_safe=True, conflicts=[])
+        r = ContraindicationResult(is_safe=True, conflicts=())
         assert r.is_safe is True
-        assert r.conflicts == []
+        assert r.conflicts == ()
 
     def test_unsafe_with_conflicts(self) -> None:
-        r = ContraindicationResult(is_safe=False, conflicts=["aspirin"])
+        r = ContraindicationResult(is_safe=False, conflicts=("aspirin",))
         assert r.is_safe is False
-        assert r.conflicts == ["aspirin"]
+        assert r.conflicts == ("aspirin",)
 
     def test_reject_inconsistent(self) -> None:
         with pytest.raises(icontract.ViolationError):
-            ContraindicationResult(is_safe=True, conflicts=["aspirin"])
+            ContraindicationResult(is_safe=True, conflicts=("aspirin",))
 
     def test_frozen_after_init(self) -> None:
-        r = ContraindicationResult(is_safe=True, conflicts=[])
+        r = ContraindicationResult(is_safe=True, conflicts=())
         with pytest.raises(DosageError, match="frozen"):
-            r.conflicts = ["hack"]  # type: ignore[misc]
+            r.conflicts = ("hack",)  # type: ignore[misc]
+
+    def test_conflicts_container_is_immutable(self) -> None:
+        r = ContraindicationResult(is_safe=False, conflicts=("aspirin",))
+        with pytest.raises(AttributeError):
+            r.conflicts.append("hack")  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -143,36 +148,41 @@ class TestPatient:
 
     def test_valid_construction(self) -> None:
         p = Patient(
-            weight_kg=70.0, age_years=30.0, creatinine_clearance=90.0, current_medications=[]
+            weight_kg=70.0, age_years=30.0, creatinine_clearance=90.0, current_medications=()
         )
         assert p.weight_kg == 70.0
 
     def test_reject_zero_weight(self) -> None:
         with pytest.raises(icontract.ViolationError):
-            Patient(weight_kg=0.0, age_years=30.0, creatinine_clearance=90.0, current_medications=[])
+            Patient(weight_kg=0.0, age_years=30.0, creatinine_clearance=90.0, current_medications=())
 
     def test_reject_weight_over_300(self) -> None:
         with pytest.raises(icontract.ViolationError):
-            Patient(weight_kg=301.0, age_years=30.0, creatinine_clearance=90.0, current_medications=[])
+            Patient(weight_kg=301.0, age_years=30.0, creatinine_clearance=90.0, current_medications=())
 
     def test_reject_negative_age(self) -> None:
         with pytest.raises(icontract.ViolationError):
-            Patient(weight_kg=70.0, age_years=-1.0, creatinine_clearance=90.0, current_medications=[])
+            Patient(weight_kg=70.0, age_years=-1.0, creatinine_clearance=90.0, current_medications=())
 
     def test_reject_creatinine_over_200(self) -> None:
         with pytest.raises(icontract.ViolationError):
-            Patient(weight_kg=70.0, age_years=30.0, creatinine_clearance=201.0, current_medications=[])
+            Patient(weight_kg=70.0, age_years=30.0, creatinine_clearance=201.0, current_medications=())
 
     def test_medications_are_copied(self) -> None:
         meds = ["aspirin"]
-        p = Patient(weight_kg=70.0, age_years=30.0, creatinine_clearance=90.0, current_medications=meds)
+        p = Patient(weight_kg=70.0, age_years=30.0, creatinine_clearance=90.0, current_medications=tuple(meds))
         meds.append("ibuprofen")
-        assert p.current_medications == ["aspirin"]
+        assert p.current_medications == ("aspirin",)
 
     def test_frozen_after_init(self) -> None:
-        p = Patient(weight_kg=70.0, age_years=30.0, creatinine_clearance=90.0, current_medications=[])
+        p = Patient(weight_kg=70.0, age_years=30.0, creatinine_clearance=90.0, current_medications=())
         with pytest.raises(DosageError, match="frozen"):
             p.weight_kg = 999.0
+
+    def test_medications_container_is_immutable(self) -> None:
+        p = Patient(weight_kg=70.0, age_years=30.0, creatinine_clearance=90.0, current_medications=("aspirin",))
+        with pytest.raises(AttributeError):
+            p.current_medications.append("ibuprofen")  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

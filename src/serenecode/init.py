@@ -28,8 +28,9 @@ _CLAUDE_MD_SECTIONS = {
 
 All code in this project MUST follow the standards defined in SERENECODE.md. \
 Read SERENECODE.md before writing or modifying any code. Every public function \
-must have icontract preconditions and postconditions. Every class must have \
-invariants. Follow the architectural patterns specified in SERENECODE.md.
+with caller-supplied inputs must have icontract preconditions, and every \
+public function must have postconditions. Every class must have invariants. \
+Follow the architectural patterns specified in SERENECODE.md.
 
 ### Verification
 
@@ -63,8 +64,9 @@ until all checks pass.
 
 All code in this project MUST follow the standards defined in SERENECODE.md. \
 Read SERENECODE.md before writing or modifying any code. Every function — \
-public and private — must have icontract preconditions and postconditions. \
-Every class must have invariants. No exemptions.
+public and private — with caller-supplied inputs must have icontract \
+preconditions, and every function must have postconditions. Every class must \
+have invariants. No exemptions.
 
 ### Verification
 
@@ -102,7 +104,8 @@ until all checks pass. Do not commit code that fails verification.
 ## Serenecode
 
 All code in this project should follow the conventions in SERENECODE.md. \
-Public functions must have icontract preconditions and postconditions.
+Public functions with caller-supplied inputs must have icontract \
+preconditions, and public functions should have postconditions.
 
 ### Verification
 

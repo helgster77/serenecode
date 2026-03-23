@@ -9,6 +9,7 @@ from __future__ import annotations
 from functools import wraps
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Callable
 
 import pytest
 
@@ -119,6 +120,15 @@ class TestHypothesisAdapterInternals:
         from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
         strategy = _get_strategy_for_annotation(int)
         assert strategy is not None
+
+    def test_callable_stub_can_return_check_result(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _make_callable_stub
+        from serenecode.models import CheckResult
+
+        stub = _make_callable_stub(Callable[[str], CheckResult])
+        result = stub("demo")
+
+        assert isinstance(result, CheckResult)
 
     def test_strategy_for_float(self) -> None:
         from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
@@ -412,6 +422,117 @@ class TestCrossHairAdapterInternals:
 
         assert findings == []
 
+    def test_cli_backend_respects_module_timeout_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
+
+        checker = CrossHairSymbolicChecker(
+            per_condition_timeout=10,
+            per_path_timeout=10,
+            module_timeout=1,
+            allow_code_execution=True,
+        )
+        calls: list[tuple[str, float]] = []
+        times = iter([0.0, 0.0, 1.1])
+
+        monkeypatch.setattr(
+            "serenecode.adapters.crosshair_adapter._discover_cli_targets",
+            lambda module_path, search_paths=(): [
+                ("demo.module.first", "first"),
+                ("demo.module.second", "second"),
+            ],
+        )
+        monkeypatch.setattr(
+            "serenecode.adapters.crosshair_adapter.time.monotonic",
+            lambda: next(times),
+        )
+
+        def fake_run(
+            cmd: list[str],
+            capture_output: bool,
+            text: bool,
+            timeout: float,
+            env: dict[str, str],
+        ) -> SimpleNamespace:
+            calls.append((cmd[4], timeout))
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+        monkeypatch.setattr(
+            "serenecode.adapters.crosshair_adapter.subprocess.run",
+            fake_run,
+        )
+
+        findings = checker._verify_via_cli("demo.module", 10, 10)
+
+        assert calls == [("demo.module.first", 1.0)]
+        assert findings[-1].function_name == "<module>"
+        assert findings[-1].outcome == "timeout"
+
+    def test_symbolic_target_rejects_container_of_project_types(self) -> None:
+        from serenecode.adapters.crosshair_adapter import _is_symbolic_friendly_target
+        from serenecode.ports.type_checker import TypeIssue
+
+        def transform(issues: list[TypeIssue]) -> int:
+            return len(issues)
+
+        assert _is_symbolic_friendly_target(transform) is False
+
+    def test_property_target_rejects_result_model_parameters(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _uses_result_model_annotation
+        from serenecode.models import CheckResult
+
+        assert _uses_result_model_annotation(CheckResult) is True
+
+    def test_external_detail_annotation_is_reported_as_skipped(self, tmp_path: Path) -> None:
+        from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
+
+        module_file = tmp_path / "detail_case.py"
+        module_file.write_text(
+            '''from __future__ import annotations
+import icontract
+
+
+@icontract.require(lambda item: True, "accept any item")
+@icontract.ensure(lambda result: result >= 0, "result must be non-negative")
+def render(item: myapp.Detail) -> int:
+    """Render an external detail model."""
+    return 0
+''',
+            encoding="utf-8",
+        )
+
+        tester = HypothesisPropertyTester(max_examples=5, allow_code_execution=True)
+        findings = tester.test_module("detail_case", search_paths=(str(tmp_path),))
+
+        assert len(findings) == 1
+        assert findings[0].function_name == "render"
+        assert findings[0].finding_type == "skipped"
+
+    def test_discover_cli_targets_use_file_line_targets_for_standalone_files(self, tmp_path: Path) -> None:
+        from serenecode.adapters.crosshair_adapter import _discover_cli_targets
+
+        module_file = tmp_path / "bad-name.py"
+        module_file.write_text(
+            '''"""Standalone verification module."""
+import icontract
+
+
+@icontract.require(lambda x: x >= 0, "x must be non-negative")
+@icontract.ensure(lambda result: result >= 0, "result must be non-negative")
+def identity(x: int) -> int:
+    """Return the input unchanged."""
+    return x
+''',
+            encoding="utf-8",
+        )
+
+        targets = _discover_cli_targets(str(module_file))
+
+        assert len(targets) == 1
+        target, function_name = targets[0]
+        assert function_name == "identity"
+        assert target.startswith(f"{module_file}:")
+        assert not target.endswith(".identity")
+
 
 class TestModuleLoader:
     """Tests for dynamic module loading behavior."""
@@ -429,6 +550,28 @@ class TestModuleLoader:
 
         assert first.VALUE == 1
         assert second.VALUE == 2
+
+    def test_load_python_module_refreshes_updated_dependency(self, tmp_path: Path) -> None:
+        from serenecode.adapters.module_loader import load_python_module
+
+        package_dir = tmp_path / "pkg"
+        package_dir.mkdir()
+        (package_dir / "__init__.py").write_text("", encoding="utf-8")
+        (package_dir / "dependency.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (package_dir / "consumer.py").write_text(
+            "from pkg.dependency import VALUE\n\n"
+            "def read() -> int:\n"
+            "    return VALUE\n",
+            encoding="utf-8",
+        )
+
+        first = load_python_module("pkg.consumer", (str(tmp_path),))
+
+        (package_dir / "dependency.py").write_text("VALUE = 2\n", encoding="utf-8")
+        second = load_python_module("pkg.consumer", (str(tmp_path),))
+
+        assert first.read() == 1
+        assert second.read() == 2
 
     def test_load_python_module_restores_canonical_module_binding(self) -> None:
         import sys

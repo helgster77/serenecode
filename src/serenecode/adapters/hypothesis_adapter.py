@@ -14,10 +14,11 @@ import ast
 import collections.abc
 import enum
 import inspect
+import re
 import traceback
 import types
 import typing
-from typing import Callable
+from typing import Callable, cast
 
 import icontract
 
@@ -312,7 +313,7 @@ def _strategy_for_known_annotation(
         return _strategy_for_source_file()
 
     if module_name == "serenecode.models":
-        return _strategy_for_model_type(type_name)
+        return _strategy_for_model_type(annotation, type_name)
 
     if module_name == "core.models":
         return _strategy_for_example_model_type(annotation, type_name)
@@ -389,6 +390,10 @@ def _strategy_for_example_model_type(
 
 
 @icontract.require(
+    lambda annotation: annotation is not None,
+    "annotation must be provided",
+)
+@icontract.require(
     lambda type_name: is_non_empty_string(type_name),
     "type_name must be a non-empty string",
 )
@@ -396,26 +401,63 @@ def _strategy_for_example_model_type(
     lambda result: result is None or hasattr(result, "map"),
     "result must be a Hypothesis strategy or None",
 )
-def _strategy_for_model_type(type_name: str) -> SearchStrategy | None:
+def _strategy_for_model_type(
+    annotation: type | object,
+    type_name: str,
+) -> SearchStrategy | None:
     """Return strategies for result models that have cross-field invariants."""
     from serenecode.models import (
-        CheckStatus,
-        Detail,
-        FunctionResult,
-        VerificationLevel,
-        make_check_result,
+        CheckStatus as CanonicalCheckStatus,
+        CheckSummary as CanonicalCheckSummary,
+        Detail as CanonicalDetail,
+        FunctionResult as CanonicalFunctionResult,
+        VerificationLevel as CanonicalVerificationLevel,
+    )
+
+    module_globals: dict[str, object] = {}
+    annotation_globals = getattr(getattr(annotation, "to_dict", None), "__globals__", None)
+    if isinstance(annotation_globals, dict):
+        module_globals = annotation_globals
+
+    check_status_values = list(cast(type[enum.Enum], module_globals.get("CheckStatus", CanonicalCheckStatus)))
+    detail_factory = cast(
+        Callable[..., object],
+        annotation if type_name == "Detail" else module_globals.get("Detail", CanonicalDetail),
+    )
+    function_result_factory = cast(
+        Callable[..., object],
+        annotation if type_name == "FunctionResult" else module_globals.get("FunctionResult", CanonicalFunctionResult),
+    )
+    verification_level_values = list(cast(
+        type[enum.Enum],
+        module_globals.get("VerificationLevel", CanonicalVerificationLevel),
+    ))
+    non_empty_text = st.text(
+        alphabet=st.characters(blacklist_categories=("C", "Z")),
+        min_size=1,
+        max_size=120,
+    )
+    path_text = st.text(
+        alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./-",
+        min_size=1,
+        max_size=80,
+    )
+    name_text = st.text(
+        alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_",
+        min_size=1,
+        max_size=40,
     )
 
     detail_strategy = st.builds(
-        Detail,
-        level=st.sampled_from(list(VerificationLevel)),
+        detail_factory,
+        level=st.sampled_from(verification_level_values),
         tool=st.sampled_from(["structural", "mypy", "hypothesis", "crosshair", "compositional"]),
         finding_type=st.sampled_from(["verified", "violation", "timeout", "error", "unavailable"]),
-        message=st.text(min_size=1, max_size=120),
+        message=non_empty_text,
         counterexample=st.one_of(
             st.none(),
             st.dictionaries(
-                st.text(min_size=1, max_size=10),
+                name_text,
                 st.one_of(
                     st.integers(min_value=-10, max_value=10),
                     st.text(min_size=0, max_size=20),
@@ -424,19 +466,24 @@ def _strategy_for_model_type(type_name: str) -> SearchStrategy | None:
                 max_size=3,
             ),
         ),
-        suggestion=st.one_of(st.none(), st.text(min_size=1, max_size=80)),
+        suggestion=st.one_of(st.none(), non_empty_text.map(lambda value: value[:80])),
     )
 
-    function_result_strategy = st.builds(
-        FunctionResult,
-        function=st.text(min_size=1, max_size=40),
-        file=st.text(min_size=1, max_size=80),
-        line=st.integers(min_value=1, max_value=1000),
-        level_requested=st.integers(min_value=1, max_value=5),
-        level_achieved=st.integers(min_value=0, max_value=5),
-        status=st.sampled_from(list(CheckStatus)),
-        details=st.lists(detail_strategy, max_size=3).map(tuple),
-    )
+    @st.composite
+    def _function_result_strategy(draw: st.DrawFn) -> object:
+        """Build valid FunctionResult objects whose achieved level does not exceed the request."""
+        level_requested = draw(st.integers(min_value=1, max_value=5))
+        level_achieved = draw(st.integers(min_value=0, max_value=level_requested))
+        return function_result_factory(
+            function=draw(name_text),
+            file=draw(path_text),
+            line=draw(st.integers(min_value=1, max_value=1000)),
+            level_requested=level_requested,
+            level_achieved=level_achieved,
+            status=draw(st.sampled_from(check_status_values)),
+            details=draw(st.lists(detail_strategy, max_size=3).map(tuple)),
+        )
+    function_result_strategy = _function_result_strategy()
 
     if type_name == "Detail":
         return detail_strategy
@@ -445,23 +492,61 @@ def _strategy_for_model_type(type_name: str) -> SearchStrategy | None:
         return function_result_strategy
 
     if type_name == "CheckResult":
+        check_result_factory = cast(Callable[..., object], annotation)
+        check_result_hints = typing.get_type_hints(annotation)
+        summary_factory = cast(
+            Callable[..., object],
+            check_result_hints.get("summary", CanonicalCheckSummary),
+        )
+
         def _build_check_result(
-            results: list[FunctionResult],
-            level_requested: int,
+            results: list[object],
             duration_seconds: float,
         ) -> object:
-            min_achieved = min((r.level_achieved for r in results), default=level_requested)
-            effective_level = max(level_requested, min_achieved)
-            return make_check_result(
-                tuple(results),
-                level_requested=effective_level,
+            level_requested = max(
+                (int(getattr(r, "level_requested", 1)) for r in results),
+                default=1,
+            )
+            level_achieved = min(
+                (int(getattr(r, "level_achieved", level_requested)) for r in results),
+                default=level_requested,
+            )
+            passed_count = 0
+            failed_count = 0
+            skipped_count = 0
+            # Loop invariant: counts reflect the statuses in results[0..i].
+            for result in results:
+                status_value = getattr(getattr(result, "status", None), "value", None)
+                if status_value == "passed":
+                    passed_count += 1
+                elif status_value == "failed":
+                    failed_count += 1
+                else:
+                    skipped_count += 1
+
+            summary = summary_factory(
+                total_functions=len(results),
+                passed_count=passed_count,
+                failed_count=failed_count,
+                skipped_count=skipped_count,
                 duration_seconds=duration_seconds,
+            )
+            passed = (
+                failed_count == 0
+                and skipped_count == 0
+                and level_achieved == level_requested
+            )
+            return check_result_factory(
+                passed=passed,
+                level_requested=level_requested,
+                level_achieved=level_achieved,
+                results=tuple(results),
+                summary=summary,
             )
 
         return st.builds(
             _build_check_result,
             results=st.lists(function_result_strategy, max_size=6),
-            level_requested=st.integers(min_value=1, max_value=5),
             duration_seconds=st.floats(
                 min_value=0.0,
                 max_value=10.0,
@@ -762,12 +847,31 @@ def _make_callable_stub(annotation: object) -> Callable[..., object]:
 
 
 @icontract.require(
+    lambda value: isinstance(value, object),
+    "value must be a Python object",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_placeholder_value(value: object) -> bool:
+    """Check whether a sampled placeholder value is deterministic and safe."""
+    if value is None:
+        return True
+    if isinstance(value, (bool, int, float, str, bytes, list, tuple, dict, set, frozenset)):
+        return True
+    return (
+        value.__class__.__module__ == "serenecode.models"
+        and value.__class__.__name__ == "CheckResult"
+    )
+
+
+@icontract.require(
     lambda annotation: annotation is None or isinstance(annotation, object),
     "annotation must be a Python object or None",
 )
 @icontract.ensure(
-    lambda result: result is None
-    or isinstance(result, (bool, int, float, str, bytes, list, tuple, dict, set, frozenset)),
+    lambda result: _is_placeholder_value(result),
     "result must be a deterministic placeholder value",
 )
 def _sample_value_for_annotation(annotation: object) -> object:
@@ -785,6 +889,13 @@ def _sample_value_for_annotation(annotation: object) -> object:
         return "x"
     if annotation is bytes:
         return b"x"
+
+    module_name = getattr(annotation, "__module__", "")
+    type_name = getattr(annotation, "__name__", "")
+    if module_name == "serenecode.models" and type_name == "CheckResult":
+        from serenecode.models import make_check_result
+
+        return make_check_result((), level_requested=1, duration_seconds=0.0)
 
     origin = typing.get_origin(annotation)
     args = typing.get_args(annotation)
@@ -1109,6 +1220,106 @@ def _is_property_friendly_function(func: Callable[..., object]) -> bool:
     if module_name.startswith("serenecode.adapters"):
         return False
     return True
+
+
+@icontract.require(
+    lambda annotation: annotation is inspect.Parameter.empty or isinstance(annotation, object),
+    "annotation must be a Python annotation object",
+)
+@icontract.require(
+    lambda globalns: globalns is None or isinstance(globalns, dict),
+    "globalns must be a globals dictionary when provided",
+)
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _uses_result_model_annotation(
+    annotation: object,
+    globalns: dict[str, object] | None = None,
+) -> bool:
+    """Check whether an annotation references Serenecode's result-model graph."""
+    # Variant: the remaining annotation nesting decreases on each recursive call into args.
+    if annotation is inspect.Parameter.empty:
+        return False
+    if isinstance(annotation, typing.ForwardRef):
+        return _uses_result_model_annotation(annotation.__forward_arg__, globalns)
+    if isinstance(annotation, str):
+        return _string_annotation_uses_result_model(annotation, globalns)
+
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+    if origin in (typing.Union, types.UnionType):
+        return any(_uses_result_model_annotation(arg, globalns) for arg in args)
+    if origin is not None:
+        return any(_uses_result_model_annotation(arg, globalns) for arg in args if arg is not Ellipsis)
+
+    module_name = getattr(annotation, "__module__", "")
+    return module_name == "serenecode.models"
+
+
+@icontract.require(lambda annotation: isinstance(annotation, str), "annotation must be a string")
+@icontract.require(
+    lambda globalns: globalns is None or isinstance(globalns, dict),
+    "globalns must be a globals dictionary when provided",
+)
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _string_annotation_uses_result_model(
+    annotation: str,
+    globalns: dict[str, object] | None = None,
+) -> bool:
+    """Check whether a raw string annotation clearly references serenecode.models."""
+    result_model_names = _result_model_public_names()
+
+    # Loop invariant: no previously-seen dotted name referenced Serenecode's result models.
+    for dotted_name in re.findall(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", annotation):
+        if dotted_name.startswith("serenecode.models."):
+            if dotted_name.rsplit(".", 1)[-1] in result_model_names:
+                return True
+            continue
+
+        if "." not in dotted_name:
+            if globalns is not None and _is_result_model_object(globalns.get(dotted_name)):
+                return True
+            continue
+
+        root_name, _, remainder = dotted_name.partition(".")
+        if globalns is None or not _is_result_model_module(globalns.get(root_name)):
+            continue
+        remainder_parts = tuple(part for part in remainder.split(".") if part)
+        if remainder_parts and remainder_parts[0] in result_model_names:
+            return True
+
+    return False
+
+
+@icontract.ensure(lambda result: isinstance(result, frozenset), "result must be a frozenset")
+def _result_model_public_names() -> frozenset[str]:
+    """Return the public names exported from serenecode.models."""
+    from serenecode import models as result_models
+
+    return frozenset(
+        name
+        for name in dir(result_models)
+        if not name.startswith("_")
+    )
+
+
+@icontract.require(
+    lambda value: isinstance(value, object),
+    "value must be a Python object",
+)
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _is_result_model_module(value: object) -> bool:
+    """Check whether a runtime value is the serenecode.models module."""
+    return isinstance(value, types.ModuleType) and value.__name__ == "serenecode.models"
+
+
+@icontract.require(
+    lambda value: isinstance(value, object),
+    "value must be a Python object",
+)
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _is_result_model_object(value: object) -> bool:
+    """Check whether a runtime value comes from serenecode.models."""
+    return getattr(value, "__module__", "") == "serenecode.models"
 
 
 @icontract.require(
