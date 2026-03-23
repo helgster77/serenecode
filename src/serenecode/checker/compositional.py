@@ -421,8 +421,14 @@ def _parse_parameters(
         Tuple of ParameterInfo for non-self/cls parameters.
     """
     params: list[ParameterInfo] = []
-    # Loop invariant: params contains ParameterInfo for args[0..i] excluding self/cls
-    for arg in node.args.args:
+    signature_params = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+    if node.args.vararg is not None:
+        signature_params.append(node.args.vararg)
+    if node.args.kwarg is not None:
+        signature_params.append(node.args.kwarg)
+
+    # Loop invariant: params contains ParameterInfo for signature_params[0..i] excluding self/cls
+    for arg in signature_params:
         if arg.arg in ("self", "cls"):
             continue
         annotation = ast.unparse(arg.annotation) if arg.annotation else None
@@ -521,8 +527,14 @@ def _parse_class(node: ast.ClassDef, aliases: IcontractNames) -> ClassInfo:
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
             methods.append(item.name)
             params: list[str] = []
-            # Loop invariant: params contains non-self arg names from item.args[0..j]
-            for arg in item.args.args:
+            signature_params = list(item.args.posonlyargs) + list(item.args.args) + list(item.args.kwonlyargs)
+            if item.args.vararg is not None:
+                signature_params.append(item.args.vararg)
+            if item.args.kwarg is not None:
+                signature_params.append(item.args.kwarg)
+
+            # Loop invariant: params contains non-self arg names from signature_params[0..j]
+            for arg in signature_params:
                 if arg.arg not in ("self", "cls"):
                     params.append(arg.arg)
             method_sigs.append(MethodSignature(
@@ -567,8 +579,14 @@ def _parse_protocol(node: ast.ClassDef) -> ProtocolInfo:
     for item in node.body:
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
             params: list[str] = []
-            # Loop invariant: params contains non-self arg names from item.args[0..j]
-            for arg in item.args.args:
+            signature_params = list(item.args.posonlyargs) + list(item.args.args) + list(item.args.kwonlyargs)
+            if item.args.vararg is not None:
+                signature_params.append(item.args.vararg)
+            if item.args.kwarg is not None:
+                signature_params.append(item.args.kwarg)
+
+            # Loop invariant: params contains non-self arg names from signature_params[0..j]
+            for arg in signature_params:
                 if arg.arg not in ("self", "cls"):
                     params.append(arg.arg)
 

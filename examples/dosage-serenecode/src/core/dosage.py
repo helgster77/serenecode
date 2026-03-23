@@ -1,10 +1,11 @@
 """Medical dosage calculation functions."""
 
 import math
+from decimal import Decimal
 
 import icontract
 
-from core.models import (
+from .models import (
     ContraindicationResult,
     DoseResult,
     Drug,
@@ -172,8 +173,8 @@ def adjust_for_renal_function(dose_mg: float, creatinine_clearance: float) -> fl
 )
 @icontract.ensure(
     lambda result, dose_mg, drug: result.daily_total_mg
-    == dose_mg * drug.doses_per_day,
-    "Daily total must equal dose_mg * doses_per_day exactly",
+    == float(Decimal(str(dose_mg)) * Decimal(str(drug.doses_per_day))),
+    "Daily total must equal the Decimal-derived dose_mg * doses_per_day",
 )
 @icontract.ensure(
     lambda result: result.is_safe == (result.daily_total_mg <= result.max_daily_mg),
@@ -194,13 +195,18 @@ def adjust_for_renal_function(dose_mg: float, creatinine_clearance: float) -> fl
 def check_daily_safety(dose_mg: float, drug: Drug) -> SafetyResult:
     """Verify the prescribed dose does not exceed the max daily limit.
 
-    daily_total = dose_mg * doses_per_day
+    daily_total uses Decimal arithmetic to avoid float drift
     is_safe = daily_total <= max_daily_dose_mg
     """
-    daily_total_mg: float = dose_mg * drug.doses_per_day
+    daily_total_mg: float = float(
+        Decimal(str(dose_mg)) * Decimal(str(drug.doses_per_day))
+    )
     max_daily_mg: float = drug.max_daily_dose_mg
     is_safe: bool = daily_total_mg <= max_daily_mg
-    utilization_pct: float = (daily_total_mg / max_daily_mg) * 100.0
+    utilization_pct: float = float(
+        (Decimal(str(daily_total_mg)) / Decimal(str(max_daily_mg)))
+        * Decimal("100")
+    )
 
     return SafetyResult(
         daily_total_mg=daily_total_mg,

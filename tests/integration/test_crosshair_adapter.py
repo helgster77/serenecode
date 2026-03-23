@@ -19,6 +19,7 @@ class TestCrossHairAdapter:
         checker = CrossHairSymbolicChecker(
             per_condition_timeout=10,
             per_path_timeout=5,
+            allow_code_execution=True,
         )
         findings = checker.verify_module(
             "tests.fixtures.invalid.broken_postcondition",
@@ -33,6 +34,7 @@ class TestCrossHairAdapter:
         checker = CrossHairSymbolicChecker(
             per_condition_timeout=10,
             per_path_timeout=5,
+            allow_code_execution=True,
         )
         findings = checker.verify_module(
             "tests.fixtures.valid.simple_function",

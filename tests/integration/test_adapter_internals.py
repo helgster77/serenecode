@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from functools import wraps
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from serenecode.adapters.mypy_adapter import MypyTypeChecker, _MYPY_OUTPUT_PATTERN
+from serenecode.core.exceptions import ToolNotInstalledError, UnsafeCodeExecutionError
 
 
 class TestMypyOutputParsing:
@@ -75,6 +77,39 @@ Found 2 errors in 2 files (checked 2 source files)
         checker = MypyTypeChecker()
         issues = checker._parse_output("")
         assert issues == []
+
+    def test_check_raises_when_mypy_module_is_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        checker = MypyTypeChecker()
+
+        monkeypatch.setattr(
+            "serenecode.adapters.mypy_adapter.subprocess.run",
+            lambda *args, **kwargs: SimpleNamespace(
+                stdout="",
+                stderr="python: No module named mypy\n",
+                returncode=1,
+            ),
+        )
+
+        with pytest.raises(ToolNotInstalledError):
+            checker.check(["demo.py"])
+
+    def test_check_returns_synthetic_error_for_stderr_only_failures(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        checker = MypyTypeChecker()
+
+        monkeypatch.setattr(
+            "serenecode.adapters.mypy_adapter.subprocess.run",
+            lambda *args, **kwargs: SimpleNamespace(
+                stdout="",
+                stderr="mypy crashed before producing parseable output",
+                returncode=2,
+            ),
+        )
+
+        issues = checker.check(["demo.py"])
+
+        assert len(issues) == 1
+        assert issues[0].severity == "error"
+        assert "crashed" in issues[0].message
 
 
 class TestHypothesisAdapterInternals:
@@ -228,6 +263,14 @@ class TestHypothesisAdapterInternals:
         result = _find_nested_violation(exc)
         assert result is None
 
+    def test_property_tester_requires_explicit_code_execution_consent(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
+
+        tester = HypothesisPropertyTester()
+
+        with pytest.raises(UnsafeCodeExecutionError):
+            tester.test_module("tests.fixtures.valid.simple_function")
+
 
 @pytest.mark.slow
 class TestCrossHairAdapterInternals:
@@ -280,6 +323,7 @@ class TestCrossHairAdapterInternals:
         checker = CrossHairSymbolicChecker(
             per_condition_timeout=111,
             per_path_timeout=222,
+            allow_code_execution=True,
         )
         captured: dict[str, object] = {}
 
@@ -318,6 +362,7 @@ class TestCrossHairAdapterInternals:
         checker = CrossHairSymbolicChecker(
             per_condition_timeout=33,
             per_path_timeout=44,
+            allow_code_execution=True,
         )
         captured: dict[str, object] = {}
 
@@ -349,6 +394,23 @@ class TestCrossHairAdapterInternals:
         assert captured["per_condition_timeout"] == 33
         assert captured["per_path_timeout"] == 44
         assert captured["search_paths"] == ()
+
+    def test_verify_module_requires_explicit_code_execution_consent(self) -> None:
+        from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
+
+        checker = CrossHairSymbolicChecker()
+
+        with pytest.raises(UnsafeCodeExecutionError):
+            checker.verify_module("demo.module")
+
+    def test_cli_backend_returns_no_findings_for_modules_without_targets(self) -> None:
+        from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
+
+        checker = CrossHairSymbolicChecker(allow_code_execution=True)
+
+        findings = checker._verify_via_cli("serenecode.adapters.local_fs", 1, 1)
+
+        assert findings == []
 
 
 class TestModuleLoader:

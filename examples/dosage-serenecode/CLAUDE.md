@@ -13,17 +13,19 @@ serenecode check src/ --level 2
 
 **Full verification with property testing (recommended):**
 ```bash
-serenecode check src/ --level 3
+serenecode check src/ --level 3 --allow-code-execution
 ```
 
 **Symbolic verification for critical functions (minutes):**
 ```bash
-serenecode check src/core/ --level 4
+serenecode check src/core/ --level 4 --allow-code-execution
 ```
 
 **Generate an HTML report:**
 ```bash
-serenecode report src/ --format html --output report.html
+serenecode report src/ --format html --output report.html --allow-code-execution
 ```
+
+Levels 3-5 import and execute project modules. Only use `--allow-code-execution` for trusted code.
 
 If verification fails, read the error messages and fix the issues. Each failure includes the function name, file, line number, and a suggested fix. Iterate until all checks pass. Do not commit code that fails verification.

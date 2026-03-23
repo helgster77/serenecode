@@ -16,7 +16,10 @@ _DEFAULT_TEMPLATE = """\
 This file governs how all code in this project must be written. Any AI coding \
 agent MUST read this file in its entirety before writing or modifying any code.
 
-Verified with: `serenecode check src/ --level 3`
+Verified with: `serenecode check src/ --level 3 --allow-code-execution`
+
+Levels 3-5 import and execute project modules. Only use \
+`--allow-code-execution` for trusted code.
 
 ---
 
@@ -81,7 +84,8 @@ representation invariant. If a class has no meaningful invariant, use \
 ## Type Annotation Standards
 
 - All function signatures MUST have complete type annotations on every \
-parameter and the return type.
+parameter kind (including positional-only, keyword-only, variadic, and private \
+helper parameters) and the return type.
 - No use of `Any` in core modules. Use `Protocol`, `Union`, or generics.
 - Generic types must be fully parameterized (`list[str]` not `list`).
 - Use modern type syntax (Python 3.10+): `X | None` not `Optional[X]`.
@@ -153,7 +157,10 @@ This file governs how all code in this project must be written. Any AI coding \
 agent MUST read this file in its entirety before writing or modifying any code. \
 **No exemptions.** Every function — public and private — must have contracts.
 
-Verified with: `serenecode check src/ --level 5`
+Verified with: `serenecode check src/ --level 5 --allow-code-execution`
+
+Levels 3-5 import and execute project modules. Only use \
+`--allow-code-execution` for trusted code.
 
 ---
 
@@ -222,7 +229,8 @@ carriers: `@icontract.invariant(lambda self: True, "frozen data carrier")`.
 ## Type Annotation Standards
 
 - All function signatures MUST have complete type annotations on every \
-parameter and the return type.
+parameter kind (including positional-only, keyword-only, variadic, and private \
+helper parameters) and the return type.
 - No use of `Any` anywhere — use `Protocol`, `Union`, or generics.
 - Generic types must be fully parameterized (`list[str]` not `list`).
 - Use modern type syntax (Python 3.10+): `X | None` not `Optional[X]`.

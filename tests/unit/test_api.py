@@ -17,6 +17,7 @@ from serenecode import (
     init,
     status,
 )
+from serenecode.core.exceptions import UnsafeCodeExecutionError
 from serenecode.models import CheckResult, make_check_result
 
 
@@ -81,16 +82,25 @@ class TestLibraryApiLevelWrappers:
     ) -> None:
         captured: dict[str, object] = {}
 
-        def fake_run_check(path: str, level: int) -> CheckResult:
+        def fake_run_check(
+            path: str,
+            level: int,
+            allow_code_execution: bool = False,
+        ) -> CheckResult:
             captured["path"] = path
             captured["level"] = level
+            captured["allow_code_execution"] = allow_code_execution
             return make_check_result((), level_requested=level, duration_seconds=0.0)
 
         monkeypatch.setattr(serenecode, "_run_check", fake_run_check)
 
         result = func("demo.py")
         assert isinstance(result, CheckResult)
-        assert captured == {"path": "demo.py", "level": expected_level}
+        assert captured == {
+            "path": "demo.py",
+            "level": expected_level,
+            "allow_code_execution": False,
+        }
 
 
 class TestLibraryApiCheck:
@@ -99,7 +109,7 @@ class TestLibraryApiCheck:
     def test_check_returns_check_result(self, tmp_path: Path) -> None:
         source = '"""Module doc."""\n'
         (tmp_path / "test.py").write_text(source, encoding="utf-8")
-        result = check(str(tmp_path))
+        result = check(str(tmp_path), level=1)
         assert isinstance(result, CheckResult)
 
     def test_check_with_level(self, tmp_path: Path) -> None:
@@ -107,6 +117,13 @@ class TestLibraryApiCheck:
         (tmp_path / "test.py").write_text(source, encoding="utf-8")
         result = check(str(tmp_path), level=1)
         assert isinstance(result, CheckResult)
+
+    def test_deep_check_requires_explicit_code_execution_consent(self, tmp_path: Path) -> None:
+        source = '"""Module doc."""\n'
+        (tmp_path / "test.py").write_text(source, encoding="utf-8")
+
+        with pytest.raises(UnsafeCodeExecutionError):
+            check(str(tmp_path), level=3)
 
 
 class TestLibraryApiStatus:

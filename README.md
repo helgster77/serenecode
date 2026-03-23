@@ -6,7 +6,7 @@
 
 SereneCode is a formal verification framework for AI-generated Python. It tells the AI *how* to write verifiable code, checks that the AI followed instructions, and then verifies the code against what it claims — using symbolic execution and SMT solvers, not just tests.
 
-> **This framework was bootstrapped with AI under its own rules.** SereneCode's SERENECODE.md was written before the first line of code, and the codebase has been developed under those conventions from the start. The current tree passes its own `serenecode check src --level 5`, an internal strict-config Level 5 self-check, `mypy src`, and the full `pytest` suite. The tool applies its verification workflow to itself.
+> **This framework was bootstrapped with AI under its own rules.** SereneCode's SERENECODE.md was written before the first line of code, and the codebase has been developed under those conventions from the start. The current tree passes its own `serenecode check src --level 5 --allow-code-execution`, an internal strict-config Level 5 self-check, `mypy src`, and the full `pytest` suite. The tool applies its verification workflow to itself.
 
 ---
 
@@ -36,14 +36,14 @@ Both versions implement the same requirements, and the plain version passes its 
 | **Objects are truly immutable** | `frozen=True` with mutable `set` on Drug | `_Frozen` mixin + `frozenset` — fully locked down |
 | **Boundary behavior (CrCl exactly 30.0)** | Covered by explicit tests | Boundary behavior is specified in contracts and checked symbolically within analysis bounds |
 | **What if someone changes the code later?** | You rely on the tests you remembered to keep | Contracts stay attached to the code and keep checking every contracted call |
-| **Can a solver verify it?** | No executable specification for a solver to target | 117 executable contracts and a clean `serenecode check ... --level 5` run |
+| **Can a solver verify it?** | No executable specification for a solver to target | 117 executable contracts and a clean `serenecode check ... --level 5 --allow-code-execution` run |
 | **Confidence in a safety-critical setting** | Better than ad hoc code, but still test-shaped confidence | Much higher: behavior is specified, runtime-checked, and solver-checked within analysis bounds |
 
 The plain version relies on 59 tests that check specific scenarios. The SereneCode version adds 117 executable contracts across its domain models and core dosage logic. Those contracts define *what correct means* in code, get checked at runtime, and give CrossHair/Z3 something precise to search against when looking for counterexamples within analysis bounds.
 
 > Both examples live in [`examples/dosage-regular/`](examples/dosage-regular/) and [`examples/dosage-serenecode/`](examples/dosage-serenecode/). Read them side by side.
 
-The Serenecode dosage example currently passes `serenecode check examples/dosage-serenecode/src --level 5` with 24 functions checked, 24 passed, 0 failed, and 0 skipped.
+The Serenecode dosage example currently passes `serenecode check examples/dosage-serenecode/src --level 5 --allow-code-execution` with 21 functions checked, 21 passed, 0 failed, and 0 skipped. Its local `pytest` suite is also green with 72 passing tests.
 
 ---
 
@@ -82,12 +82,14 @@ A five-level verification pipeline that escalates from fast checks to full symbo
 | **L5** | Cross-module verification | Seconds | Compositional analysis |
 
 ```bash
-serenecode check src/ --level 4       # verify it
+serenecode check src/ --level 4 --allow-code-execution  # verify it
 ```
 
 The full pipeline is thorough but not instant. Larger systems will take longer, and the deepest runs may surface skipped items when Hypothesis cannot synthesize valid values for complex domain types or when CrossHair hits its time budget. By default, L4 focuses on contracted top-level functions defined in each module and skips modules or signatures that are currently poor fits for direct symbolic execution, such as adapter/composition-root code, helper predicate modules, and object-heavy APIs. Not everything needs L4/L5. Critical paths get full symbolic and compositional verification. Utility functions get property testing. You decide.
 
-Scoped targets keep their package/import context across verification levels. In practice that means commands like `serenecode check src/core/ --level 4` and `serenecode check src/core/models.py --level 3` use the same local import roots and architectural module paths as a project-wide run instead of breaking relative imports or scoped core-module rules.
+Levels 3-5 import and execute project modules so Hypothesis and CrossHair can exercise real code. Deep runs therefore require explicit `--allow-code-execution` and should only be used on trusted code.
+
+Scoped targets keep their package/import context across verification levels. In practice that means commands like `serenecode check src/core/ --level 4 --allow-code-execution` and `serenecode check src/core/models.py --level 3 --allow-code-execution` use the same local import roots and architectural module paths as a project-wide run instead of breaking relative imports or scoped core-module rules.
 
 ---
 
@@ -98,8 +100,8 @@ SereneCode is designed for AI agents that write code and fix their own mistakes:
 ```
 AI reads SERENECODE.md           → knows how to write verification-ready code
 AI generates code with contracts → preconditions, postconditions, invariants
-serenecode check --structural    → instant: did the AI follow the rules?
-serenecode check --level 4       → deep: can the solver find any counterexample?
+serenecode check --structural                        → instant: did the AI follow the rules?
+serenecode check --level 4 --allow-code-execution   → deep: can the solver find any counterexample?
 AI reads counterexamples         → "input x=[-1] violates postcondition"
 AI fixes the code                → adjusts implementation or contract
 Repeat until verified            → no counterexample found, not just tested
@@ -112,7 +114,7 @@ Works in Claude Code, works in the terminal, works in CI:
 ```python
 import serenecode
 
-result = serenecode.check(path="src/", level=4)
+result = serenecode.check(path="src/", level=4, allow_code_execution=True)
 for failure in result.failures:
     print(failure.counterexample)  # exact input that breaks the code
     print(failure.suggestion)      # proposed fix direction
@@ -126,11 +128,11 @@ SereneCode isn't just a tool that *tells* you to write verified code. It *is* ve
 
 The SERENECODE.md convention file was the first artifact created — before any Python was written. The framework has been developed under those conventions with AI as a first-class contributor, and the repository continuously checks itself with:
 
-- `pytest` across the full suite (currently 521 passing tests, 14 skipped)
+- `pytest` across the full suite (currently 534 passing tests, 14 skipped)
 - `mypy --strict` on `src/`
 - SereneCode's own structural, type, property, symbolic, and compositional passes
 
-On the current tree, the repository passes its checked-in self-check cleanly: `serenecode check src --level 5` reports 161 functions checked, 161 passed, 0 failed, and 0 skipped. The same source tree also passes an internal strict-config Level 5 run (`strict_config()`) with 324 functions checked, 324 passed, 0 failed, and 0 skipped.
+On the current tree, the repository passes its checked-in self-check cleanly: `serenecode check src --level 5 --allow-code-execution` reports 137 functions checked, 137 passed, 0 failed, and 0 skipped. The same source tree also passes an internal strict-config Level 5 run (`strict_config()`) with 301 functions checked, 301 passed, 0 failed, and 0 skipped.
 
 At Level 4, CrossHair and Z3 search for counterexamples across the codebase's symbolic-friendly contracted top-level functions. Level 5 adds structural compositional analysis: dependency direction, circular dependency detection, interface compliance, contract presence at module boundaries, and architectural invariants. Together, they provide both deep per-function verification and system-level structural guarantees.
 
@@ -152,10 +154,10 @@ serenecode init
 
 # Let your AI agent write code following SERENECODE.md...
 # Then verify:
-serenecode check src/
+serenecode check src/ --structural
 
 # Or go deep:
-serenecode check src/core/ --level 4 --format json
+serenecode check src/core/ --level 4 --allow-code-execution --format json
 ```
 
 When you verify a nested package or a single module, Serenecode now preserves the package root and module-path context used by mypy, Hypothesis, CrossHair, and the architectural checks. That lets package-local absolute imports, relative imports, and scoped core-module rules behave the same way they do in project-wide runs.
@@ -163,15 +165,15 @@ When you verify a nested package or a single module, Serenecode now preserves th
 ## CLI Reference
 
 ```bash
-serenecode init [--strict | --minimal]          # set up conventions
-serenecode check [<path>] [--level 1-5]         # run verification
-serenecode check --structural [<path>]          # L1 only (fast)
-serenecode check --verify [<path>]              # L3-5 (deep)
-serenecode status [<path>]                      # verification status
-serenecode report [<path>] [--format html]      # generate reports
+serenecode init [--strict | --minimal]                                  # set up conventions
+serenecode check [<path>] [--level 1-5] [--allow-code-execution]        # run verification
+serenecode check --structural [<path>]                                  # L1 only (fast)
+serenecode check --verify [<path>] --allow-code-execution               # L3-5 (deep)
+serenecode status [<path>]                                              # verification status
+serenecode report [<path>] [--format html] [--allow-code-execution]     # generate reports
 ```
 
-**Exit codes:** 0 = passed, 1 = structural, 2 = types, 3 = properties, 4 = symbolic, 5 = compositional, 10 = internal error.
+**Exit codes:** 0 = passed, 1 = structural, 2 = types, 3 = properties, 4 = symbolic, 5 = compositional, 10 = internal error or deep verification refused without explicit trust.
 
 ---
 
@@ -186,6 +188,8 @@ SereneCode is honest about what it can and can't do:
 **Runtime checks can be disabled.** icontract decorators are checked on every call by default, but can be disabled via environment variables for performance in production. This is a feature, not a bug — but it means runtime guarantees depend on configuration.
 
 **Not everything should be L4.** Symbolic verification can be expensive enough to matter. Use it for critical business logic, not CLI glue. Mixed verification levels exist for this reason.
+
+**Levels 3-5 execute your code.** Property-based and symbolic verification import project modules and run their top-level code as part of analysis. Use `--allow-code-execution` or `allow_code_execution=True` only for code you trust.
 
 **Deep runs can be incomplete by default.** A result can include skipped items even when there are no correctness failures: Hypothesis may not be able to derive strategies for some highly structured project-local types, and CrossHair can time out on solver-heavy modules. Increase `--per-condition-timeout`, `--per-path-timeout`, or `--module-timeout` when you want to push harder on L4.
 

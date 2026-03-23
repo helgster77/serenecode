@@ -105,8 +105,32 @@ class MypyTypeChecker:
                 severity="error",
                 message=f"mypy timed out after {self._timeout}s",
             )]
+        combined_output = "\n".join(
+            chunk for chunk in (result.stdout, result.stderr) if chunk
+        )
+        issues = self._parse_output(combined_output)
+        if result.returncode == 0:
+            return issues
 
-        return self._parse_output(result.stdout)
+        stderr_text = result.stderr.strip()
+        if "No module named mypy" in stderr_text:
+            raise ToolNotInstalledError(
+                "mypy is not installed. Install with: pip install mypy"
+            )
+
+        if issues:
+            return issues
+
+        fallback_message = stderr_text or result.stdout.strip() or (
+            f"mypy failed with exit code {result.returncode}"
+        )
+        return [TypeIssue(
+            file="<mypy>",
+            line=0,
+            column=0,
+            severity="error",
+            message=fallback_message,
+        )]
 
     @icontract.require(lambda output: isinstance(output, str), "output must be a string")
     @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")

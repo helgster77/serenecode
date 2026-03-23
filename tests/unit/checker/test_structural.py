@@ -126,6 +126,22 @@ class TestCheckContracts:
         assert len(failed) == 1
         assert "require" in failed[0].details[0].message.lower()
 
+    def test_positional_only_parameter_requires_precondition(self) -> None:
+        source = textwrap.dedent("""\
+            import icontract
+
+            @icontract.ensure(lambda result: result > 0, "result positive")
+            def double(x: int, /) -> int:
+                return x * 2
+        """)
+        tree = ast.parse(source)
+        aliases = resolve_icontract_aliases(tree)
+        results = check_contracts(tree, default_config(), aliases, "test.py")
+
+        assert len(results) == 1
+        assert results[0].status == CheckStatus.FAILED
+        assert "require" in results[0].details[0].message.lower()
+
     def test_function_missing_ensure(self) -> None:
         source = textwrap.dedent("""\
             import icontract
@@ -409,6 +425,39 @@ class TestCheckTypeAnnotations:
         results = check_type_annotations(tree, default_config(), "test.py")
         assert len(results) == 1
         assert len(results[0].details) == 2  # *args and **kwargs
+
+    def test_keyword_only_arg_checked(self) -> None:
+        source = textwrap.dedent("""\
+            def func(*, item) -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_type_annotations(tree, default_config(), "test.py")
+
+        assert len(results) == 1
+        assert "item" in results[0].details[0].message
+
+    def test_positional_only_arg_checked(self) -> None:
+        source = textwrap.dedent("""\
+            def func(item, /) -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_type_annotations(tree, default_config(), "test.py")
+
+        assert len(results) == 1
+        assert "item" in results[0].details[0].message
+
+    def test_private_function_annotations_checked(self) -> None:
+        source = textwrap.dedent("""\
+            def _helper(item) -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_type_annotations(tree, default_config(), "test.py")
+
+        assert len(results) == 1
+        assert "_helper" == results[0].function
 
 
 class TestCheckNoAnyInCore:
@@ -802,6 +851,19 @@ class TestCheckStructuralOrchestrator:
         )
         assert result.passed is True
         assert len(result.results) == 0
+
+    def test_exempt_module_still_reports_syntax_errors(self) -> None:
+        source = "def broken(:\n  pass"
+        result = check_structural(
+            source,
+            default_config(),
+            module_path="adapters/local_fs.py",
+            file_path="test.py",
+        )
+
+        assert result.passed is False
+        assert len(result.results) == 1
+        assert "syntax" in result.results[0].details[0].message.lower()
 
     def test_empty_module_with_docstring_passes(self) -> None:
         source = '"""Empty module."""\n'

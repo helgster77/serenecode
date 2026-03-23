@@ -87,7 +87,7 @@ These predicates must themselves be pure functions with no side effects.
 
 ## Type Annotation Standards
 
-- All function signatures MUST have complete type annotations for all parameters and the return type.
+- All function signatures MUST have complete type annotations for all parameters and the return type, including positional-only parameters, keyword-only parameters, variadic parameters, and private helpers.
 - No use of `Any` in core modules (`src/serenecode/core/`, `src/serenecode/checker/`, `src/serenecode/models.py`). Use `Union`, `Optional`, generics, or `Protocol` instead.
 - `Any` is permitted only in adapter modules or where interfacing with untyped external libraries.
 - Use `typing.Protocol` for interface definitions (ports).
@@ -293,10 +293,11 @@ Every meaningful code change in this project MUST come with verification. Writin
 
 ### Repository-Level Targets
 
-- The checked-in project configuration should stay clean under `uv run serenecode check src --level 5`.
+- The checked-in project configuration should stay clean under `uv run serenecode check src --level 5 --allow-code-execution`.
 - The repository should continue to pass `uv run mypy src`.
 - The repository should continue to pass `uv run pytest -q`.
 - If a change affects verification semantics, discovery, loading, reporting, or example claims, verify those paths explicitly rather than assuming the full suite is enough.
+- Levels 3-5 import and execute project modules. Use those levels only on trusted code, and pass `--allow-code-execution` or `allow_code_execution=True` explicitly.
 
 ### Verification Tiers by Module Type
 
@@ -382,6 +383,7 @@ def test_compute_mean_contract(items: list[float]) -> None:
 
 ### Symbolic Verification Rules
 
+- Levels 3-5 load project modules into a real Python interpreter. Treat deep verification as code execution, not as a passive static analysis step.
 - Design top-level contracted functions so they remain as symbolic-friendly as practical: pure inputs, explicit contracts, and minimal hidden state.
 - Keep the default CrossHair budgets in mind: 30 seconds per condition, 10 seconds per path, 300 seconds per module.
 - When CrossHair finds a counterexample, the fix loop is:
@@ -447,7 +449,7 @@ Steps 1-3 may be done together, but steps 4-8 MUST NOT be skipped or deferred.
 - Commit messages follow conventional commits format: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`.
 - All code must pass `uv run serenecode check src --structural` before committing.
 - All code must pass `uv run mypy src` before committing.
-- Changes that affect the verification engine, source discovery, configuration, docs claims, or shipped examples should keep `uv run serenecode check src --level 5` green.
+- Changes that affect the verification engine, source discovery, configuration, docs claims, or shipped examples should keep `uv run serenecode check src --level 5 --allow-code-execution` green.
 
 ---
 

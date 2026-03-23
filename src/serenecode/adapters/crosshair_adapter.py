@@ -26,7 +26,7 @@ import icontract
 
 from serenecode.adapters.module_loader import load_python_module
 from serenecode.contracts.predicates import is_non_empty_string, is_positive_int
-from serenecode.core.exceptions import ToolNotInstalledError
+from serenecode.core.exceptions import ToolNotInstalledError, UnsafeCodeExecutionError
 from serenecode.ports.symbolic_checker import SymbolicFinding
 
 try:
@@ -38,6 +38,10 @@ except ImportError:
     _CROSSHAIR_API_AVAILABLE = False
 
 _CROSSHAIR_CLI_AVAILABLE: bool | None = None
+_TRUST_REQUIRED_MESSAGE = (
+    "Level 4 symbolic verification imports and executes project modules. "
+    "Re-run with allow_code_execution=True only for trusted code."
+)
 
 
 @icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
@@ -163,6 +167,7 @@ class CrossHairSymbolicChecker:
         per_condition_timeout: int = 30,
         per_path_timeout: int = 10,
         module_timeout: int = 300,
+        allow_code_execution: bool = False,
     ) -> None:
         """Initialize the checker.
 
@@ -174,6 +179,7 @@ class CrossHairSymbolicChecker:
         self._per_condition_timeout = per_condition_timeout
         self._per_path_timeout = per_path_timeout
         self._module_timeout = module_timeout
+        self._allow_code_execution = allow_code_execution
 
     @icontract.require(
         lambda module_path: is_non_empty_string(module_path),
@@ -209,6 +215,9 @@ class CrossHairSymbolicChecker:
         Returns:
             List of symbolic findings.
         """
+        if not self._allow_code_execution:
+            raise UnsafeCodeExecutionError(_TRUST_REQUIRED_MESSAGE)
+
         effective_condition_timeout = (
             self._per_condition_timeout
             if per_condition_timeout is None
@@ -335,12 +344,7 @@ class CrossHairSymbolicChecker:
                 duration_seconds=float(self._module_timeout),
             )]
 
-        return [SymbolicFinding(
-            function_name="<module>",
-            module_path=module_path,
-            outcome="verified",
-            message=f"No findings for '{module_path}'",
-        )]
+        return []
 
     @icontract.require(
         lambda module_path: is_non_empty_string(module_path),
@@ -378,12 +382,7 @@ class CrossHairSymbolicChecker:
         """
         targets = _discover_cli_targets(module_path, search_paths)
         if not targets:
-            return [SymbolicFinding(
-                function_name="<module>",
-                module_path=module_path,
-                outcome="verified",
-                message=f"No contracted top-level functions found in '{module_path}'",
-            )]
+            return []
 
         findings: list[SymbolicFinding] = []
 
@@ -508,14 +507,6 @@ def _api_verification_worker(
                 checkables.append(checkable)
 
         if not checkables:
-            if not findings:
-                findings.append(SymbolicFinding(
-                    function_name="<module>",
-                    module_path=module_path,
-                    outcome="verified",
-                    message=f"No contracted functions found in '{module_path}'",
-                    duration_seconds=time.monotonic() - start,
-                ))
             result_queue.put(findings)
             return
 

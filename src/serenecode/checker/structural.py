@@ -226,6 +226,30 @@ def _decorator_has_description(
     "node must be a function definition",
 )
 @icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def _non_receiver_parameters(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[ast.arg]:
+    """Return all non-self/cls parameters from a function signature."""
+    args = node.args
+    params = list(args.posonlyargs) + list(args.args)
+    if params and params[0].arg in ("self", "cls"):
+        params = params[1:]
+    params.extend(args.kwonlyargs)
+    if args.vararg is not None:
+        params.append(args.vararg)
+    if args.kwarg is not None:
+        params.append(args.kwarg)
+    return params
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
     lambda result: isinstance(result, bool),
     "result must be a bool",
 )
@@ -240,11 +264,7 @@ def _has_meaningful_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool
     Returns:
         True if the function has at least one non-self/cls parameter.
     """
-    args = node.args
-    params = list(args.args)
-    if params and params[0].arg in ("self", "cls"):
-        params = params[1:]
-    return bool(params or args.vararg or args.kwarg or args.kwonlyargs)
+    return bool(_non_receiver_parameters(node))
 
 
 @icontract.require(
@@ -658,16 +678,9 @@ def check_type_annotations(
     checkable_functions = _iter_checked_functions(tree)
     # Loop invariant: results contains annotation findings for checkable_functions[0..i]
     for node in checkable_functions:
-        if not _is_public_function(node.name):
-            continue
-
         details: list[Detail] = []
         args = node.args
-
-        # Check positional args (skip self/cls)
-        params_to_check = list(args.args)
-        if params_to_check and params_to_check[0].arg in ("self", "cls"):
-            params_to_check = params_to_check[1:]
+        params_to_check = _non_receiver_parameters(node)
 
         # Loop invariant: details contains missing annotations for params[0..j]
         for arg in params_to_check:
@@ -679,23 +692,6 @@ def check_type_annotations(
                     message=f"Parameter '{arg.arg}' in '{node.name}' missing type annotation",
                     suggestion=f"Add type annotation: {arg.arg}: <type>",
                 ))
-
-        # Check *args and **kwargs
-        if args.vararg and args.vararg.annotation is None:
-            details.append(Detail(
-                level=VerificationLevel.STRUCTURAL,
-                tool="structural",
-                finding_type="violation",
-                message=f"*{args.vararg.arg} in '{node.name}' missing type annotation",
-            ))
-
-        if args.kwarg and args.kwarg.annotation is None:
-            details.append(Detail(
-                level=VerificationLevel.STRUCTURAL,
-                tool="structural",
-                finding_type="violation",
-                message=f"**{args.kwarg.arg} in '{node.name}' missing type annotation",
-            ))
 
         # Check return type
         if node.returns is None:
@@ -1270,11 +1266,6 @@ def check_structural(
     """
     start_time = time.monotonic()
 
-    # Skip exempt modules
-    if is_exempt_module(module_path, config):
-        elapsed = time.monotonic() - start_time
-        return make_check_result((), level_requested=1, duration_seconds=elapsed)
-
     # Parse the source
     try:
         tree = ast.parse(source)
@@ -1299,6 +1290,11 @@ def check_structural(
             level_requested=1,
             duration_seconds=elapsed,
         )
+
+    # Exempt modules still need to parse successfully, but skip structural policy checks.
+    if is_exempt_module(module_path, config):
+        elapsed = time.monotonic() - start_time
+        return make_check_result((), level_requested=1, duration_seconds=elapsed)
 
     # Resolve icontract aliases
     aliases = resolve_icontract_aliases(tree)

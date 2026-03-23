@@ -23,7 +23,7 @@ import icontract
 
 from serenecode.adapters.module_loader import load_python_module
 from serenecode.contracts.predicates import is_non_empty_string, is_positive_int
-from serenecode.core.exceptions import ToolNotInstalledError
+from serenecode.core.exceptions import ToolNotInstalledError, UnsafeCodeExecutionError
 from serenecode.ports.property_tester import PropertyFinding
 
 try:
@@ -33,6 +33,12 @@ try:
     _HYPOTHESIS_AVAILABLE = True
 except ImportError:
     _HYPOTHESIS_AVAILABLE = False
+
+
+_TRUST_REQUIRED_MESSAGE = (
+    "Level 3 property testing imports and executes project modules. "
+    "Re-run with allow_code_execution=True only for trusted code."
+)
 
 
 @icontract.require(
@@ -1165,13 +1171,18 @@ class HypothesisPropertyTester:
         "max_examples must be positive",
     )
     @icontract.ensure(lambda result: result is None, "initialization returns None")
-    def __init__(self, max_examples: int = 100) -> None:
+    def __init__(
+        self,
+        max_examples: int = 100,
+        allow_code_execution: bool = False,
+    ) -> None:
         """Initialize the tester.
 
         Args:
             max_examples: Default maximum examples per function.
         """
         self._max_examples = max_examples
+        self._allow_code_execution = allow_code_execution
 
     @icontract.require(
         lambda module_path: is_non_empty_string(module_path),
@@ -1205,6 +1216,8 @@ class HypothesisPropertyTester:
             raise ToolNotInstalledError(
                 "Hypothesis is not installed. Install with: pip install hypothesis"
             )
+        if not self._allow_code_execution:
+            raise UnsafeCodeExecutionError(_TRUST_REQUIRED_MESSAGE)
 
         effective_max = self._max_examples if max_examples is None else max_examples
         functions = _get_contracted_functions(module_path, search_paths)

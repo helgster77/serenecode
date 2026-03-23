@@ -29,6 +29,11 @@ from serenecode.models import ExitCode
 from serenecode.reporter import format_html, format_human, format_json
 from serenecode.source_discovery import build_source_files, find_serenecode_md
 
+_TRUST_REQUIRED_MESSAGE = (
+    "Levels 3-5 import and execute project modules. "
+    "Re-run with --allow-code-execution only for trusted code."
+)
+
 
 @click.group()
 @icontract.ensure(lambda result: result is None, "CLI entrypoint returns None")
@@ -90,6 +95,11 @@ def init(template: str | None, path: str) -> None:
 @click.option("--per-path-timeout", type=int, default=10, show_default=True, help="Timeout in seconds per execution path for symbolic verification (Level 4)")
 @click.option("--module-timeout", type=int, default=300, show_default=True, help="Timeout in seconds per module for symbolic verification (Level 4)")
 @click.option("--workers", type=int, default=4, show_default=True, help="Number of parallel workers for symbolic verification (Level 4)")
+@click.option(
+    "--allow-code-execution",
+    is_flag=True,
+    help="Allow Levels 3-5 to import and execute project modules",
+)
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(
     lambda level: level is None or is_valid_verification_level(level),
@@ -126,6 +136,7 @@ def check(
     per_path_timeout: int,
     module_timeout: int,
     workers: int,
+    allow_code_execution: bool,
 ) -> None:
     """Run verification checks on Python source files."""
     wall_start = time.monotonic()
@@ -154,6 +165,10 @@ def check(
             effective_level = max(effective_level, 3)
     level = effective_level
     start_level = 3 if verify and not structural else 1
+
+    if level >= 3 and not allow_code_execution:
+        click.echo(f"Error: {_TRUST_REQUIRED_MESSAGE}", err=True)
+        sys.exit(ExitCode.INTERNAL)
 
     # List files
     try:
@@ -188,7 +203,7 @@ def check(
     if level >= 3:
         try:
             from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
-            property_tester = HypothesisPropertyTester()
+            property_tester = HypothesisPropertyTester(allow_code_execution=True)
         except ImportError:
             click.echo("Warning: Hypothesis not available for Level 3 checks.", err=True)
 
@@ -199,6 +214,7 @@ def check(
                 per_condition_timeout=per_condition_timeout,
                 per_path_timeout=per_path_timeout,
                 module_timeout=module_timeout,
+                allow_code_execution=True,
             )
         except ImportError:
             click.echo("Warning: CrossHair not available for Level 4 checks.", err=True)
@@ -303,6 +319,11 @@ def status(path: str, output_format: str) -> None:
     help="Report format",
 )
 @click.option("--output", "output_file", default=None, help="Write report to file")
+@click.option(
+    "--allow-code-execution",
+    is_flag=True,
+    help="Allow deep reports to import and execute project modules",
+)
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(
     lambda output_format: output_format in {"human", "json", "html"},
@@ -313,7 +334,12 @@ def status(path: str, output_format: str) -> None:
     "output_file must be a non-empty string when provided",
 )
 @icontract.ensure(lambda result: result is None, "CLI commands return None")
-def report(path: str, output_format: str, output_file: str | None) -> None:
+def report(
+    path: str,
+    output_format: str,
+    output_file: str | None,
+    allow_code_execution: bool,
+) -> None:
     """Generate a verification report for the entire project."""
     reader = LocalFileReader()
 
@@ -345,6 +371,9 @@ def report(path: str, output_format: str, output_file: str | None) -> None:
     # Reports use the project's recommended verification depth rather than
     # silently truncating to structural checks only.
     level = config.recommended_level
+    if level >= 3 and not allow_code_execution:
+        click.echo(f"Error: {_TRUST_REQUIRED_MESSAGE}", err=True)
+        sys.exit(ExitCode.INTERNAL)
     type_checker = None
     property_tester = None
     symbolic_checker = None
@@ -359,14 +388,14 @@ def report(path: str, output_format: str, output_file: str | None) -> None:
     if level >= 3:
         try:
             from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
-            property_tester = HypothesisPropertyTester()
+            property_tester = HypothesisPropertyTester(allow_code_execution=True)
         except ImportError:
             pass
 
     if level >= 4:
         try:
             from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
-            symbolic_checker = CrossHairSymbolicChecker()
+            symbolic_checker = CrossHairSymbolicChecker(allow_code_execution=True)
         except ImportError:
             pass
 

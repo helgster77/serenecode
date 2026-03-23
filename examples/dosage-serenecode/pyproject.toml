@@ -5,6 +5,7 @@ description = "Medical dosage calculator example for serenecode"
 requires-python = ">=3.10"
 dependencies = [
     "icontract>=2.7.0",
+    "serenecode[verify]",
 ]
 
 [project.optional-dependencies]
@@ -16,3 +17,6 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.uv.sources]
+serenecode = { path = "../..", editable = true }

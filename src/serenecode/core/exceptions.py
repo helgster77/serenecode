@@ -32,3 +32,7 @@ class InitializationError(SerenecodeError):
 
 class ToolNotInstalledError(SerenecodeError):
     """Raised when a required external tool is not installed."""
+
+
+class UnsafeCodeExecutionError(SerenecodeError):
+    """Raised when deep verification is requested without trusting the code."""

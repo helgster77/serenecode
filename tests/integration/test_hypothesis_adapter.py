@@ -22,7 +22,7 @@ class TestHypothesisAdapter:
     """Integration tests running real Hypothesis tests."""
 
     def test_valid_module_passes(self) -> None:
-        tester = HypothesisPropertyTester()
+        tester = HypothesisPropertyTester(allow_code_execution=True)
         findings = tester.test_module(
             "tests.fixtures.valid.simple_function",
             max_examples=20,
@@ -41,7 +41,7 @@ class TestHypothesisAdapter:
         if not icontract_enabled():
             pytest.skip("icontract invariants disabled by CrossHair monkey-patching")
 
-        tester = HypothesisPropertyTester()
+        tester = HypothesisPropertyTester(allow_code_execution=True)
         findings = tester.test_module(
             "tests.fixtures.invalid.broken_postcondition",
             max_examples=50,
@@ -56,7 +56,7 @@ class TestHypothesisAdapter:
             assert len(abs_failures) >= 1
 
     def test_correct_function_passes(self) -> None:
-        tester = HypothesisPropertyTester()
+        tester = HypothesisPropertyTester(allow_code_execution=True)
         findings = tester.test_module(
             "tests.fixtures.invalid.broken_postcondition",
             max_examples=20,
@@ -69,7 +69,7 @@ class TestHypothesisAdapter:
             assert finding.passed is True or finding.finding_type == "crash"
 
     def test_module_with_no_contracted_functions(self) -> None:
-        tester = HypothesisPropertyTester()
+        tester = HypothesisPropertyTester(allow_code_execution=True)
         findings = tester.test_module(
             "tests.fixtures.invalid.missing_contracts",
             max_examples=10,
@@ -78,7 +78,7 @@ class TestHypothesisAdapter:
         assert len(findings) == 0
 
     def test_finding_includes_function_name(self) -> None:
-        tester = HypothesisPropertyTester()
+        tester = HypothesisPropertyTester(allow_code_execution=True)
         findings = tester.test_module(
             "tests.fixtures.valid.simple_function",
             max_examples=10,
@@ -89,7 +89,7 @@ class TestHypothesisAdapter:
             assert f.module_path == "tests.fixtures.valid.simple_function"
 
     def test_finding_has_correct_types(self) -> None:
-        tester = HypothesisPropertyTester()
+        tester = HypothesisPropertyTester(allow_code_execution=True)
         findings = tester.test_module(
             "tests.fixtures.invalid.broken_postcondition",
             max_examples=30,

@@ -37,14 +37,14 @@ class TestReportCommand:
     def test_report_human_format(self, tmp_path: Path) -> None:
         _write_sample_source(tmp_path)
         runner = CliRunner()
-        result = runner.invoke(main, ["report", str(tmp_path)])
+        result = runner.invoke(main, ["report", str(tmp_path), "--allow-code-execution"])
         assert result.exit_code == 0
         assert "functions checked" in result.output
 
     def test_report_json_format(self, tmp_path: Path) -> None:
         _write_sample_source(tmp_path)
         runner = CliRunner()
-        result = runner.invoke(main, ["report", str(tmp_path), "--format", "json"])
+        result = runner.invoke(main, ["report", str(tmp_path), "--format", "json", "--allow-code-execution"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert "version" in parsed
@@ -54,7 +54,7 @@ class TestReportCommand:
     def test_report_html_format(self, tmp_path: Path) -> None:
         _write_sample_source(tmp_path)
         runner = CliRunner()
-        result = runner.invoke(main, ["report", str(tmp_path), "--format", "html"])
+        result = runner.invoke(main, ["report", str(tmp_path), "--format", "html", "--allow-code-execution"])
         assert result.exit_code == 0
         assert "<!DOCTYPE html>" in result.output
         assert "Serenecode Verification Report" in result.output
@@ -68,6 +68,7 @@ class TestReportCommand:
             "report", str(tmp_path),
             "--format", "html",
             "--output", str(output_file),
+            "--allow-code-execution",
         ])
         assert result.exit_code == 0
         assert "Report written to" in result.output
@@ -91,7 +92,7 @@ def broken(x: int, y: int) -> int:
 '''
         (tmp_path / "broken.py").write_text(source, encoding="utf-8")
         runner = CliRunner()
-        result = runner.invoke(main, ["report", str(tmp_path)])
+        result = runner.invoke(main, ["report", str(tmp_path), "--allow-code-execution"])
         assert result.exit_code == 0
         assert "FAIL" in result.output
 
@@ -105,7 +106,7 @@ def func(x: int, y: int) -> int:
 '''
         (tmp_path / "special.py").write_text(source, encoding="utf-8")
         runner = CliRunner()
-        result = runner.invoke(main, ["report", str(tmp_path), "--format", "html"])
+        result = runner.invoke(main, ["report", str(tmp_path), "--format", "html", "--allow-code-execution"])
         assert result.exit_code == 0
         # HTML should escape < and > and &
         assert "<script>" not in result.output
@@ -113,7 +114,7 @@ def func(x: int, y: int) -> int:
     def test_report_json_valid_schema(self, tmp_path: Path) -> None:
         _write_sample_source(tmp_path)
         runner = CliRunner()
-        result = runner.invoke(main, ["report", str(tmp_path), "--format", "json"])
+        result = runner.invoke(main, ["report", str(tmp_path), "--format", "json", "--allow-code-execution"])
         parsed = json.loads(result.output)
         # Validate schema fields from spec Section 4.3
         assert isinstance(parsed["version"], str)
@@ -139,7 +140,16 @@ def func(x: int, y: int) -> int:
         monkeypatch.setattr("serenecode.cli.run_pipeline", fake_run_pipeline)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["report", str(tmp_path)])
+        result = runner.invoke(main, ["report", str(tmp_path), "--allow-code-execution"])
 
         assert result.exit_code == 0
         assert captured["level"] == 3
+
+    def test_report_requires_explicit_code_execution_flag(self, tmp_path: Path) -> None:
+        _write_sample_source(tmp_path)
+        runner = CliRunner()
+
+        result = runner.invoke(main, ["report", str(tmp_path)])
+
+        assert result.exit_code == 10
+        assert "--allow-code-execution" in result.output

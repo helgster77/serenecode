@@ -143,7 +143,7 @@ class TestPropertiesCheckerWithRealHypothesis:
         if not icontract_enabled():
             pytest.skip("icontract invariants disabled by CrossHair monkey-patching")
 
-        tester = HypothesisPropertyTester()
+        tester = HypothesisPropertyTester(allow_code_execution=True)
         findings = tester.test_module(
             "tests.fixtures.invalid.broken_postcondition",
             max_examples=50,
@@ -156,7 +156,7 @@ class TestPropertiesCheckerWithRealHypothesis:
         from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
         from serenecode.checker.properties import transform_property_results
 
-        tester = HypothesisPropertyTester()
+        tester = HypothesisPropertyTester(allow_code_execution=True)
         findings = tester.test_module(
             "tests.fixtures.valid.simple_function",
             max_examples=20,
@@ -174,7 +174,11 @@ class TestSymbolicCheckerWithRealCrossHair:
         from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
         from serenecode.checker.symbolic import transform_symbolic_results
 
-        checker = CrossHairSymbolicChecker(per_condition_timeout=10, per_path_timeout=5)
+        checker = CrossHairSymbolicChecker(
+            per_condition_timeout=10,
+            per_path_timeout=5,
+            allow_code_execution=True,
+        )
         findings = checker.verify_module("tests.fixtures.invalid.broken_postcondition")
         result = transform_symbolic_results(findings, "broken.py", 10.0)
         counterexamples = [
@@ -187,7 +191,11 @@ class TestSymbolicCheckerWithRealCrossHair:
         from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
         from serenecode.checker.symbolic import transform_symbolic_results
 
-        checker = CrossHairSymbolicChecker(per_condition_timeout=10, per_path_timeout=5)
+        checker = CrossHairSymbolicChecker(
+            per_condition_timeout=10,
+            per_path_timeout=5,
+            allow_code_execution=True,
+        )
         findings = checker.verify_module("tests.fixtures.valid.simple_function")
         result = transform_symbolic_results(findings, "valid.py", 5.0)
         # No counterexamples for the valid function
