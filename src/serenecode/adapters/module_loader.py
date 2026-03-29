@@ -474,8 +474,7 @@ def _temporary_sys_path(search_paths: tuple[str, ...]) -> Iterator[None]:
     """Temporarily prepend search paths to sys.path during module loading."""
     inserted: list[str] = []
 
-    # Loop invariant: inserted contains search paths added from search_paths[n-i..n]
-    # Loop invariant: inserted contains search paths added from search_paths[0..i]
+    # Loop invariant: inserted contains search paths added from reversed(search_paths)[0..i]
     for path in reversed(search_paths):
         if path in sys.path:
             continue

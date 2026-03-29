@@ -25,7 +25,7 @@ from serenecode.models import CheckResult
 from serenecode.source_discovery import build_source_files, find_serenecode_md
 
 _TRUST_REQUIRED_MESSAGE = (
-    "Levels 3-5 import and execute project modules. "
+    "Levels 3-6 import and execute project modules. "
     "Pass allow_code_execution=True only for trusted code."
 )
 
@@ -56,11 +56,11 @@ def init(path: str = ".", template: str = "default") -> InitResult:
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
-@icontract.require(lambda level: is_valid_verification_level(level), "level must be between 1 and 5")
+@icontract.require(lambda level: is_valid_verification_level(level), "level must be between 1 and 6")
 @icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
 def check(
     path: str = ".",
-    level: int = 5,
+    level: int = 6,
     allow_code_execution: bool = False,
 ) -> CheckResult:
     """Run verification up to the specified level.
@@ -70,8 +70,8 @@ def check(
 
     Args:
         path: File or directory to check.
-        level: Maximum verification level (1-5).
-        allow_code_execution: Explicit opt-in for Levels 3-5, which import
+        level: Maximum verification level (1-6).
+        allow_code_execution: Explicit opt-in for Levels 3-6, which import
             and execute project modules.
 
     Returns:
@@ -106,19 +106,19 @@ def check_types(path: str = ".") -> CheckResult:
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
 @icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
-def check_properties(
+def check_coverage(
     path: str = ".",
     allow_code_execution: bool = False,
 ) -> CheckResult:
-    """Run property-based verification through Level 3.
+    """Run verification through Level 3 (coverage analysis).
 
     Args:
         path: File or directory to check.
-        allow_code_execution: Explicit opt-in because Level 3 imports and
-            executes project modules.
+        allow_code_execution: Explicit opt-in because Levels 3-6 import and
+            execute project modules.
 
     Returns:
-        A CheckResult with findings through Level 3.
+        CheckResult through Level 3.
     """
     return _run_check(path, level=3, allow_code_execution=allow_code_execution)
 
@@ -126,16 +126,16 @@ def check_properties(
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
 @icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
-def check_symbolic(
+def check_properties(
     path: str = ".",
     allow_code_execution: bool = False,
 ) -> CheckResult:
-    """Run symbolic verification through Level 4.
+    """Run property-based verification through Level 4.
 
     Args:
         path: File or directory to check.
-        allow_code_execution: Explicit opt-in because Levels 3-4 import and
-            execute project modules.
+        allow_code_execution: Explicit opt-in because Level 4 imports and
+            executes project modules.
 
     Returns:
         A CheckResult with findings through Level 4.
@@ -146,21 +146,41 @@ def check_symbolic(
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
 @icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
-def check_compositional(
+def check_symbolic(
     path: str = ".",
     allow_code_execution: bool = False,
 ) -> CheckResult:
-    """Run compositional verification through Level 5.
+    """Run symbolic verification through Level 5.
 
     Args:
         path: File or directory to check.
-        allow_code_execution: Explicit opt-in because Levels 3-5 import and
-            execute project modules during the full pipeline.
+        allow_code_execution: Explicit opt-in because Levels 3-6 import and
+            execute project modules.
 
     Returns:
         A CheckResult with findings through Level 5.
     """
     return _run_check(path, level=5, allow_code_execution=allow_code_execution)
+
+
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
+@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+def check_compositional(
+    path: str = ".",
+    allow_code_execution: bool = False,
+) -> CheckResult:
+    """Run compositional verification through Level 6.
+
+    Args:
+        path: File or directory to check.
+        allow_code_execution: Explicit opt-in because Levels 3-6 import and
+            execute project modules during the full pipeline.
+
+    Returns:
+        A CheckResult with findings through Level 6.
+    """
+    return _run_check(path, level=6, allow_code_execution=allow_code_execution)
 
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
@@ -180,7 +200,7 @@ def status(path: str = ".") -> CheckResult:
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
-@icontract.require(lambda level: is_valid_verification_level(level), "level must be between 1 and 5")
+@icontract.require(lambda level: is_valid_verification_level(level), "level must be between 1 and 6")
 @icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
 def _run_check(
     path: str,
@@ -191,8 +211,8 @@ def _run_check(
 
     Args:
         path: File or directory to check.
-        level: Maximum verification level (1-5).
-        allow_code_execution: Explicit opt-in for Levels 3-5, which import
+        level: Maximum verification level (1-6).
+        allow_code_execution: Explicit opt-in for Levels 3-6, which import
             and execute project modules.
 
     Returns:
@@ -217,6 +237,7 @@ def _run_check(
 
     # Wire up adapters for higher levels
     type_checker = None
+    coverage_analyzer = None
     property_tester = None
     symbolic_checker = None
 
@@ -229,12 +250,19 @@ def _run_check(
 
     if level >= 3:
         try:
+            from serenecode.adapters.coverage_adapter import CoverageAnalyzerAdapter
+            coverage_analyzer = CoverageAnalyzerAdapter(allow_code_execution=True)
+        except ImportError:
+            pass
+
+    if level >= 4:
+        try:
             from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
             property_tester = HypothesisPropertyTester(allow_code_execution=True)
         except ImportError:
             pass
 
-    if level >= 4:
+    if level >= 5:
         try:
             from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
             symbolic_checker = CrossHairSymbolicChecker(allow_code_execution=True)
@@ -247,6 +275,7 @@ def _run_check(
         start_level=1,
         config=config,
         type_checker=type_checker,
+        coverage_analyzer=coverage_analyzer,
         property_tester=property_tester,
         symbolic_checker=symbolic_checker,
     )

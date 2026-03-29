@@ -37,7 +37,7 @@ class TypeIssue:
     code: str | None = None  # e.g. "arg-type", "return-value"
 
 
-@icontract.invariant(lambda self: True, "protocol has no runtime state")
+# Protocol classes are exempt from @icontract.invariant — see ports/file_system.py.
 class TypeChecker(Protocol):
     """Port for static type checking.
 

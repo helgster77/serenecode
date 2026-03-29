@@ -37,7 +37,7 @@ _IGNORED_DIR_NAMES = frozenset({
 })
 
 
-@icontract.invariant(lambda self: True, "reader carries no mutable state")
+# no-invariant: stateless adapter with no instance fields to constrain
 class LocalFileReader:
     """File reader implementation using pathlib.
 
@@ -104,7 +104,7 @@ class LocalFileReader:
         try:
             files: list[str] = []
             # Loop invariant: files contains Python files discovered from prior os.walk entries
-            for current_root, dir_names, file_names in os.walk(dir_path):
+            for current_root, dir_names, file_names in os.walk(dir_path, followlinks=False):
                 dir_names[:] = sorted(
                     d for d in dir_names
                     if d not in _IGNORED_DIR_NAMES
@@ -123,7 +123,7 @@ class LocalFileReader:
         return sorted(files)
 
 
-@icontract.invariant(lambda self: True, "writer carries no mutable state")
+# no-invariant: stateless adapter with no instance fields to constrain
 class LocalFileWriter:
     """File writer implementation using pathlib.
 

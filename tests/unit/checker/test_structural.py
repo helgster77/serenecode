@@ -653,7 +653,7 @@ class TestCheckLoopInvariants:
                     pass
         """)
         tree = ast.parse(source)
-        results = check_loop_invariants(source, tree, default_config(), "test.py")
+        results = check_loop_invariants(source, tree, strict_config(), "test.py")
         assert len(results) == 1
         assert results[0].status == CheckStatus.FAILED
 
@@ -667,7 +667,7 @@ class TestCheckLoopInvariants:
                     x -= 1
         """)
         tree = ast.parse(source)
-        results = check_loop_invariants(source, tree, default_config(), "test.py")
+        results = check_loop_invariants(source, tree, strict_config(), "test.py")
         assert len(results) == 1
 
     def test_recursive_function_needs_variant(self) -> None:
@@ -680,7 +680,7 @@ class TestCheckLoopInvariants:
                 return n * factorial(n - 1)
         """)
         tree = ast.parse(source)
-        results = check_loop_invariants(source, tree, default_config(), "test.py")
+        results = check_loop_invariants(source, tree, strict_config(), "test.py")
         assert len(results) >= 1
         variant_results = [r for r in results if "variant" in r.details[0].message.lower()]
         assert len(variant_results) == 1
@@ -715,9 +715,31 @@ class TestCheckLoopInvariants:
         results = check_loop_invariants(source, tree, minimal_config(), "test.py")
         assert len(results) == 0
 
+    def test_default_config_skips_loop_invariants(self) -> None:
+        source = textwrap.dedent("""\
+            \"\"\"Module doc.\"\"\"
+
+            def func() -> None:
+                for i in range(10):
+                    pass
+        """)
+        tree = ast.parse(source)
+        results = check_loop_invariants(source, tree, default_config(), "test.py")
+        assert len(results) == 0
+
 
 class TestCheckExceptionTypes:
     """Tests for exception type checking."""
+
+    def test_default_config_skips_exception_checks(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                raise Exception("bad")
+        """)
+        tree = ast.parse(source)
+        config = default_config()
+        results = check_exception_types(tree, config, "core/engine.py", "test.py")
+        assert len(results) == 0
 
     def test_raising_domain_exception_passes(self) -> None:
         source = textwrap.dedent("""\
@@ -728,7 +750,7 @@ class TestCheckExceptionTypes:
                 raise MyError("something went wrong")
         """)
         tree = ast.parse(source)
-        config = default_config()
+        config = strict_config()
         results = check_exception_types(tree, config, "core/engine.py", "test.py")
         assert len(results) == 0
 
@@ -738,7 +760,7 @@ class TestCheckExceptionTypes:
                 raise Exception("bad")
         """)
         tree = ast.parse(source)
-        config = default_config()
+        config = strict_config()
         results = check_exception_types(tree, config, "core/engine.py", "test.py")
         assert len(results) == 1
 
@@ -748,7 +770,7 @@ class TestCheckExceptionTypes:
                 raise ValueError("bad")
         """)
         tree = ast.parse(source)
-        config = default_config()
+        config = strict_config()
         results = check_exception_types(tree, config, "core/engine.py", "test.py")
         assert len(results) == 1
 
@@ -758,7 +780,7 @@ class TestCheckExceptionTypes:
                 raise ValueError("bad")
         """)
         tree = ast.parse(source)
-        config = default_config()
+        config = strict_config()
         results = check_exception_types(tree, config, "adapters/local_fs.py", "test.py")
         assert len(results) == 0
 
@@ -850,7 +872,10 @@ class TestCheckStructuralOrchestrator:
             file_path="test.py",
         )
         assert result.passed is True
-        assert len(result.results) == 0
+        # Exempt modules now produce a visible EXEMPT result instead of being invisible.
+        assert len(result.results) == 1
+        assert result.results[0].status == CheckStatus.EXEMPT
+        assert result.summary.exempt_count == 1
 
     def test_exempt_module_still_reports_syntax_errors(self) -> None:
         source = "def broken(:\n  pass"

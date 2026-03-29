@@ -109,6 +109,7 @@ class ClassInfo:
     is_protocol: bool
     method_signatures: tuple[MethodSignature, ...] = ()
     has_invariant: bool = False
+    has_no_invariant_comment: bool = False
 
 
 @icontract.invariant(
@@ -141,6 +142,7 @@ class ModuleInfo:
     protocols: tuple[ProtocolInfo, ...]
     function_infos: tuple[FunctionInfo, ...] = ()
     import_bindings: tuple[tuple[str, str, str | None], ...] = ()
+    parse_error: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +191,7 @@ def parse_module_info(
     """
     try:
         tree = ast.parse(source)
-    except (SyntaxError, TypeError, ValueError):
+    except (SyntaxError, TypeError, ValueError) as parse_exc:
         return ModuleInfo(
             file_path=file_path,
             module_path=module_path,
@@ -198,6 +200,7 @@ def parse_module_info(
             classes=(),
             functions=(),
             protocols=(),
+            parse_error=str(parse_exc),
         )
 
     aliases = resolve_icontract_aliases(tree)
@@ -228,7 +231,7 @@ def parse_module_info(
                         bound_name = alias.asname if alias.asname else alias.name
                         import_bindings.append((bound_name, resolved_module, alias.name))
         elif isinstance(node, ast.ClassDef):
-            class_info = _parse_class(node, aliases)
+            class_info = _parse_class(node, aliases, source)
             classes.append(class_info)
             if class_info.is_protocol:
                 protocol_info = _parse_protocol(node)
@@ -522,12 +525,13 @@ def _get_call_target_name(node: ast.expr) -> str:
     lambda result: isinstance(result, ClassInfo),
     "result must be a ClassInfo",
 )
-def _parse_class(node: ast.ClassDef, aliases: IcontractNames) -> ClassInfo:
+def _parse_class(node: ast.ClassDef, aliases: IcontractNames, source: str = "") -> ClassInfo:
     """Parse a class definition into a ClassInfo.
 
     Args:
         node: An AST ClassDef node.
         aliases: Resolved icontract import names for invariant detection.
+        source: Original source code for comment checking.
 
     Returns:
         A ClassInfo with class structural information.
@@ -552,6 +556,7 @@ def _parse_class(node: ast.ClassDef, aliases: IcontractNames) -> ClassInfo:
         b.endswith(".Protocol") for b in bases
     )
     has_inv = has_decorator(node, aliases.invariant_names)
+    has_no_inv_comment = _check_no_invariant_comment(node, source)
 
     return ClassInfo(
         name=node.name,
@@ -561,7 +566,34 @@ def _parse_class(node: ast.ClassDef, aliases: IcontractNames) -> ClassInfo:
         is_protocol=is_protocol,
         method_signatures=tuple(method_sigs),
         has_invariant=has_inv,
+        has_no_invariant_comment=has_no_inv_comment,
     )
+
+
+@icontract.require(
+    lambda node: isinstance(node, ast.ClassDef),
+    "node must be a class definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _check_no_invariant_comment(node: ast.ClassDef, source: str) -> bool:
+    """Check if the class is preceded by a '# no-invariant:' comment."""
+    if not source:
+        return False
+    lines = source.splitlines()
+    class_line_index = node.lineno - 1
+    # Loop invariant: checking lines above the class for no-invariant comment
+    for offset in range(1, min(6, class_line_index + 1)):
+        prev_line = lines[class_line_index - offset].strip()
+        if prev_line.startswith("# no-invariant:"):
+            return True
+        if prev_line.startswith("#"):
+            continue
+        if not prev_line.startswith("@"):
+            break
+    return False
 
 
 @icontract.require(lambda node: isinstance(node, ast.ClassDef), "node must be a class definition")
@@ -738,8 +770,8 @@ def check_dependency_direction(
                     function="<module>",
                     file=mod.file_path,
                     line=1,
-                    level_requested=5,
-                    level_achieved=4,
+                    level_requested=6,
+                    level_achieved=5,
                     status=CheckStatus.FAILED,
                     details=(Detail(
                         level=VerificationLevel.COMPOSITIONAL,
@@ -759,8 +791,8 @@ def check_dependency_direction(
                     function="<module>",
                     file=mod.file_path,
                     line=1,
-                    level_requested=5,
-                    level_achieved=4,
+                    level_requested=6,
+                    level_achieved=5,
                     status=CheckStatus.FAILED,
                     details=(Detail(
                         level=VerificationLevel.COMPOSITIONAL,
@@ -927,8 +959,8 @@ def check_interface_compliance(
                     function=adapter_cls.name,
                     file=adapter_file,
                     line=adapter_cls.line,
-                    level_requested=5,
-                    level_achieved=4,
+                    level_requested=6,
+                    level_achieved=5,
                     status=CheckStatus.FAILED,
                     details=(Detail(
                         level=VerificationLevel.COMPOSITIONAL,
@@ -955,8 +987,8 @@ def check_interface_compliance(
                         function=adapter_cls.name,
                         file=adapter_file,
                         line=adapter_cls.line,
-                        level_requested=5,
-                        level_achieved=4,
+                        level_requested=6,
+                        level_achieved=5,
                         status=CheckStatus.FAILED,
                         details=(Detail(
                             level=VerificationLevel.COMPOSITIONAL,
@@ -1170,26 +1202,26 @@ def check_contract_completeness(
                     function=func_info.name,
                     file=mod.file_path,
                     line=func_info.line,
-                    level_requested=5,
-                    level_achieved=4,
+                    level_requested=6,
+                    level_achieved=5,
                     status=CheckStatus.FAILED,
                     details=tuple(details),
                 ))
 
-        # Check classes for invariants (skip Enum classes)
+        # Check classes for invariants (skip Enum, exception, Protocol classes)
         # Loop invariant: results contains findings for classes[0..j]
         for cls in mod.classes:
             if not _should_check_class_invariants(cls, config):
                 continue
-            if _is_enum_class(cls) or _is_exception_class(cls):
+            if _is_enum_class(cls) or _is_exception_class(cls) or cls.is_protocol or cls.has_no_invariant_comment:
                 continue
             if not cls.has_invariant:
                 results.append(FunctionResult(
                     function=cls.name,
                     file=mod.file_path,
                     line=cls.line,
-                    level_requested=5,
-                    level_achieved=4,
+                    level_requested=6,
+                    level_achieved=5,
                     status=CheckStatus.FAILED,
                     details=(Detail(
                         level=VerificationLevel.COMPOSITIONAL,
@@ -1210,8 +1242,8 @@ def check_contract_completeness(
                 function="<module>",
                 file=mod.file_path,
                 line=1,
-                level_requested=5,
-                level_achieved=5,
+                level_requested=6,
+                level_achieved=6,
                 status=CheckStatus.PASSED,
                 details=(Detail(
                     level=VerificationLevel.COMPOSITIONAL,
@@ -1302,8 +1334,8 @@ def check_circular_dependencies(
             function="<module>",
             file=first_file,
             line=1,
-            level_requested=5,
-            level_achieved=4,
+            level_requested=6,
+            level_achieved=5,
             status=CheckStatus.FAILED,
             details=(Detail(
                 level=VerificationLevel.COMPOSITIONAL,
@@ -1528,8 +1560,8 @@ def check_assume_guarantee(
                         function=func_info.name,
                         file=mod.file_path,
                         line=func_info.line,
-                        level_requested=5,
-                        level_achieved=4,
+                        level_requested=6,
+                        level_achieved=5,
                         status=CheckStatus.FAILED,
                         details=(Detail(
                             level=VerificationLevel.COMPOSITIONAL,
@@ -1561,8 +1593,8 @@ def check_assume_guarantee(
                         function=func_info.name,
                         file=mod.file_path,
                         line=func_info.line,
-                        level_requested=5,
-                        level_achieved=4,
+                        level_requested=6,
+                        level_achieved=5,
                         status=CheckStatus.FAILED,
                         details=(Detail(
                             level=VerificationLevel.COMPOSITIONAL,
@@ -1837,8 +1869,8 @@ def check_data_flow(
                         function=callee_func.name,
                         file=callee_file,
                         line=callee_func.line,
-                        level_requested=5,
-                        level_achieved=4,
+                        level_requested=6,
+                        level_achieved=5,
                         status=CheckStatus.FAILED,
                         details=(Detail(
                             level=VerificationLevel.COMPOSITIONAL,
@@ -1868,8 +1900,8 @@ def check_data_flow(
                         function=func_info.name,
                         file=mod.file_path,
                         line=func_info.line,
-                        level_requested=5,
-                        level_achieved=4,
+                        level_requested=6,
+                        level_achieved=5,
                         status=CheckStatus.FAILED,
                         details=(Detail(
                             level=VerificationLevel.COMPOSITIONAL,
@@ -1977,8 +2009,8 @@ def check_system_invariants(
                     function=cls.name,
                     file=mod.file_path,
                     line=cls.line,
-                    level_requested=5,
-                    level_achieved=4,
+                    level_requested=6,
+                    level_achieved=5,
                     status=CheckStatus.FAILED,
                     details=(Detail(
                         level=VerificationLevel.COMPOSITIONAL,
@@ -2016,8 +2048,8 @@ def check_system_invariants(
                 function=proto_name,
                 file=proto_file,
                 line=proto_info.line,
-                level_requested=5,
-                level_achieved=5,
+                level_requested=6,
+                level_achieved=6,
                 status=CheckStatus.PASSED,
                 details=(Detail(
                     level=VerificationLevel.COMPOSITIONAL,
@@ -2045,8 +2077,8 @@ def check_system_invariants(
                     function="<module>",
                     file=mod.file_path,
                     line=1,
-                    level_requested=5,
-                    level_achieved=4,
+                    level_requested=6,
+                    level_achieved=5,
                     status=CheckStatus.FAILED,
                     details=(Detail(
                         level=VerificationLevel.COMPOSITIONAL,
@@ -2070,8 +2102,8 @@ def check_system_invariants(
                     function="<module>",
                     file=mod.file_path,
                     line=1,
-                    level_requested=5,
-                    level_achieved=4,
+                    level_requested=6,
+                    level_achieved=5,
                     status=CheckStatus.FAILED,
                     details=(Detail(
                         level=VerificationLevel.COMPOSITIONAL,
@@ -2134,6 +2166,26 @@ def check_compositional(
 
     # Run all compositional checks
     all_results: list[FunctionResult] = []
+
+    # Report parse errors so they are visible instead of silently ignored
+    # Loop invariant: all_results contains parse error findings for modules[0..i]
+    for mod in modules:
+        if mod.parse_error is not None:
+            all_results.append(FunctionResult(
+                function="<module>",
+                file=mod.file_path,
+                line=1,
+                level_requested=6,
+                level_achieved=5,
+                status=CheckStatus.SKIPPED,
+                details=(Detail(
+                    level=VerificationLevel.COMPOSITIONAL,
+                    tool="compositional",
+                    finding_type="parse_error",
+                    message=f"Could not parse '{mod.file_path}': {mod.parse_error}",
+                    suggestion="Fix the syntax error before running compositional verification",
+                ),),
+            ))
     all_results.extend(check_dependency_direction(modules, config))
     all_results.extend(check_circular_dependencies(modules, config))
     all_results.extend(check_interface_compliance(modules, config))
@@ -2145,7 +2197,7 @@ def check_compositional(
     elapsed = time.monotonic() - start_time
     return make_check_result(
         tuple(all_results),
-        level_requested=5,
+        level_requested=6,
         duration_seconds=elapsed,
     )
 @icontract.require(lambda cls: isinstance(cls, ClassInfo), "cls must be a ClassInfo")

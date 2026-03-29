@@ -44,7 +44,7 @@ serenecode check src/ --structural
 
 **Full verification with property testing (minutes):**
 ```bash
-serenecode check src/ --level 3 --allow-code-execution
+serenecode check src/ --level 4 --allow-code-execution
 ```
 
 **Generate an HTML report:**
@@ -52,7 +52,7 @@ serenecode check src/ --level 3 --allow-code-execution
 serenecode report src/ --format html --output report.html --allow-code-execution
 ```
 
-Levels 3-5 import and execute project modules. Only use \
+Levels 3-6 import and execute project modules. Only use \
 `--allow-code-execution` for trusted code.
 
 If verification fails, read the error messages and fix the issues. Each failure \
@@ -80,12 +80,12 @@ serenecode check src/ --structural
 
 **Full verification with property testing (minutes):**
 ```bash
-serenecode check src/ --level 3 --allow-code-execution
+serenecode check src/ --level 4 --allow-code-execution
 ```
 
 **Full verification including symbolic and compositional (minutes):**
 ```bash
-serenecode check src/ --level 5 --allow-code-execution
+serenecode check src/ --level 6 --allow-code-execution
 ```
 
 **Generate an HTML report:**
@@ -93,7 +93,7 @@ serenecode check src/ --level 5 --allow-code-execution
 serenecode report src/ --format html --output report.html --allow-code-execution
 ```
 
-Levels 3-5 import and execute project modules. Only use \
+Levels 3-6 import and execute project modules. Only use \
 `--allow-code-execution` for trusted code.
 
 If verification fails, read the error messages and fix the issues. Each failure \

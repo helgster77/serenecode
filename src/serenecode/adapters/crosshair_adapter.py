@@ -73,16 +73,21 @@ def _check_crosshair_cli() -> bool:
     lambda search_paths: isinstance(search_paths, tuple),
     "search_paths must be a tuple",
 )
-@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
+@icontract.ensure(lambda result: isinstance(result, tuple) and len(result) == 2, "result must be a 2-tuple")
 def _discover_cli_targets(
     module_path: str,
     search_paths: tuple[str, ...] = (),
-) -> list[tuple[str, str]]:
-    """Discover contracted top-level functions to verify with CrossHair CLI."""
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Discover contracted top-level functions to verify with CrossHair CLI.
+
+    Returns:
+        A tuple of (verifiable_targets, excluded_function_names).
+    """
     module = load_python_module(module_path, search_paths)
     targets: list[tuple[str, str]] = []
+    excluded: list[str] = []
 
-    # Loop invariant: targets contains contracted top-level functions seen so far
+    # Loop invariant: targets + excluded accounts for all contracted top-level functions seen so far
     for name in sorted(dir(module)):
         if name.startswith("_"):
             continue
@@ -91,11 +96,13 @@ def _discover_cli_targets(
             inspect.isfunction(obj)
             and getattr(obj, "__module__", None) == module.__name__
             and _has_icontract_contracts(obj)
-            and _is_symbolic_friendly_target(obj)
         ):
-            targets.append((_cli_target_reference(module_path, name, obj), name))
+            if _is_symbolic_friendly_target(obj):
+                targets.append((_cli_target_reference(module_path, name, obj), name))
+            else:
+                excluded.append(name)
 
-    return targets
+    return (targets, excluded)
 
 
 @icontract.require(
@@ -445,11 +452,23 @@ class CrossHairSymbolicChecker:
         Returns:
             List of symbolic findings.
         """
-        targets = _discover_cli_targets(module_path, search_paths)
-        if not targets:
-            return []
+        targets, excluded = _discover_cli_targets(module_path, search_paths)
 
         findings: list[SymbolicFinding] = []
+
+        # Report excluded functions so they are visible in the output
+        # Loop invariant: findings contains exclusion records for excluded[0..i]
+        for excluded_name in excluded:
+            findings.append(SymbolicFinding(
+                function_name=excluded_name,
+                module_path=module_path,
+                outcome="unsupported",
+                message=f"Function '{excluded_name}' excluded from symbolic verification (non-primitive parameters or adapter code)",
+            ))
+
+        if not targets:
+            return findings
+
         deadline = time.monotonic() + self._module_timeout
         base_timeout = max(per_condition_timeout * 4, per_path_timeout * 8)
 

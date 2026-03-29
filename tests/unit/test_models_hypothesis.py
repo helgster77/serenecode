@@ -85,8 +85,8 @@ class TestFunctionResultProperty:
         function=non_empty_text,
         file=non_empty_text,
         line=st.integers(min_value=1, max_value=100000),
-        level_requested=st.integers(min_value=1, max_value=5),
-        level_achieved=st.integers(min_value=0, max_value=5),
+        level_requested=st.integers(min_value=1, max_value=6),
+        level_achieved=st.integers(min_value=0, max_value=6),
         status=statuses,
     )
     def test_construction_with_valid_inputs(
@@ -137,36 +137,40 @@ class TestCheckSummaryProperty:
         passed=st.integers(min_value=0, max_value=100),
         failed=st.integers(min_value=0, max_value=100),
         skipped=st.integers(min_value=0, max_value=100),
+        exempt=st.integers(min_value=0, max_value=100),
         duration=st.floats(min_value=0, max_value=1000, allow_nan=False),
     )
     def test_counts_must_sum(
-        self, passed: int, failed: int, skipped: int, duration: float,
+        self, passed: int, failed: int, skipped: int, exempt: int, duration: float,
     ) -> None:
-        total = passed + failed + skipped
+        total = passed + failed + skipped + exempt
         summary = CheckSummary(
             total_functions=total,
             passed_count=passed,
             failed_count=failed,
             skipped_count=skipped,
+            exempt_count=exempt,
             duration_seconds=duration,
         )
-        assert summary.total_functions == summary.passed_count + summary.failed_count + summary.skipped_count
+        assert summary.total_functions == summary.passed_count + summary.failed_count + summary.skipped_count + summary.exempt_count
 
     @given(
-        passed=st.integers(min_value=0, max_value=50),
-        failed=st.integers(min_value=0, max_value=50),
-        skipped=st.integers(min_value=0, max_value=50),
+        passed=st.integers(min_value=0, max_value=60),
+        failed=st.integers(min_value=0, max_value=60),
+        skipped=st.integers(min_value=0, max_value=60),
+        exempt=st.integers(min_value=0, max_value=60),
     )
     def test_mismatched_total_rejected(
-        self, passed: int, failed: int, skipped: int,
+        self, passed: int, failed: int, skipped: int, exempt: int,
     ) -> None:
         from tests.conftest import assert_violation_or_skip
-        total = passed + failed + skipped + 1  # off by one
+        total = passed + failed + skipped + exempt + 1  # off by one
         assert_violation_or_skip(lambda: CheckSummary(
             total_functions=total,
             passed_count=passed,
             failed_count=failed,
             skipped_count=skipped,
+            exempt_count=exempt,
             duration_seconds=0.1,
         ))
 
@@ -178,7 +182,7 @@ class TestMakeCheckResultProperty:
         n_passed=st.integers(min_value=0, max_value=10),
         n_failed=st.integers(min_value=0, max_value=10),
         n_skipped=st.integers(min_value=0, max_value=10),
-        level=st.integers(min_value=1, max_value=5),
+        level=st.integers(min_value=1, max_value=6),
         duration=st.floats(min_value=0, max_value=100, allow_nan=False),
     )
     def test_summary_counts_match_results(
@@ -221,7 +225,7 @@ class TestMakeCheckResultProperty:
 
     @given(
         n_results=st.integers(min_value=1, max_value=20),
-        level=st.integers(min_value=1, max_value=5),
+        level=st.integers(min_value=1, max_value=6),
     )
     def test_failures_property_filters_correctly(
         self, n_results: int, level: int,

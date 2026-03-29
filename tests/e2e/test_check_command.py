@@ -126,7 +126,7 @@ def double(x: int) -> int:
         def fake_run_pipeline(*args: object, **kwargs: object):
             captured["start_level"] = kwargs["start_level"]  # type: ignore[index]
             captured["level"] = kwargs["level"]  # type: ignore[index]
-            return make_check_result((), level_requested=3, duration_seconds=0.0)
+            return make_check_result((), level_requested=4, duration_seconds=0.0)
 
         monkeypatch.setattr("serenecode.cli.run_pipeline", fake_run_pipeline)
 
@@ -134,15 +134,19 @@ def double(x: int) -> int:
         result = runner.invoke(main, ["check", str(tmp_path), "--verify", "--allow-code-execution"])
 
         assert result.exit_code == 0
-        assert captured == {"start_level": 3, "level": 3}
+        # --verify starts at L3 (coverage); default recommended_level is now 4 (properties)
+        assert captured == {"start_level": 3, "level": 4}
 
-    def test_src_layout_with_package_imports_passes_level_3(
+    def test_src_layout_with_package_imports_passes_level_4(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         src_pkg = tmp_path / "src" / "pkg"
         src_pkg.mkdir(parents=True)
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname = \"test-pkg\"\n", encoding="utf-8"
+        )
         (src_pkg / "__init__.py").write_text("", encoding="utf-8")
         (src_pkg / "helper.py").write_text(
             '''\
@@ -176,14 +180,34 @@ def wrapped_double(x: int) -> int:
             encoding="utf-8",
         )
 
+        # Add basic tests so L3 coverage analysis passes
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_helper.py").write_text(
+            '''\
+"""Tests for helper."""
+import sys
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent / "src"))
+from pkg.helper import double
+from pkg.mod import wrapped_double
+
+def test_double():
+    assert double(3) == 6
+
+def test_wrapped_double():
+    assert wrapped_double(3) == 6
+''',
+            encoding="utf-8",
+        )
+
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
-        result = runner.invoke(main, ["check", "src", "--level", "3", "--allow-code-execution"])
+        result = runner.invoke(main, ["check", "src", "--level", "4", "--allow-code-execution"])
 
         assert result.exit_code == 0
         assert "Property testing skipped" not in result.output
 
-    def test_package_subdirectory_with_relative_imports_passes_level_3(
+    def test_package_subdirectory_with_relative_imports_passes_level_4(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -191,6 +215,9 @@ def wrapped_double(x: int) -> int:
         src_pkg = tmp_path / "src" / "pkg"
         src_pkg.mkdir(parents=True)
         (tmp_path / "SERENECODE.md").write_text("# config\n", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname = \"test-pkg\"\n", encoding="utf-8"
+        )
         (src_pkg / "__init__.py").write_text('"""Package."""\n', encoding="utf-8")
         (src_pkg / "helper.py").write_text(
             '''\
@@ -225,9 +252,29 @@ def wrapped_double(x: int) -> int:
             encoding="utf-8",
         )
 
+        # Add basic tests so L3 coverage analysis passes
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_pkg.py").write_text(
+            '''\
+"""Tests for pkg."""
+import sys
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent / "src"))
+from pkg.helper import double
+from pkg.mod import wrapped_double
+
+def test_double():
+    assert double(3) == 6
+
+def test_wrapped_double():
+    assert wrapped_double(3) == 6
+''',
+            encoding="utf-8",
+        )
+
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
-        result = runner.invoke(main, ["check", "src/pkg", "--level", "3", "--allow-code-execution"])
+        result = runner.invoke(main, ["check", "src/pkg", "--level", "4", "--allow-code-execution"])
 
         assert result.exit_code == 0
         assert "Property testing skipped" not in result.output

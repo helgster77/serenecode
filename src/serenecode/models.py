@@ -23,9 +23,10 @@ class VerificationLevel(Enum):
 
     STRUCTURAL = 1
     TYPES = 2
-    PROPERTIES = 3
-    SYMBOLIC = 4
-    COMPOSITIONAL = 5
+    COVERAGE = 3
+    PROPERTIES = 4
+    SYMBOLIC = 5
+    COMPOSITIONAL = 6
 
 
 class CheckStatus(Enum):
@@ -34,6 +35,7 @@ class CheckStatus(Enum):
     PASSED = "passed"
     FAILED = "failed"
     SKIPPED = "skipped"
+    EXEMPT = "exempt"
 
 
 class ExitCode(IntEnum):
@@ -42,9 +44,10 @@ class ExitCode(IntEnum):
     PASSED = 0
     STRUCTURAL = 1
     TYPES = 2
-    PROPERTIES = 3
-    SYMBOLIC = 4
-    COMPOSITIONAL = 5
+    COVERAGE = 3
+    PROPERTIES = 4
+    SYMBOLIC = 5
+    COMPOSITIONAL = 6
     INTERNAL = 10
 
 
@@ -147,7 +150,11 @@ class FunctionResult:
     "skipped_count must be non-negative",
 )
 @icontract.invariant(
-    lambda self: self.total_functions == self.passed_count + self.failed_count + self.skipped_count,
+    lambda self: is_non_negative_int(self.exempt_count),
+    "exempt_count must be non-negative",
+)
+@icontract.invariant(
+    lambda self: self.total_functions == self.passed_count + self.failed_count + self.skipped_count + self.exempt_count,
     "counts must sum to total",
 )
 @dataclass(frozen=True)
@@ -158,7 +165,8 @@ class CheckSummary:
     passed_count: int
     failed_count: int
     skipped_count: int
-    duration_seconds: float
+    exempt_count: int = 0
+    duration_seconds: float = 0.0
 
     @icontract.ensure(
         lambda result: isinstance(result, dict),
@@ -171,6 +179,7 @@ class CheckSummary:
             "passed": self.passed_count,
             "failed": self.failed_count,
             "skipped": self.skipped_count,
+            "exempt": self.exempt_count,
         }
 
 
@@ -253,10 +262,14 @@ def make_check_result(
     passed_count = 0
     failed_count = 0
     skipped_count = 0
+    exempt_count = 0
     min_achieved = level_requested
 
     # Loop invariant: counts reflect classifications of results[0..i]
     for r in results:
+        if r.status == CheckStatus.EXEMPT:
+            exempt_count += 1
+            continue
         if r.level_achieved < min_achieved:
             min_achieved = r.level_achieved
         if r.status == CheckStatus.PASSED:
@@ -275,9 +288,11 @@ def make_check_result(
         passed_count=passed_count,
         failed_count=failed_count,
         skipped_count=skipped_count,
+        exempt_count=exempt_count,
         duration_seconds=duration_seconds,
     )
 
+    # Exempt results are visible but do not block a passing result.
     passed = (
         failed_count == 0
         and skipped_count == 0

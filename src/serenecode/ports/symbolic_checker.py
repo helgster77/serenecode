@@ -39,7 +39,7 @@ class SymbolicFinding:
     duration_seconds: float = 0.0
 
 
-@icontract.invariant(lambda self: True, "protocol has no runtime state")
+# Protocol classes are exempt from @icontract.invariant — see ports/file_system.py.
 class SymbolicChecker(Protocol):
     """Port for symbolic verification.
 

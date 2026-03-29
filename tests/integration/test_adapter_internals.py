@@ -413,14 +413,16 @@ class TestCrossHairAdapterInternals:
         with pytest.raises(UnsafeCodeExecutionError):
             checker.verify_module("demo.module")
 
-    def test_cli_backend_returns_no_findings_for_modules_without_targets(self) -> None:
+    def test_cli_backend_returns_only_exclusion_findings_for_modules_without_targets(self) -> None:
         from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
 
         checker = CrossHairSymbolicChecker(allow_code_execution=True)
 
         findings = checker._verify_via_cli("serenecode.adapters.local_fs", 1, 1)
 
-        assert findings == []
+        # No verifiable targets, but excluded functions are reported
+        for f in findings:
+            assert f.outcome == "unsupported"
 
     def test_cli_backend_respects_module_timeout_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
@@ -436,10 +438,13 @@ class TestCrossHairAdapterInternals:
 
         monkeypatch.setattr(
             "serenecode.adapters.crosshair_adapter._discover_cli_targets",
-            lambda module_path, search_paths=(): [
-                ("demo.module.first", "first"),
-                ("demo.module.second", "second"),
-            ],
+            lambda module_path, search_paths=(): (
+                [
+                    ("demo.module.first", "first"),
+                    ("demo.module.second", "second"),
+                ],
+                [],
+            ),
         )
         monkeypatch.setattr(
             "serenecode.adapters.crosshair_adapter.time.monotonic",
@@ -525,9 +530,10 @@ def identity(x: int) -> int:
             encoding="utf-8",
         )
 
-        targets = _discover_cli_targets(str(module_file))
+        targets, excluded = _discover_cli_targets(str(module_file))
 
         assert len(targets) == 1
+        assert len(excluded) == 0
         target, function_name = targets[0]
         assert function_name == "identity"
         assert target.startswith(f"{module_file}:")

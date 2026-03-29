@@ -54,13 +54,13 @@ class TestIsNonEmptyStringProperty:
 class TestIsValidVerificationLevelProperty:
     """Property-based tests for is_valid_verification_level."""
 
-    @given(level=st.integers(min_value=1, max_value=5))
+    @given(level=st.integers(min_value=1, max_value=6))
     def test_valid_range_accepted(self, level: int) -> None:
         assert is_valid_verification_level(level) is True
 
-    @given(level=st.integers().filter(lambda x: x < 1 or x > 5))
+    @given(level=st.integers().filter(lambda x: x < 1 or x > 6))
     @example(level=0)
-    @example(level=6)
+    @example(level=7)
     @example(level=-1)
     @example(level=100)
     def test_out_of_range_rejected(self, level: int) -> None:
@@ -70,12 +70,12 @@ class TestIsValidVerificationLevelProperty:
 class TestIsValidExitCodeProperty:
     """Property-based tests for is_valid_exit_code."""
 
-    @given(code=st.sampled_from([0, 1, 2, 3, 4, 5, 10]))
+    @given(code=st.sampled_from([0, 1, 2, 3, 4, 5, 6, 10]))
     def test_valid_codes_accepted(self, code: int) -> None:
         assert is_valid_exit_code(code) is True
 
-    @given(code=st.integers().filter(lambda x: x not in {0, 1, 2, 3, 4, 5, 10}))
-    @example(code=6)
+    @given(code=st.integers().filter(lambda x: x not in {0, 1, 2, 3, 4, 5, 6, 10}))
+    @example(code=7)
     @example(code=9)
     @example(code=-1)
     def test_invalid_codes_rejected(self, code: int) -> None:

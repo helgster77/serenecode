@@ -69,9 +69,9 @@ class TestLibraryApiLevelWrappers:
         ("func", "expected_level"),
         [
             (check_types, 2),
-            (check_properties, 3),
-            (check_symbolic, 4),
-            (check_compositional, 5),
+            (check_properties, 4),
+            (check_symbolic, 5),
+            (check_compositional, 6),
         ],
     )
     def test_level_wrapper_calls_run_check(

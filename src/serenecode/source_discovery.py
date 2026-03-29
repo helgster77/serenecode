@@ -316,4 +316,4 @@ def _relative_to_root(file_path: str, search_root: str) -> str:
     if common == search_root:
         return os.path.relpath(absolute_file, search_root)
 
-    return file_path
+    return os.path.relpath(absolute_file)

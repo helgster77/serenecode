@@ -25,12 +25,12 @@ from serenecode.contracts.predicates import (
 )
 from serenecode.core.pipeline import run_pipeline
 from serenecode.init import initialize_project
-from serenecode.models import ExitCode
+from serenecode.models import CheckResult, ExitCode
 from serenecode.reporter import format_html, format_human, format_json
 from serenecode.source_discovery import build_source_files, find_serenecode_md
 
 _TRUST_REQUIRED_MESSAGE = (
-    "Levels 3-5 import and execute project modules. "
+    "Levels 3-6 import and execute project modules. "
     "Re-run with --allow-code-execution only for trusted code."
 )
 
@@ -81,7 +81,7 @@ def init(template: str | None, path: str) -> None:
 
 @main.command()
 @click.argument("path", default=".")
-@click.option("--level", type=click.IntRange(1, 5), default=None, help="Verification level (1-5, default: from config template)")
+@click.option("--level", type=click.IntRange(1, 6), default=None, help="Verification level (1-6, default: from config template)")
 @click.option(
     "--format",
     "output_format",
@@ -90,20 +90,20 @@ def init(template: str | None, path: str) -> None:
     help="Output format",
 )
 @click.option("--structural", is_flag=True, help="Run only structural check (Level 1)")
-@click.option("--verify", is_flag=True, help="Run Levels 3-5 only")
-@click.option("--per-condition-timeout", type=int, default=30, show_default=True, help="Timeout in seconds per condition for symbolic verification (Level 4)")
-@click.option("--per-path-timeout", type=int, default=10, show_default=True, help="Timeout in seconds per execution path for symbolic verification (Level 4)")
-@click.option("--module-timeout", type=int, default=300, show_default=True, help="Timeout in seconds per module for symbolic verification (Level 4)")
-@click.option("--workers", type=int, default=4, show_default=True, help="Number of parallel workers for symbolic verification (Level 4)")
+@click.option("--verify", is_flag=True, help="Run Levels 3-6 only")
+@click.option("--per-condition-timeout", type=int, default=30, show_default=True, help="Timeout in seconds per condition for symbolic verification (Level 5)")
+@click.option("--per-path-timeout", type=int, default=10, show_default=True, help="Timeout in seconds per execution path for symbolic verification (Level 5)")
+@click.option("--module-timeout", type=int, default=300, show_default=True, help="Timeout in seconds per module for symbolic verification (Level 5)")
+@click.option("--workers", type=int, default=4, show_default=True, help="Number of parallel workers for symbolic verification (Level 5)")
 @click.option(
     "--allow-code-execution",
     is_flag=True,
-    help="Allow Levels 3-5 to import and execute project modules",
+    help="Allow Levels 3-6 to import and execute project modules",
 )
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(
     lambda level: level is None or is_valid_verification_level(level),
-    "level must be between 1 and 5 when provided",
+    "level must be between 1 and 6 when provided",
 )
 @icontract.require(
     lambda output_format: output_format in {"human", "json"},
@@ -190,6 +190,7 @@ def check(
 
     # Wire up adapters for higher levels
     type_checker = None
+    coverage_analyzer = None
     property_tester = None
     symbolic_checker = None
 
@@ -202,12 +203,19 @@ def check(
 
     if level >= 3:
         try:
+            from serenecode.adapters.coverage_adapter import CoverageAnalyzerAdapter
+            coverage_analyzer = CoverageAnalyzerAdapter(allow_code_execution=True)
+        except ImportError:
+            click.echo("Warning: coverage not available for Level 3 checks.", err=True)
+
+    if level >= 4:
+        try:
             from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
             property_tester = HypothesisPropertyTester(allow_code_execution=True)
         except ImportError:
-            click.echo("Warning: Hypothesis not available for Level 3 checks.", err=True)
+            click.echo("Warning: Hypothesis not available for Level 4 checks.", err=True)
 
-    if level >= 4:
+    if level >= 5:
         try:
             from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
             symbolic_checker = CrossHairSymbolicChecker(
@@ -217,7 +225,7 @@ def check(
                 allow_code_execution=True,
             )
         except ImportError:
-            click.echo("Warning: CrossHair not available for Level 4 checks.", err=True)
+            click.echo("Warning: CrossHair not available for Level 5 checks.", err=True)
 
     # Run pipeline with progress callback
     def _progress(msg: str) -> None:
@@ -229,6 +237,7 @@ def check(
         start_level=start_level,
         config=config,
         type_checker=type_checker,
+        coverage_analyzer=coverage_analyzer,
         property_tester=property_tester,
         symbolic_checker=symbolic_checker,
         progress=_progress,
@@ -375,6 +384,7 @@ def report(
         click.echo(f"Error: {_TRUST_REQUIRED_MESSAGE}", err=True)
         sys.exit(ExitCode.INTERNAL)
     type_checker = None
+    coverage_analyzer = None
     property_tester = None
     symbolic_checker = None
 
@@ -387,12 +397,19 @@ def report(
 
     if level >= 3:
         try:
+            from serenecode.adapters.coverage_adapter import CoverageAnalyzerAdapter
+            coverage_analyzer = CoverageAnalyzerAdapter(allow_code_execution=True)
+        except ImportError:
+            click.echo("Warning: coverage not available for Level 3 checks.", err=True)
+
+    if level >= 4:
+        try:
             from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
             property_tester = HypothesisPropertyTester(allow_code_execution=True)
         except ImportError:
             pass
 
-    if level >= 4:
+    if level >= 5:
         try:
             from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
             symbolic_checker = CrossHairSymbolicChecker(allow_code_execution=True)
@@ -405,6 +422,7 @@ def report(
         start_level=1,
         config=config,
         type_checker=type_checker,
+        coverage_analyzer=coverage_analyzer,
         property_tester=property_tester,
         symbolic_checker=symbolic_checker,
     )
@@ -426,23 +444,21 @@ def report(
         click.echo(formatted)
 
 
-@icontract.require(lambda check_result_obj: check_result_obj is not None, "result must be provided")
+@icontract.require(lambda check_result: check_result is not None, "result must be provided")
 @icontract.ensure(lambda result: is_valid_exit_code(result), "exit code must be valid")
-def _determine_exit_code(check_result_obj: object) -> int:
+def _determine_exit_code(check_result: CheckResult) -> int:
     """Determine the CLI exit code from a failed CheckResult.
 
     Uses the verification level of the first failure to determine
     the appropriate exit code per spec Section 4.2.
 
     Args:
-        result: A CheckResult with failures.
+        check_result: A CheckResult with failures.
 
     Returns:
-        An exit code integer (1-5 or 10).
+        An exit code integer (1-6 or 10).
     """
-    from serenecode.models import CheckResult, CheckStatus, VerificationLevel
-
-    check_result: CheckResult = check_result_obj  # type: ignore[assignment]
+    from serenecode.models import CheckStatus
 
     # Find the lowest failing level across all failed results
     min_level = 10  # start above any valid level
@@ -452,10 +468,10 @@ def _determine_exit_code(check_result_obj: object) -> int:
             # Loop invariant: checked details[0..j] for level
             for detail in func_result.details:
                 level_val = detail.level.value
-                if 1 <= level_val <= 5 and level_val < min_level:
+                if 1 <= level_val <= 6 and level_val < min_level:
                     min_level = level_val
 
-    if min_level <= 5:
+    if min_level <= 6:
         return min_level
     if check_result.level_achieved < check_result.level_requested:
         return min(check_result.level_achieved + 1, ExitCode.COMPOSITIONAL)

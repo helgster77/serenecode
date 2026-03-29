@@ -246,6 +246,59 @@ def _non_receiver_parameters(
 
 
 @icontract.require(
+    lambda node: isinstance(node, ast.ClassDef),
+    "node must be a class definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def _extract_init_fields(node: ast.ClassDef) -> list[str]:
+    """Extract field names assigned in __init__ (self.x = ...) or class-level annotations."""
+    fields: list[str] = []
+    # Check class-level annotated fields (dataclass-style)
+    # Loop invariant: fields contains annotated names from body[0..i]
+    for item in node.body:
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+            fields.append(item.target.id)
+    if fields:
+        return fields
+    # Check __init__ for self.x = ... assignments
+    # Loop invariant: checked body items [0..i] for __init__
+    for item in node.body:
+        if isinstance(item, ast.FunctionDef) and item.name == "__init__":
+            # Loop invariant: fields contains self.attr names from init body[0..j]
+            for stmt in ast.walk(item):
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Attribute)
+                    and isinstance(stmt.targets[0].value, ast.Name)
+                    and stmt.targets[0].value.id == "self"
+                ):
+                    fields.append(stmt.targets[0].attr)
+            break
+    return fields
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, str),
+    "result must be None or a string",
+)
+def _get_return_annotation_str(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
+    """Extract the return type annotation as a string, or None if absent."""
+    if node.returns is None:
+        return None
+    return ast.unparse(node.returns)
+
+
+@icontract.require(
     lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
     "node must be a function definition",
 )
@@ -289,6 +342,49 @@ def _is_public_function(name: str) -> bool:
     if name.startswith("__") and name.endswith("__") and name != "__init__":
         return False
     return True
+
+
+@icontract.require(
+    lambda node: isinstance(node, ast.ClassDef),
+    "node must be a class definition",
+)
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _has_no_invariant_comment(node: ast.ClassDef, source: str) -> bool:
+    """Check if the class is preceded by a '# no-invariant:' comment.
+
+    This allows explicitly documented stateless classes to opt out of
+    the invariant requirement.
+
+    Args:
+        node: A class definition AST node.
+        source: The full module source code.
+
+    Returns:
+        True if a '# no-invariant:' comment is found on the line before the class.
+    """
+    if not source:
+        return False
+    lines = source.splitlines()
+    class_line_index = node.lineno - 1
+    # Check the line immediately before the class definition
+    # Loop invariant: checking lines above the class for no-invariant comment
+    for offset in range(1, min(6, class_line_index + 1)):
+        prev_line = lines[class_line_index - offset].strip()
+        if prev_line.startswith("# no-invariant:"):
+            return True
+        if prev_line.startswith("#"):
+            continue
+        # Stop at non-comment, non-decorator lines
+        if not prev_line.startswith("@"):
+            break
+    return False
 
 
 @icontract.require(
@@ -390,6 +486,36 @@ def _is_exception_class(node: ast.ClassDef) -> bool:
         if base_name in {"Exception", "BaseException"}:
             return True
         if base_name.endswith(("Error", "Exception")):
+            return True
+    return False
+
+
+@icontract.require(
+    lambda node: isinstance(node, ast.ClassDef),
+    "node must be a class definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_protocol_class(node: ast.ClassDef) -> bool:
+    """Check if a class inherits from Protocol.
+
+    Protocol classes are abstract interfaces — icontract invariants on
+    Protocols are not inherited by implementors and would only verify
+    the Protocol itself (which is never instantiated).
+
+    Args:
+        node: A class definition AST node.
+
+    Returns:
+        True if the class inherits from Protocol.
+    """
+    # Loop invariant: checked bases[0..i] for Protocol name
+    for base in node.bases:
+        if isinstance(base, ast.Name) and base.id == "Protocol":
+            return True
+        if isinstance(base, ast.Attribute) and base.attr == "Protocol":
             return True
     return False
 
@@ -534,23 +660,41 @@ def check_contracts(
 
         # Skip require check for functions with no meaningful parameters
         # (zero params after excluding self/cls)
-        has_params = _has_meaningful_params(node)
+        params = _non_receiver_parameters(node)
+        param_names = [p.arg for p in params]
+        has_params = bool(params)
         if has_params and not has_decorator(node, aliases.require_names):
+            param_list = ", ".join(param_names)
+            example_param = param_names[0]
             details.append(Detail(
                 level=VerificationLevel.STRUCTURAL,
                 tool="structural",
                 finding_type="violation",
                 message=f"Function '{node.name}' missing @icontract.require (precondition)",
-                suggestion="Add @icontract.require(lambda ...: ..., 'description')",
+                suggestion=(
+                    f"Add precondition for parameters ({param_list}). "
+                    f"Example: @icontract.require(lambda {example_param}: "
+                    f"{example_param} is not None, \"{example_param} must not be None\")"
+                ),
             ))
 
         if not has_decorator(node, aliases.ensure_names):
+            return_hint = _get_return_annotation_str(node)
             details.append(Detail(
                 level=VerificationLevel.STRUCTURAL,
                 tool="structural",
                 finding_type="violation",
                 message=f"Function '{node.name}' missing @icontract.ensure (postcondition)",
-                suggestion="Add @icontract.ensure(lambda result: ..., 'description')",
+                suggestion=(
+                    f"Add postcondition. "
+                    f"Example: @icontract.ensure(lambda result: "
+                    f"result is not None, \"result must not be None\")"
+                    if return_hint is None
+                    else f"Add postcondition for return type '{return_hint}'. "
+                    f"Example: @icontract.ensure(lambda result: "
+                    f"isinstance(result, {return_hint}), "
+                    f"\"result must be {return_hint}\")"
+                ),
             ))
 
         if (
@@ -594,6 +738,7 @@ def check_class_invariants(
     config: SerenecodeConfig,
     aliases: IcontractNames,
     file_path: str,
+    source: str = "",
 ) -> list[FunctionResult]:
     """Check that classes have @icontract.invariant decorators.
 
@@ -602,6 +747,7 @@ def check_class_invariants(
         config: Active configuration.
         aliases: Resolved icontract import names.
         file_path: Path to the source file.
+        source: Original source code for comment checking.
 
     Returns:
         List of FunctionResult for each class checked.
@@ -617,20 +763,40 @@ def check_class_invariants(
         if not _should_check_class_invariant(node.name, config):
             continue
 
-        # Skip Enum and exception hierarchies because icontract invariants do
-        # not compose safely with their runtime mechanics.
-        if _is_enum_class(node) or _is_exception_class(node):
+        # Skip Enum/exception/Protocol classes because icontract invariants do
+        # not compose safely with their runtime mechanics. Protocol invariants
+        # are never inherited by implementors and would only verify nothing.
+        # Skip classes with a "# no-invariant:" comment documenting why they
+        # have no meaningful state to constrain.
+        if _is_enum_class(node) or _is_exception_class(node) or _is_protocol_class(node):
+            continue
+        if _has_no_invariant_comment(node, source):
             continue
 
         details: list[Detail] = []
 
         if not has_decorator(node, aliases.invariant_names):
+            fields = _extract_init_fields(node)
+            if fields:
+                field_list = ", ".join(f"self.{f}" for f in fields)
+                example_field = fields[0]
+                suggestion = (
+                    f"Add invariant constraining instance state ({field_list}). "
+                    f"Example: @icontract.invariant(lambda self: "
+                    f"self.{example_field} is not None, "
+                    f"\"{example_field} must not be None\")"
+                )
+            else:
+                suggestion = (
+                    "Add @icontract.invariant(lambda self: ..., 'description') "
+                    "or add '# no-invariant: <reason>' if the class is stateless"
+                )
             details.append(Detail(
                 level=VerificationLevel.STRUCTURAL,
                 tool="structural",
                 finding_type="violation",
                 message=f"Class '{node.name}' missing @icontract.invariant",
-                suggestion="Add @icontract.invariant(lambda self: ..., 'description')",
+                suggestion=suggestion,
             ))
 
         status = CheckStatus.PASSED if not details else CheckStatus.FAILED
@@ -1292,9 +1458,28 @@ def check_structural(
         )
 
     # Exempt modules still need to parse successfully, but skip structural policy checks.
+    # Report them as EXEMPT so the verification scope is transparent.
     if is_exempt_module(module_path, config):
         elapsed = time.monotonic() - start_time
-        return make_check_result((), level_requested=1, duration_seconds=elapsed)
+        exempt_result = FunctionResult(
+            function="<module>",
+            file=file_path,
+            line=1,
+            level_requested=1,
+            level_achieved=0,
+            status=CheckStatus.EXEMPT,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="structural",
+                finding_type="exempt",
+                message=f"Module '{module_path}' is exempt from structural checks",
+            ),),
+        )
+        return make_check_result(
+            (exempt_result,),
+            level_requested=1,
+            duration_seconds=elapsed,
+        )
 
     # Resolve icontract aliases
     aliases = resolve_icontract_aliases(tree)
@@ -1302,7 +1487,7 @@ def check_structural(
     # Run all check functions
     all_results: list[FunctionResult] = []
     all_results.extend(check_contracts(tree, config, aliases, file_path))
-    all_results.extend(check_class_invariants(tree, config, aliases, file_path))
+    all_results.extend(check_class_invariants(tree, config, aliases, file_path, source))
     all_results.extend(check_type_annotations(tree, config, file_path))
     all_results.extend(check_no_any_in_core(tree, config, module_path, file_path))
     all_results.extend(check_imports(tree, config, module_path, file_path))

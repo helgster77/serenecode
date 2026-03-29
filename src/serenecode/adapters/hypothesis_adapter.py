@@ -1025,7 +1025,7 @@ def _try_refine_from_condition(
         # Recognize common Serenecode contract predicates and synthesize
         # directly bounded strategies instead of filtering broad primitives.
         if called_name == "is_valid_verification_level":
-            strategies[param_name] = st.integers(min_value=1, max_value=5)
+            strategies[param_name] = st.integers(min_value=1, max_value=6)
             return
         if called_name == "is_non_negative_int":
             strategies[param_name] = st.integers(min_value=0, max_value=1000)
@@ -1330,18 +1330,18 @@ def _is_result_model_object(value: object) -> bool:
     lambda search_paths: isinstance(search_paths, tuple),
     "search_paths must be a tuple",
 )
-@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
+@icontract.ensure(lambda result: isinstance(result, tuple) and len(result) == 2, "result must be a 2-tuple")
 def _get_contracted_functions(
     module_path: str,
     search_paths: tuple[str, ...] = (),
-) -> list[tuple[str, Callable[..., object]]]:
+) -> tuple[list[tuple[str, Callable[..., object]]], list[str]]:
     """Import a module and find all functions with icontract decorators.
 
     Args:
         module_path: Importable Python module path.
 
     Returns:
-        List of (function_name, function) tuples.
+        A tuple of (testable_functions, excluded_function_names).
     """
     try:
         module = load_python_module(module_path, search_paths)
@@ -1351,8 +1351,9 @@ def _get_contracted_functions(
         ) from exc
 
     functions: list[tuple[str, Callable[..., object]]] = []
+    excluded: list[str] = []
 
-    # Loop invariant: functions contains all contracted functions found so far
+    # Loop invariant: functions + excluded accounts for all contracted public functions in dir(module)[0..i]
     for name in dir(module):
         if name.startswith("_"):
             continue
@@ -1360,10 +1361,14 @@ def _get_contracted_functions(
         if callable(obj) and inspect.isfunction(obj):
             if getattr(obj, "__module__", None) != module.__name__:
                 continue
-            if _has_icontract_decorators(obj) and _is_property_friendly_function(obj):
+            if not _has_icontract_decorators(obj):
+                continue
+            if _is_property_friendly_function(obj):
                 functions.append((name, obj))
+            else:
+                excluded.append(name)
 
-    return functions
+    return (functions, excluded)
 
 
 @icontract.invariant(
@@ -1431,8 +1436,19 @@ class HypothesisPropertyTester:
             raise UnsafeCodeExecutionError(_TRUST_REQUIRED_MESSAGE)
 
         effective_max = self._max_examples if max_examples is None else max_examples
-        functions = _get_contracted_functions(module_path, search_paths)
+        functions, excluded = _get_contracted_functions(module_path, search_paths)
         findings: list[PropertyFinding] = []
+
+        # Report excluded functions so they are visible in the output
+        # Loop invariant: findings contains exclusion records for excluded[0..i]
+        for excluded_name in excluded:
+            findings.append(PropertyFinding(
+                function_name=excluded_name,
+                module_path=module_path,
+                passed=True,
+                finding_type="excluded",
+                message=f"Function '{excluded_name}' excluded from property testing (adapter/composition-root code)",
+            ))
 
         # Loop invariant: findings contains test results for functions[0..i]
         for func_name, func in functions:
@@ -1515,25 +1531,52 @@ class HypothesisPropertyTester:
                 )
             else:
                 # Postcondition violation — real failure
+                counterexample = _extract_counterexample(exc)
+                condition = _extract_violated_condition(error_str)
+                inputs_str = (
+                    ", ".join(f"{k}={v}" for k, v in counterexample.items())
+                    if counterexample
+                    else "unknown"
+                )
+                message = (
+                    f"Postcondition violated for '{func_name}': "
+                    f"condition '{condition}' failed with inputs: {inputs_str}"
+                    if condition
+                    else f"Postcondition violated for '{func_name}': {error_str}"
+                )
                 return PropertyFinding(
                     function_name=func_name,
                     module_path=module_path,
                     passed=False,
                     finding_type="postcondition_violated",
-                    message=f"Postcondition violated for '{func_name}': {error_str}",
-                    counterexample=_extract_counterexample(exc),
+                    message=message,
+                    counterexample=counterexample,
                 )
         except Exception as exc:
             # Check if a ViolationError is nested inside (Hypothesis wraps exceptions)
             violation = _find_nested_violation(exc)
             if violation is not None:
+                counterexample = _extract_counterexample(violation)
+                violation_str = str(violation)
+                condition = _extract_violated_condition(violation_str)
+                inputs_str = (
+                    ", ".join(f"{k}={v}" for k, v in counterexample.items())
+                    if counterexample
+                    else "unknown"
+                )
+                message = (
+                    f"Postcondition violated for '{func_name}': "
+                    f"condition '{condition}' failed with inputs: {inputs_str}"
+                    if condition
+                    else f"Postcondition violated for '{func_name}': {violation_str}"
+                )
                 return PropertyFinding(
                     function_name=func_name,
                     module_path=module_path,
                     passed=False,
                     finding_type="postcondition_violated",
-                    message=f"Postcondition violated for '{func_name}': {violation}",
-                    counterexample=_extract_counterexample(violation),
+                    message=message,
+                    counterexample=counterexample,
                 )
             return PropertyFinding(
                 function_name=func_name,
@@ -1709,8 +1752,51 @@ def _check_preconditions(
     lambda result: result is None or isinstance(result, dict),
     "result must be a dictionary or None",
 )
+@icontract.require(
+    lambda error_str: isinstance(error_str, str),
+    "error_str must be a string",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, str),
+    "result must be a string or None",
+)
+def _extract_violated_condition(error_str: str) -> str | None:
+    """Extract the violated condition text from an icontract error message.
+
+    icontract formats the second line as "description: condition_expression:".
+
+    Args:
+        error_str: The full icontract error string.
+
+    Returns:
+        The condition expression, or None.
+    """
+    lines = error_str.split("\n")
+    if len(lines) < 2:
+        return None
+    # Second line is typically "description: condition:"
+    condition_line = lines[1].strip()
+    if ": " in condition_line:
+        # Extract everything after the description
+        _, _, condition_part = condition_line.partition(": ")
+        # Remove trailing colon
+        return condition_part.rstrip(":")
+    return None
+
+
+@icontract.require(
+    lambda exc: isinstance(exc, icontract.ViolationError),
+    "exc must be an icontract violation",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, dict),
+    "result must be a dictionary or None",
+)
 def _extract_counterexample(exc: icontract.ViolationError) -> dict[str, object] | None:
     """Extract counterexample data from an icontract violation.
+
+    icontract formats variable values as "<name> was <value>" lines in the
+    error message. This function parses those lines into a dict.
 
     Args:
         exc: The violation error to extract from.
@@ -1719,20 +1805,20 @@ def _extract_counterexample(exc: icontract.ViolationError) -> dict[str, object] 
         A dict mapping argument names to their values, or None.
     """
     error_str = str(exc)
-    # icontract includes variable values in the error message
-    # Try to parse them, but fall back to the raw message
     try:
-        parts = error_str.split("\n")
+        lines = error_str.split("\n")
         counterexample: dict[str, object] = {}
-        # Loop invariant: counterexample contains parsed variables from parts[0..i]
-        for part in parts:
-            if "=" in part and not part.strip().startswith("Postcondition"):
-                key_val = part.strip().split("=", 1)
-                if len(key_val) == 2:
-                    key = key_val[0].strip()
-                    val = key_val[1].strip()
-                    if key and not key.startswith("lambda"):
-                        counterexample[key] = val
+        # Loop invariant: counterexample contains parsed "X was Y" bindings from lines[0..i]
+        for line in lines:
+            stripped = line.strip()
+            # icontract uses "<name> was <value>" format for variable bindings
+            if " was " in stripped:
+                name, _, value = stripped.partition(" was ")
+                name = name.strip()
+                value = value.strip()
+                # Skip the condition description line (contains ":")
+                if name and ":" not in name and not name.startswith("File "):
+                    counterexample[name] = value
         return counterexample if counterexample else None
     except Exception:
         return None

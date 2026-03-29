@@ -57,7 +57,7 @@ class TestTransformSymbolicResults:
         assert result.summary.passed_count == 0
         assert result.summary.skipped_count == 1
         assert result.results[0].status == CheckStatus.SKIPPED
-        assert result.results[0].level_achieved == 3
+        assert result.results[0].level_achieved == 4
 
     def test_unsupported_finding(self) -> None:
         findings = [
@@ -70,11 +70,12 @@ class TestTransformSymbolicResults:
             ),
         ]
         result = transform_symbolic_results(findings, "test.py", 0.1)
-        assert result.passed is False
+        # Unsupported functions are EXEMPT: visible but don't block passing.
+        assert result.passed is True
         assert result.summary.passed_count == 0
-        assert result.summary.skipped_count == 1
-        assert result.results[0].status == CheckStatus.SKIPPED
-        assert result.results[0].level_achieved == 3
+        assert result.summary.exempt_count == 1
+        assert result.results[0].status == CheckStatus.EXEMPT
+        assert result.results[0].level_achieved == 4
 
     def test_error_finding(self) -> None:
         findings = [

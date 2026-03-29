@@ -56,10 +56,16 @@ def format_human(check_result: CheckResult) -> str:
         passed = [r for r in func_results if r.status == CheckStatus.PASSED]
         failed = [r for r in func_results if r.status == CheckStatus.FAILED]
         skipped = [r for r in func_results if r.status == CheckStatus.SKIPPED]
+        exempt = [r for r in func_results if r.status == CheckStatus.EXEMPT]
 
         # Compact summary for all-pass files
-        if not failed and not skipped:
+        if not failed and not skipped and not exempt:
             lines.append(f"  {file_path} — {len(passed)} passed")
+            continue
+
+        # Compact summary for exempt-only files
+        if not failed and not skipped and not passed:
+            lines.append(f"  {file_path} — exempt")
             continue
 
         # File header with counts
@@ -70,12 +76,14 @@ def format_human(check_result: CheckResult) -> str:
             parts.append(f"{len(failed)} failed")
         if skipped:
             parts.append(f"{len(skipped)} skipped")
+        if exempt:
+            parts.append(f"{len(exempt)} exempt")
         lines.append(f"  {file_path} — {', '.join(parts)}")
 
         # Only show non-passing results with details
         # Loop invariant: lines contains output for non-passing func_results[0..j]
         for func_result in func_results:
-            if func_result.status == CheckStatus.PASSED:
+            if func_result.status in (CheckStatus.PASSED, CheckStatus.EXEMPT):
                 continue
             marker = "FAIL" if func_result.status == CheckStatus.FAILED else "SKIP"
             lines.append(f"    [{marker}] {func_result.function} (line {func_result.line})")
@@ -93,12 +101,15 @@ def format_human(check_result: CheckResult) -> str:
     # Summary
     lines.append("-" * 50)
     summary = check_result.summary
-    lines.append(
-        f"{summary.total_functions} functions checked, "
-        f"{summary.passed_count} passed, "
-        f"{summary.failed_count} failed, "
-        f"{summary.skipped_count} skipped"
-    )
+    summary_parts = [
+        f"{summary.total_functions} checked",
+        f"{summary.passed_count} passed",
+        f"{summary.failed_count} failed",
+        f"{summary.skipped_count} skipped",
+    ]
+    if summary.exempt_count > 0:
+        summary_parts.append(f"{summary.exempt_count} exempt")
+    lines.append(", ".join(summary_parts))
     lines.append(f"Duration: {summary.duration_seconds:.3f}s")
 
     return "\n".join(lines)
@@ -173,14 +184,14 @@ def format_html(check_result: CheckResult) -> str:
     file_sections: list[str] = []
     # Loop invariant: file_sections contains HTML for files processed so far
     for file_path, func_results in sorted(by_file.items()):
-        file_passed = all(r.status == CheckStatus.PASSED for r in func_results)
+        file_passed = all(r.status in (CheckStatus.PASSED, CheckStatus.EXEMPT) for r in func_results)
         file_class = "passed" if file_passed else "failed"
         file_icon = "&#x2714;" if file_passed else "&#x2718;"
 
         rows: list[str] = []
         # Loop invariant: rows contains table rows for func_results[0..j]
         for fr in func_results:
-            row_class = "pass-row" if fr.status == CheckStatus.PASSED else "fail-row"
+            row_class = "pass-row" if fr.status in (CheckStatus.PASSED, CheckStatus.EXEMPT) else "fail-row"
             status_badge = _level_badge(fr.level_achieved)
             detail_html = ""
             if fr.details:
@@ -189,9 +200,17 @@ def format_html(check_result: CheckResult) -> str:
                 for d in fr.details:
                     part = f'<div class="detail">{_escape_html(d.message)}'
                     if d.suggestion:
-                        part += f'<br><span class="suggestion">&#x27A1; {_escape_html(d.suggestion)}</span>'
-                    if d.counterexample:
-                        part += f'<br><span class="counterexample">Counterexample: {_escape_html(str(d.counterexample))}</span>'
+                        escaped_suggestion = _escape_html(d.suggestion)
+                        if "\n" in d.suggestion:
+                            part += f'<br><pre class="suggestion">{escaped_suggestion}</pre>'
+                        else:
+                            part += f'<br><span class="suggestion">&#x27A1; {escaped_suggestion}</span>'
+                    if d.counterexample is not None and d.counterexample:
+                        try:
+                            ce_text = json.dumps(d.counterexample, default=str)
+                        except (TypeError, ValueError):
+                            ce_text = str(d.counterexample)
+                        part += f'<br><span class="counterexample">Counterexample: {_escape_html(ce_text)}</span>'
                     part += "</div>"
                     detail_parts.append(part)
                 detail_html = "".join(detail_parts)
@@ -252,8 +271,10 @@ def format_html(check_result: CheckResult) -> str:
   .badge-3 {{ background: #fff8c5; color: #4d2d00; }}
   .badge-4 {{ background: #fbefff; color: #5e3a8a; }}
   .badge-5 {{ background: #ffebe9; color: #82071e; }}
+  .badge-6 {{ background: #fff0f0; color: #6e0b14; }}
   .detail {{ margin: 0.25rem 0; }}
   .suggestion {{ color: #0550ae; font-style: italic; }}
+  pre.suggestion {{ background: #f6f8fa; padding: 0.5rem; border-radius: 4px; font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; }}
   .counterexample {{ color: #82071e; font-family: monospace; font-size: 0.8rem; }}
   .footer {{ margin-top: 1.5rem; color: #656d76; font-size: 0.8rem; text-align: center; }}
 </style>
@@ -268,6 +289,7 @@ def format_html(check_result: CheckResult) -> str:
     <div class="summary-item"><div class="number" style="color:#116329">{summary.passed_count}</div><div class="label">Passed</div></div>
     <div class="summary-item"><div class="number" style="color:#82071e">{summary.failed_count}</div><div class="label">Failed</div></div>
     <div class="summary-item"><div class="number" style="color:#656d76">{summary.skipped_count}</div><div class="label">Skipped</div></div>
+    <div class="summary-item"><div class="number" style="color:#8b6914">{summary.exempt_count}</div><div class="label">Exempt</div></div>
     <div class="summary-item"><div class="number">{summary.duration_seconds:.2f}s</div><div class="label">Duration</div></div>
   </div>
 </div>
@@ -294,12 +316,13 @@ def _level_badge(level: int) -> str:
         0: "None",
         1: "L1 Structural",
         2: "L2 Types",
-        3: "L3 Properties",
-        4: "L4 Symbolic",
-        5: "L5 Compositional",
+        3: "L3 Coverage",
+        4: "L4 Properties",
+        5: "L5 Symbolic",
+        6: "L6 Compositional",
     }
     name = level_names.get(level, f"L{level}")
-    badge_class = f"badge-{min(level, 5)}" if level > 0 else "badge-1"
+    badge_class = f"badge-{min(level, 6)}" if level > 0 else "badge-1"
     return f'<span class="badge {badge_class}">{name}</span>'
 
 
@@ -319,4 +342,5 @@ def _escape_html(text: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace('"', "&quot;")
+        .replace("'", "&#x27;")
     )

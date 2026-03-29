@@ -119,15 +119,30 @@ def _suggest_from_mypy_code(code: str | None, message: str) -> str | None:
         A suggestion string, or None.
     """
     suggestions: dict[str, str] = {
-        "arg-type": "Check the argument type matches the function signature",
-        "return-value": "Ensure the return type matches the annotation",
-        "assignment": "Check the assigned value type matches the variable annotation",
-        "attr-defined": "Verify the attribute exists on the object type",
-        "name-defined": "Check for typos or missing imports",
-        "override": "Ensure method signature matches the parent class",
+        "arg-type": "Change the argument to match the expected parameter type, or update the parameter annotation",
+        "return-value": "Change the return expression to match the declared return type, or fix the return annotation",
+        "assignment": "Change the assigned value to match the variable's type annotation, or fix the annotation",
+        "attr-defined": "The attribute does not exist on this type — check for typos, add the attribute, or use hasattr/cast",
+        "name-defined": "This name is not defined — add an import or fix the spelling",
+        "override": "The method signature must match the parent class — update parameter or return types to be compatible",
         "misc": "Review the type annotation for correctness",
-        "union-attr": "Handle all union variants or narrow the type",
+        "union-attr": "Not all union variants have this attribute — narrow the type with isinstance() or handle each variant",
+        "no-untyped-def": "Add type annotations to all parameters and the return type",
+        "type-arg": "Generic type needs explicit type parameters (e.g. list[str] not list)",
+        "var-annotated": "Add a type annotation to this variable",
+        "no-any-return": "The return type should not be Any — use a specific type",
+        "import-untyped": "This module has no type stubs — add a # type: ignore[import-untyped] comment or install stubs",
+        "call-overload": "No overload variant matches these argument types — check the function's overload signatures",
+        "index": "Invalid index type — use the correct key/index type for this container",
+        "operator": "This operator is not supported for these types — check operand types",
+        "redundant-cast": "This cast is unnecessary — the expression already has the target type",
+        "unreachable": "This code is unreachable — review the control flow above it",
+        "truthy-bool": "This expression is always truthy/falsy — the condition may be wrong",
+        "possibly-undefined": "This variable might not be defined on all code paths — initialize it or add a check",
     }
     if code and code in suggestions:
         return suggestions[code]
-    return None
+    # Fallback: include the error code so the agent can look it up
+    if code:
+        return f"Fix the type error (mypy code: {code}) — run 'mypy --show-error-codes' for details"
+    return "Fix the type error — run 'mypy --strict' on this file for full details"

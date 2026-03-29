@@ -91,8 +91,8 @@ try:
         function=st.text(min_size=1, max_size=30).filter(lambda s: s.strip()),
         file=st.text(min_size=1, max_size=50).filter(lambda s: s.strip()),
         line=st.integers(min_value=1, max_value=10000),
-        level_requested=st.integers(min_value=1, max_value=5),
-        level_achieved=st.integers(min_value=0, max_value=5),
+        level_requested=st.integers(min_value=1, max_value=6),
+        level_achieved=st.integers(min_value=0, max_value=6),
         status=check_statuses,
         details=st.tuples(detail_strategy).map(lambda t: t) | st.just(()),
     )

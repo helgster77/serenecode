@@ -39,7 +39,7 @@ class TestReportCommand:
         runner = CliRunner()
         result = runner.invoke(main, ["report", str(tmp_path), "--allow-code-execution"])
         assert result.exit_code == 0
-        assert "functions checked" in result.output
+        assert "checked" in result.output
 
     def test_report_json_format(self, tmp_path: Path) -> None:
         _write_sample_source(tmp_path)
@@ -135,7 +135,7 @@ def func(x: int, y: int) -> int:
 
         def fake_run_pipeline(*args: object, **kwargs: object):
             captured["level"] = kwargs["level"]  # type: ignore[index]
-            return make_check_result((), level_requested=3, duration_seconds=0.0)
+            return make_check_result((), level_requested=4, duration_seconds=0.0)
 
         monkeypatch.setattr("serenecode.cli.run_pipeline", fake_run_pipeline)
 
@@ -143,7 +143,8 @@ def func(x: int, y: int) -> int:
         result = runner.invoke(main, ["report", str(tmp_path), "--allow-code-execution"])
 
         assert result.exit_code == 0
-        assert captured["level"] == 3
+        # Default recommended_level is now 4 (through property testing)
+        assert captured["level"] == 4
 
     def test_report_requires_explicit_code_execution_flag(self, tmp_path: Path) -> None:
         _write_sample_source(tmp_path)

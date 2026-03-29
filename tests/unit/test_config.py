@@ -126,9 +126,6 @@ Every public function MUST have contracts.
 ## Architecture Standards
 Hexagonal architecture.
 
-## Loop and Recursion Standards
-Loops MUST have invariants.
-
 ## Exemptions
 - `cli.py` — Thin CLI layer.
 - `adapters/` — I/O boundary code.
@@ -152,9 +149,6 @@ Rules here.
 
 ## Architecture Standards
 More rules.
-
-## Loop and Recursion Standards
-Loop rules.
 
 ## Exemptions
 - `cli.py` — Thin CLI layer.

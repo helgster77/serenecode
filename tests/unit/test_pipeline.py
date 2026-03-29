@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from serenecode.config import default_config, minimal_config
+from serenecode.core.exceptions import ToolNotInstalledError
 from serenecode.core.pipeline import SourceFile, run_pipeline
-from serenecode.models import CheckResult, CheckStatus, make_check_result
+from serenecode.models import CheckResult, CheckStatus, FunctionResult, make_check_result
+from serenecode.ports.coverage_analyzer import CoverageFinding
 from serenecode.ports.property_tester import PropertyFinding
 from serenecode.ports.symbolic_checker import SymbolicFinding
 from serenecode.ports.type_checker import TypeIssue
@@ -94,6 +96,88 @@ class _EmptySymbolicChecker:
         search_paths: tuple[str, ...] = (),
     ) -> list[SymbolicFinding]:
         return []
+
+
+@dataclass
+class _PassingCoverageAnalyzer:
+    """Coverage analyzer that returns a passing finding for each module."""
+
+    def analyze_module(
+        self,
+        module_path: str,
+        search_paths: tuple[str, ...] = (),
+        coverage_threshold: float = 80.0,
+    ) -> list[CoverageFinding]:
+        return [
+            CoverageFinding(
+                function_name="func",
+                module_path=module_path,
+                line_start=1,
+                line_end=10,
+                line_coverage_percent=95.0,
+                branch_coverage_percent=90.0,
+                uncovered_lines=(),
+                uncovered_branches=(),
+                suggestions=(),
+                meets_threshold=True,
+                message=f"'{module_path}' has 95% coverage",
+            ),
+        ]
+
+
+@dataclass
+class _FailingCoverageAnalyzer:
+    """Coverage analyzer that returns a failing finding."""
+
+    def analyze_module(
+        self,
+        module_path: str,
+        search_paths: tuple[str, ...] = (),
+        coverage_threshold: float = 80.0,
+    ) -> list[CoverageFinding]:
+        return [
+            CoverageFinding(
+                function_name="func",
+                module_path=module_path,
+                line_start=1,
+                line_end=10,
+                line_coverage_percent=30.0,
+                branch_coverage_percent=20.0,
+                uncovered_lines=(5, 6, 7),
+                uncovered_branches=(),
+                suggestions=(),
+                meets_threshold=False,
+                message=f"'{module_path}' has 30% coverage",
+            ),
+        ]
+
+
+@dataclass
+class _EmptyCoverageAnalyzer:
+    """Coverage analyzer that returns no findings."""
+
+    def analyze_module(
+        self,
+        module_path: str,
+        search_paths: tuple[str, ...] = (),
+        coverage_threshold: float = 80.0,
+    ) -> list[CoverageFinding]:
+        return []
+
+
+@dataclass
+class _RaisingCoverageAnalyzer:
+    """Coverage analyzer that raises an exception."""
+
+    error: Exception
+
+    def analyze_module(
+        self,
+        module_path: str,
+        search_paths: tuple[str, ...] = (),
+        coverage_threshold: float = 80.0,
+    ) -> list[CoverageFinding]:
+        raise self.error
 
 
 def _make_valid_source() -> str:
@@ -211,7 +295,16 @@ class TestPipelineLevel1:
             file_path: str,
         ) -> CheckResult:
             captured.append((module_path, file_path))
-            return make_check_result((), level_requested=1, duration_seconds=0.0)
+            # Return a real passing result so the pipeline considers L1 achieved
+            passing_result = FunctionResult(
+                function="fake",
+                file=file_path,
+                line=1,
+                level_requested=1,
+                level_achieved=1,
+                status=CheckStatus.PASSED,
+            )
+            return make_check_result((passing_result,), level_requested=1, duration_seconds=0.0)
 
         result = run_pipeline(
             (sf,),
@@ -234,8 +327,8 @@ class TestPipelineEarlyTermination:
             module_path="test.py",
             source=_make_invalid_source(),
         )
-        # Even though level=4, should stop at 1 due to failures
-        result = run_pipeline((sf,), level=4, start_level=1, config=default_config())
+        # Even though level=5, should stop at 1 due to failures
+        result = run_pipeline((sf,), level=5, start_level=1, config=default_config())
         assert result.passed is False
 
     def test_no_early_termination_runs_all(self) -> None:
@@ -275,15 +368,16 @@ class TestPipelineWithMockAdapters:
         assert result.passed is False
         assert result.summary.skipped_count == 2
 
-    def test_level_4_with_no_adapter_skips(self) -> None:
+    def test_level_5_with_no_adapter_skips(self) -> None:
         sf = SourceFile(
             file_path="test.py",
             module_path="test.py",
             source=_make_valid_source(),
         )
-        result = run_pipeline((sf,), level=4, start_level=1, config=default_config())
+        result = run_pipeline((sf,), level=5, start_level=1, config=default_config())
         assert result.passed is False
-        assert result.summary.skipped_count == 3
+        # 4 skips: L2 mypy + L3 coverage + L4 property + L5 symbolic
+        assert result.summary.skipped_count == 4
 
     def test_start_level_skips_structural_checks(self) -> None:
         sf = SourceFile(
@@ -295,8 +389,8 @@ class TestPipelineWithMockAdapters:
         property_tester = _CapturingPropertyTester(captured_search_paths=[])
         result = run_pipeline(
             (sf,),
-            level=3,
-            start_level=3,
+            level=4,
+            start_level=4,
             config=default_config(),
             property_tester=property_tester,
         )
@@ -312,14 +406,13 @@ class TestPipelineWithMockAdapters:
         )
         result = run_pipeline(
             (sf,),
-            level=3,
-            start_level=1,
+            level=4,
+            start_level=4,
             config=default_config(),
-            type_checker=_NoIssuesTypeChecker(),
             property_tester=_RaisingPropertyTester(ImportError("No module named 'pkg'")),
         )
         assert result.passed is False
-        assert result.level_achieved == 2
+        assert result.level_achieved == 3
         assert result.summary.skipped_count == 1
 
     def test_property_tester_receives_import_search_paths(self) -> None:
@@ -333,10 +426,9 @@ class TestPipelineWithMockAdapters:
         property_tester = _CapturingPropertyTester(captured_search_paths=[])
         result = run_pipeline(
             (sf,),
-            level=3,
-            start_level=1,
+            level=4,
+            start_level=4,
             config=minimal_config(),
-            type_checker=_NoIssuesTypeChecker(),
             property_tester=property_tester,
         )
         assert result.passed is True
@@ -372,7 +464,7 @@ class TestPipelineWithMockAdapters:
         result = run_pipeline((sf,), level=1, start_level=1, config=default_config())
         assert result.summary.duration_seconds >= 0
 
-    def test_empty_symbolic_results_do_not_claim_level_four(self) -> None:
+    def test_empty_symbolic_results_do_not_claim_level_five(self) -> None:
         sf = SourceFile(
             file_path="src/pkg/mod.py",
             module_path="pkg/mod.py",
@@ -384,7 +476,7 @@ class TestPipelineWithMockAdapters:
 
         result = run_pipeline(
             (sf,),
-            level=4,
+            level=5,
             start_level=1,
             config=minimal_config(),
             type_checker=_NoIssuesTypeChecker(),
@@ -393,9 +485,9 @@ class TestPipelineWithMockAdapters:
         )
 
         assert result.passed is False
-        assert result.level_achieved == 3
+        assert result.level_achieved == 4
 
-    def test_empty_property_results_do_not_claim_level_three(self) -> None:
+    def test_empty_property_results_do_not_claim_level_four(self) -> None:
         sf = SourceFile(
             file_path="src/pkg/mod.py",
             module_path="pkg/mod.py",
@@ -405,12 +497,142 @@ class TestPipelineWithMockAdapters:
 
         result = run_pipeline(
             (sf,),
-            level=3,
-            start_level=1,
+            level=4,
+            start_level=4,
             config=minimal_config(),
-            type_checker=_NoIssuesTypeChecker(),
             property_tester=_EmptyPropertyTester(),
         )
 
         assert result.passed is False
+        assert result.level_achieved == 3
+
+
+class TestPipelineLevel3Coverage:
+    """Tests for pipeline Level 3 coverage analysis."""
+
+    def test_passing_coverage_achieves_level_3(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/mod.py",
+            module_path="pkg/mod.py",
+            source=_make_valid_source(),
+            importable_module="pkg.mod",
+        )
+        result = run_pipeline(
+            (sf,),
+            level=3,
+            start_level=3,
+            config=minimal_config(),
+            coverage_analyzer=_PassingCoverageAnalyzer(),
+        )
+        assert result.passed is True
+        assert result.level_achieved == 3
+
+    def test_failing_coverage_blocks_pass(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/mod.py",
+            module_path="pkg/mod.py",
+            source=_make_valid_source(),
+            importable_module="pkg.mod",
+        )
+        result = run_pipeline(
+            (sf,),
+            level=3,
+            start_level=3,
+            config=minimal_config(),
+            coverage_analyzer=_FailingCoverageAnalyzer(),
+        )
+        assert result.passed is False
+        assert result.summary.failed_count == 1
+
+    def test_empty_coverage_results_do_not_claim_level_3(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/mod.py",
+            module_path="pkg/mod.py",
+            source=_make_valid_source(),
+            importable_module="pkg.mod",
+        )
+        result = run_pipeline(
+            (sf,),
+            level=3,
+            start_level=3,
+            config=minimal_config(),
+            coverage_analyzer=_EmptyCoverageAnalyzer(),
+        )
+        # Empty results → level not achieved
+        assert result.passed is False
         assert result.level_achieved == 2
+
+    def test_coverage_tool_not_installed_skips(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/mod.py",
+            module_path="pkg/mod.py",
+            source=_make_valid_source(),
+            importable_module="pkg.mod",
+        )
+        result = run_pipeline(
+            (sf,),
+            level=3,
+            start_level=3,
+            config=minimal_config(),
+            coverage_analyzer=_RaisingCoverageAnalyzer(
+                ToolNotInstalledError("coverage not installed"),
+            ),
+        )
+        assert result.passed is False
+        assert result.summary.skipped_count == 1
+
+    def test_coverage_import_error_skips(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/mod.py",
+            module_path="pkg/mod.py",
+            source=_make_valid_source(),
+            importable_module="pkg.mod",
+        )
+        result = run_pipeline(
+            (sf,),
+            level=3,
+            start_level=3,
+            config=minimal_config(),
+            coverage_analyzer=_RaisingCoverageAnalyzer(
+                ImportError("No module named 'pkg'"),
+            ),
+        )
+        assert result.passed is False
+        assert result.summary.skipped_count == 1
+
+    def test_non_importable_module_skips_coverage(self) -> None:
+        sf = SourceFile(
+            file_path="standalone.py",
+            module_path="standalone.py",
+            source=_make_valid_source(),
+            importable_module=None,
+        )
+        result = run_pipeline(
+            (sf,),
+            level=3,
+            start_level=3,
+            config=minimal_config(),
+            coverage_analyzer=_PassingCoverageAnalyzer(),
+        )
+        assert result.passed is False
+        assert result.summary.skipped_count == 1
+
+    def test_coverage_early_termination_prevents_level_4(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/mod.py",
+            module_path="pkg/mod.py",
+            source=_make_valid_source(),
+            importable_module="pkg.mod",
+        )
+        property_tester = _CapturingPropertyTester(captured_search_paths=[])
+        result = run_pipeline(
+            (sf,),
+            level=4,
+            start_level=3,
+            config=minimal_config(),
+            coverage_analyzer=_FailingCoverageAnalyzer(),
+            property_tester=property_tester,
+        )
+        assert result.passed is False
+        # Property tester should not have been called due to early termination
+        assert property_tester.captured_search_paths == []

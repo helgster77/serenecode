@@ -59,16 +59,26 @@ def transform_property_results(
 
         if finding.passed and finding.finding_type == "verified":
             status = CheckStatus.PASSED
-            level_achieved = 3
+            level_achieved = 4
             details.append(Detail(
                 level=VerificationLevel.PROPERTIES,
                 tool="hypothesis",
                 finding_type="verified",
                 message=finding.message,
             ))
+        elif finding.passed and finding.finding_type == "excluded":
+            # Filter-excluded functions are visible but don't block passing.
+            status = CheckStatus.EXEMPT
+            level_achieved = 3
+            details.append(Detail(
+                level=VerificationLevel.PROPERTIES,
+                tool="hypothesis",
+                finding_type=finding.finding_type,
+                message=finding.message,
+            ))
         elif finding.passed:
             status = CheckStatus.SKIPPED
-            level_achieved = 2
+            level_achieved = 3
             details.append(Detail(
                 level=VerificationLevel.PROPERTIES,
                 tool="hypothesis",
@@ -77,7 +87,7 @@ def transform_property_results(
             ))
         else:
             status = CheckStatus.FAILED
-            level_achieved = 2
+            level_achieved = 3
             detail = Detail(
                 level=VerificationLevel.PROPERTIES,
                 tool="hypothesis",
@@ -92,7 +102,7 @@ def transform_property_results(
             function=finding.function_name,
             file=file_path,
             line=1,  # line info not available from property testing
-            level_requested=3,
+            level_requested=4,
             level_achieved=level_achieved,
             status=status,
             details=tuple(details),
@@ -100,7 +110,7 @@ def transform_property_results(
 
     return make_check_result(
         tuple(func_results),
-        level_requested=3,
+        level_requested=4,
         duration_seconds=duration_seconds,
     )
 
@@ -123,15 +133,22 @@ def _suggest_fix(finding: PropertyFinding) -> str | None:
         A suggestion string, or None if no suggestion can be generated.
     """
     if finding.finding_type == "postcondition_violated":
-        if finding.counterexample:
+        if finding.counterexample is not None and isinstance(finding.counterexample, dict) and finding.counterexample:
+            inputs = ", ".join(f"{k}={v}" for k, v in finding.counterexample.items())
             return (
-                f"Postcondition violated with inputs: {finding.counterexample}. "
-                "Fix the implementation or tighten the precondition."
+                f"Postcondition violated with inputs: {inputs}. "
+                "To fix: (1) if these inputs are invalid, add a @icontract.require "
+                "precondition to exclude them; (2) if these inputs are valid, fix the "
+                "implementation so the postcondition holds"
             )
-        return "Postcondition violated. Review the implementation logic."
+        return (
+            "Postcondition violated. Read the function's @icontract.ensure decorators "
+            "and fix the implementation to satisfy them, or narrow inputs with @icontract.require"
+        )
     elif finding.finding_type == "crash":
         return (
             f"Function crashed with {finding.exception_type}: {finding.exception_message}. "
-            "Add a precondition to exclude this input or fix the implementation."
+            "To fix: (1) add a @icontract.require precondition to reject inputs that "
+            "cause this crash, or (2) handle the edge case in the implementation"
         )
     return None

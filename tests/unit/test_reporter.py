@@ -63,7 +63,7 @@ class TestFormatHuman:
     def test_contains_summary(self) -> None:
         result = _make_sample_result()
         output = format_human(result)
-        assert "2 functions checked" in output
+        assert "2 checked" in output
         assert "1 passed" in output
         assert "1 failed" in output
 
@@ -234,12 +234,12 @@ class TestFormatHtml:
             function="abs_val",
             file="test.py",
             line=5,
-            level_requested=4,
-            level_achieved=3,
+            level_requested=5,
+            level_achieved=4,
             status=CheckStatus.FAILED,
             details=(detail,),
         )
-        result = make_check_result((func,), level_requested=4, duration_seconds=0.5)
+        result = make_check_result((func,), level_requested=5, duration_seconds=0.5)
         output = format_html(result)
         assert "Counterexample" in output
         assert "x" in output

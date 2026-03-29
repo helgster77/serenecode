@@ -59,16 +59,16 @@ def transform_symbolic_results(
 
         if finding.outcome == "verified":
             status = CheckStatus.PASSED
-            level_achieved = 4
+            level_achieved = 5
             details.append(Detail(
                 level=VerificationLevel.SYMBOLIC,
                 tool="crosshair",
                 finding_type="verified",
-                message=f"Symbolically verified: '{finding.function_name}'",
+                message=f"No counterexample found within analysis bounds: '{finding.function_name}'",
             ))
         elif finding.outcome == "counterexample":
             status = CheckStatus.FAILED
-            level_achieved = 3
+            level_achieved = 4
             details.append(Detail(
                 level=VerificationLevel.SYMBOLIC,
                 tool="crosshair",
@@ -79,37 +79,53 @@ def transform_symbolic_results(
             ))
         elif finding.outcome == "timeout":
             status = CheckStatus.SKIPPED
-            level_achieved = 3
+            level_achieved = 4
             details.append(Detail(
                 level=VerificationLevel.SYMBOLIC,
                 tool="crosshair",
                 finding_type="timeout",
                 message=f"Symbolic verification timed out for '{finding.function_name}'",
+                suggestion=(
+                    "The solver ran out of time. Options: "
+                    "(1) increase --per-condition-timeout or --module-timeout, "
+                    "(2) simplify the function logic or contracts, "
+                    "(3) split the function into smaller pieces, "
+                    "(4) add tighter preconditions to reduce the search space"
+                ),
             ))
         elif finding.outcome == "unsupported":
-            status = CheckStatus.SKIPPED
-            level_achieved = 3
+            status = CheckStatus.EXEMPT
+            level_achieved = 4
             details.append(Detail(
                 level=VerificationLevel.SYMBOLIC,
                 tool="crosshair",
                 finding_type="unsupported",
                 message=f"Symbolic verification unsupported for '{finding.function_name}'",
+                suggestion=(
+                    "This function cannot be symbolically verified — "
+                    "it has non-primitive parameter types that the solver cannot generate. "
+                    "Ensure it is covered by property-based tests (L3) or explicit unit tests"
+                ),
             ))
         else:
             status = CheckStatus.FAILED
-            level_achieved = 3
+            level_achieved = 4
             details.append(Detail(
                 level=VerificationLevel.SYMBOLIC,
                 tool="crosshair",
                 finding_type="error",
                 message=finding.message,
+                suggestion=(
+                    "Symbolic verification encountered an internal error. "
+                    "Check that the module imports cleanly and that all dependencies are installed"
+                ),
             ))
 
         func_results.append(FunctionResult(
             function=finding.function_name,
             file=file_path,
             line=1,
-            level_requested=4,
+            level_requested=5,
             level_achieved=level_achieved,
             status=status,
             details=tuple(details),
@@ -117,7 +133,7 @@ def transform_symbolic_results(
 
     return make_check_result(
         tuple(func_results),
-        level_requested=4,
+        level_requested=5,
         duration_seconds=duration_seconds,
     )
 
@@ -139,11 +155,24 @@ def _suggest_fix_symbolic(finding: SymbolicFinding) -> str | None:
     Returns:
         A suggestion string, or None.
     """
-    if finding.counterexample:
-        return (
-            f"Counterexample found: {finding.counterexample}. "
-            "Fix the implementation or add a precondition to exclude this input."
+    if finding.counterexample is not None and isinstance(finding.counterexample, dict) and finding.counterexample:
+        inputs = ", ".join(f"{k}={v}" for k, v in finding.counterexample.items())
+        fix_steps = (
+            f"Counterexample: {inputs}. "
+            "To fix: (1) if the inputs are invalid, add a @icontract.require "
+            "precondition to exclude them; (2) if the inputs are valid, fix the "
+            "implementation so the postcondition holds"
         )
+        if finding.condition:
+            fix_steps += f"; violated condition: {finding.condition}"
+        return fix_steps
     if finding.condition:
-        return f"Condition violated: {finding.condition}. Review the postcondition or implementation."
-    return "Symbolic verification found a violation. Review the function logic."
+        return (
+            f"Condition '{finding.condition}' violated. "
+            "Either fix the implementation to satisfy the postcondition, "
+            "or add a precondition to narrow the valid input domain"
+        )
+    return (
+        "Symbolic verification found a violation. "
+        "Read the function's postconditions and check which one can fail"
+    )

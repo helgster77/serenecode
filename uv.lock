@@ -549,6 +549,7 @@ dev = [
     { name = "pytest-cov" },
 ]
 verify = [
+    { name = "coverage" },
     { name = "crosshair-tool" },
     { name = "hypothesis" },
     { name = "mypy" },
@@ -557,6 +558,7 @@ verify = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
+    { name = "coverage", marker = "extra == 'verify'", specifier = ">=7.0" },
     { name = "crosshair-tool", marker = "extra == 'dev'", specifier = ">=0.0.60" },
     { name = "crosshair-tool", marker = "extra == 'verify'", specifier = ">=0.0.60" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.0" },

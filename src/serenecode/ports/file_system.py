@@ -15,7 +15,9 @@ from typing import Protocol
 import icontract
 
 
-@icontract.invariant(lambda self: True, "protocol has no runtime state")
+# Protocol classes are exempt from @icontract.invariant because invariants
+# are not inherited by Protocol implementors — they would only fire on the
+# Protocol itself, which is never instantiated directly.
 class FileReader(Protocol):
     """Port for reading file contents.
 
@@ -63,7 +65,6 @@ class FileReader(Protocol):
         ...
 
 
-@icontract.invariant(lambda self: True, "protocol has no runtime state")
 class FileWriter(Protocol):
     """Port for writing file contents.
 

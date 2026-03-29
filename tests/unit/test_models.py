@@ -31,12 +31,13 @@ class TestVerificationLevel:
     def test_values(self) -> None:
         assert VerificationLevel.STRUCTURAL.value == 1
         assert VerificationLevel.TYPES.value == 2
-        assert VerificationLevel.PROPERTIES.value == 3
-        assert VerificationLevel.SYMBOLIC.value == 4
-        assert VerificationLevel.COMPOSITIONAL.value == 5
+        assert VerificationLevel.COVERAGE.value == 3
+        assert VerificationLevel.PROPERTIES.value == 4
+        assert VerificationLevel.SYMBOLIC.value == 5
+        assert VerificationLevel.COMPOSITIONAL.value == 6
 
     def test_all_levels_present(self) -> None:
-        assert len(VerificationLevel) == 5
+        assert len(VerificationLevel) == 6
 
 
 class TestCheckStatus:
@@ -55,9 +56,10 @@ class TestExitCode:
         assert ExitCode.PASSED == 0
         assert ExitCode.STRUCTURAL == 1
         assert ExitCode.TYPES == 2
-        assert ExitCode.PROPERTIES == 3
-        assert ExitCode.SYMBOLIC == 4
-        assert ExitCode.COMPOSITIONAL == 5
+        assert ExitCode.COVERAGE == 3
+        assert ExitCode.PROPERTIES == 4
+        assert ExitCode.SYMBOLIC == 5
+        assert ExitCode.COMPOSITIONAL == 6
         assert ExitCode.INTERNAL == 10
 
     def test_is_int(self) -> None:
@@ -155,8 +157,8 @@ class TestFunctionResult:
             function="core.pricing.calculate_total",
             file="src/core/pricing.py",
             line=15,
-            level_requested=4,
-            level_achieved=4,
+            level_requested=5,
+            level_achieved=5,
             status=CheckStatus.PASSED,
         )
         assert result.function == "core.pricing.calculate_total"
@@ -218,6 +220,7 @@ class TestCheckSummary:
             passed_count=8,
             failed_count=1,
             skipped_count=1,
+            exempt_count=0,
             duration_seconds=0.5,
         )
         assert summary.total_functions == 10
@@ -225,13 +228,13 @@ class TestCheckSummary:
     def test_counts_must_sum_to_total(self) -> None:
         assert_violation_or_skip(lambda: CheckSummary(
             total_functions=10, passed_count=5, failed_count=3,
-            skipped_count=1, duration_seconds=0.1,  # 5+3+1=9 != 10
+            skipped_count=1, exempt_count=0, duration_seconds=0.1,  # 5+3+1+0=9 != 10
         ))
 
     def test_negative_counts_rejected(self) -> None:
         assert_violation_or_skip(lambda: CheckSummary(
             total_functions=5, passed_count=-1, failed_count=3,
-            skipped_count=3, duration_seconds=0.1,
+            skipped_count=3, exempt_count=0, duration_seconds=0.1,
         ))
 
     def test_to_dict(self) -> None:
@@ -240,6 +243,7 @@ class TestCheckSummary:
             passed_count=8,
             failed_count=1,
             skipped_count=1,
+            exempt_count=0,
             duration_seconds=0.5,
         )
         d = summary.to_dict()
@@ -248,6 +252,7 @@ class TestCheckSummary:
             "passed": 8,
             "failed": 1,
             "skipped": 1,
+            "exempt": 0,
         }
 
 
@@ -290,6 +295,7 @@ class TestCheckResult:
             passed_count=1,
             failed_count=1,
             skipped_count=0,
+            exempt_count=0,
             duration_seconds=0.1,
         )
         result = CheckResult(
@@ -309,6 +315,7 @@ class TestCheckResult:
             passed_count=1,
             failed_count=0,
             skipped_count=0,
+            exempt_count=0,
             duration_seconds=0.1,
         )
         result = CheckResult(

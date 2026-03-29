@@ -111,8 +111,8 @@ class ExemptionConfig:
 
 
 @icontract.invariant(
-    lambda self: 1 <= self.recommended_level <= 5,
-    "Recommended level must be between 1 and 5",
+    lambda self: 1 <= self.recommended_level <= 6,
+    "Recommended level must be between 1 and 6",
 )
 @icontract.invariant(
     lambda self: self.template_name in ("default", "strict", "minimal"),
@@ -207,12 +207,12 @@ def default_config() -> SerenecodeConfig:
             core_module_patterns=_DEFAULT_CORE_PATTERNS,
         ),
         error_handling_rules=ErrorHandlingConfig(
-            require_domain_exceptions=True,
-            forbidden_exception_types=_DEFAULT_FORBIDDEN_EXCEPTIONS,
+            require_domain_exceptions=False,
+            forbidden_exception_types=(),
         ),
         loop_recursion_rules=LoopRecursionConfig(
-            require_loop_invariant_comments=True,
-            require_recursion_variant_comments=True,
+            require_loop_invariant_comments=False,
+            require_recursion_variant_comments=False,
         ),
         naming_conventions=NamingConfig(
             module_style="snake_case",
@@ -223,7 +223,7 @@ def default_config() -> SerenecodeConfig:
             exempt_paths=_DEFAULT_EXEMPT_PATHS,
         ),
         template_name="default",
-        recommended_level=3,
+        recommended_level=4,
     )
 
 
@@ -269,7 +269,7 @@ def strict_config() -> SerenecodeConfig:
             exempt_paths=(),
         ),
         template_name="strict",
-        recommended_level=5,
+        recommended_level=6,
     )
 
 
@@ -504,7 +504,13 @@ def _apply_content_overrides(
     "result must be a bool",
 )
 def _matches_rule(content: str, pattern: str, default: bool) -> bool:
-    """Return a parsed rule value when the file mentions it, else keep default."""
+    """Return a parsed rule value when the file mentions the rule, else keep default.
+
+    Matches the pattern to determine whether a rule is mentioned. When the
+    rule text is mentioned, returns True. This function only activates rules;
+    it cannot deactivate them. The template system (default/strict/minimal)
+    controls baseline activation.
+    """
     if re.search(pattern, content, re.IGNORECASE):
         return True
     return default
@@ -577,10 +583,17 @@ def _extract_exemptions(content: str) -> tuple[str, ...] | None:
 
     # Loop invariant: paths contains all exempt paths found in lines[0..i]
     for line in section.splitlines():
-        # Look for backtick-quoted paths in bullet points
-        path_match = re.search(r"`([^`]+)`", line)
-        if path_match and line.strip().startswith("-"):
-            paths.append(path_match.group(1))
+        stripped = line.strip()
+        if not stripped.startswith("-"):
+            continue
+        # Match backtick-quoted path-like values at the start of bullet text.
+        # The path must be the first backtick content and look like a file/dir
+        # reference (contains a dot or ends with /).
+        path_match = re.match(r"-\s+`([^`]+)`", stripped)
+        if path_match:
+            candidate = path_match.group(1)
+            if "." in candidate or candidate.endswith("/"):
+                paths.append(candidate)
 
     if not paths:
         return None

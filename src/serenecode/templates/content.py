@@ -16,9 +16,9 @@ _DEFAULT_TEMPLATE = """\
 This file governs how all code in this project must be written. Any AI coding \
 agent MUST read this file in its entirety before writing or modifying any code.
 
-Verified with: `serenecode check src/ --level 3 --allow-code-execution`
+Verified with: `serenecode check src/ --level 4 --allow-code-execution`
 
-Levels 3-5 import and execute project modules. Only use \
+Levels 3-6 import and execute project modules. Only use \
 `--allow-code-execution` for trusted code.
 
 ---
@@ -47,11 +47,7 @@ class Account:
 @icontract.ensure(lambda items, result: min(items) <= result <= max(items), "result within range")
 def compute_mean(items: list[float]) -> float:
     \"\"\"Compute the arithmetic mean.\"\"\"
-    total = 0.0
-    # Loop invariant: total is the sum of items[0..i]
-    for item in items:
-        total += item
-    return total / len(items)
+    return sum(items) / len(items)
 ```
 
 ---
@@ -76,8 +72,10 @@ contains non-trivial logic.
 ### Class Invariants
 
 Every class MUST have at least one `@icontract.invariant` defining its \
-representation invariant. If a class has no meaningful invariant, use \
-`@icontract.invariant(lambda self: True, "frozen data carrier")`.
+representation invariant. Invariants must constrain actual state — \
+tautological invariants like `lambda self: True` provide no verification \
+value and should not be used. If a class is truly stateless (e.g. a \
+Protocol or a stateless adapter), omit the invariant and document why.
 
 ---
 
@@ -117,22 +115,6 @@ Inject dependencies through function parameters.
 
 ---
 
-## Error Handling Standards
-
-- Core functions raise domain-specific exceptions, never bare `Exception`, \
-`ValueError`, or `TypeError`.
-- All custom exceptions must inherit from a project base exception.
-
----
-
-## Loop and Recursion Standards
-
-- Every loop MUST include a comment describing the loop invariant.
-- Recursive functions MUST document the variant (decreasing measure).
-- Prefer bounded iteration over unbounded `while`.
-
----
-
 ## Naming Conventions
 
 - Modules: `snake_case.py`. Classes: `PascalCase`. Functions: `snake_case`.
@@ -157,9 +139,9 @@ This file governs how all code in this project must be written. Any AI coding \
 agent MUST read this file in its entirety before writing or modifying any code. \
 **No exemptions.** Every function — public and private — must have contracts.
 
-Verified with: `serenecode check src/ --level 5 --allow-code-execution`
+Verified with: `serenecode check src/ --level 6 --allow-code-execution`
 
-Levels 3-5 import and execute project modules. Only use \
+Levels 3-6 import and execute project modules. Only use \
 `--allow-code-execution` for trusted code.
 
 ---
@@ -221,8 +203,10 @@ logic. Simple one-liner helpers may omit contracts but MUST have type annotation
 
 ### Class Invariants
 
-Every class MUST have `@icontract.invariant`. No exceptions. For frozen data \
-carriers: `@icontract.invariant(lambda self: True, "frozen data carrier")`.
+Every class MUST have `@icontract.invariant`. Invariants must constrain \
+actual state — tautological invariants like `lambda self: True` provide no \
+verification value. If a class is truly stateless (Protocol, stateless adapter), \
+omit the invariant and document why.
 
 ---
 

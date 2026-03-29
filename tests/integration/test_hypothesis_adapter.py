@@ -217,12 +217,12 @@ class TestContractedFunctionDiscovery:
     """Tests for finding contracted functions in modules."""
 
     def test_finds_contracted_functions(self) -> None:
-        functions = _get_contracted_functions("tests.fixtures.valid.simple_function")
+        functions, _excluded = _get_contracted_functions("tests.fixtures.valid.simple_function")
         names = [name for name, _ in functions]
         assert "square" in names
 
     def test_skips_uncontracted_functions(self) -> None:
-        functions = _get_contracted_functions("tests.fixtures.invalid.missing_contracts")
+        functions, _excluded = _get_contracted_functions("tests.fixtures.invalid.missing_contracts")
         assert len(functions) == 0
 
     def test_detects_icontract_decorators(self) -> None:

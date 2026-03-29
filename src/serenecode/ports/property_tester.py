@@ -40,7 +40,7 @@ class PropertyFinding:
     exception_message: str | None = None
 
 
-@icontract.invariant(lambda self: True, "protocol has no runtime state")
+# Protocol classes are exempt from @icontract.invariant — see ports/file_system.py.
 class PropertyTester(Protocol):
     """Port for property-based testing.
 

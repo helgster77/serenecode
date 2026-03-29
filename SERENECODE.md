@@ -72,7 +72,7 @@ class Account:
 
 Rules:
 - Invariants define what is always true about an instance of the class.
-- If a class has no meaningful invariant, document why with a comment and use a trivial invariant (e.g., `lambda self: True`).
+- Invariants must constrain actual state — tautological invariants like `lambda self: True` provide no verification value and should not be used. If a class is truly stateless (e.g., a Protocol or a stateless adapter), omit the invariant and document why with a comment.
 
 ### Contract Helpers
 
@@ -232,14 +232,16 @@ from enum import Enum
 class VerificationLevel(Enum):
     STRUCTURAL = 1
     TYPES = 2
-    PROPERTIES = 3
-    SYMBOLIC = 4
-    COMPOSITIONAL = 5
+    COVERAGE = 3
+    PROPERTIES = 4
+    SYMBOLIC = 5
+    COMPOSITIONAL = 6
 
 class CheckStatus(Enum):
     PASSED = "passed"
     FAILED = "failed"
     SKIPPED = "skipped"
+    EXEMPT = "exempt"
 
 @dataclass(frozen=True)
 class Detail:
@@ -312,9 +314,10 @@ Every meaningful code change in this project MUST come with verification. Writin
 **Pure core modules** (`core/`, `checker/`, `models.py`, `contracts/`, `config.py`, `reporter.py`, `source_discovery.py`) should remain friendly to Serenecode's full pipeline:
 1. Structural check — required contracts present on public functions and classes.
 2. `mypy --strict` — zero errors.
-3. Property-based verification through Serenecode's Hypothesis adapter, plus explicit property tests where they add signal.
-4. Symbolic verification through CrossHair for symbolic-friendly contracted top-level functions within analysis bounds.
-5. Example-based unit tests for edge cases, boundary conditions, regressions, and behavior that is important but awkward for automated strategy generation.
+3. Test coverage analysis through Serenecode's coverage adapter.
+4. Property-based verification through Serenecode's Hypothesis adapter, plus explicit property tests where they add signal.
+5. Symbolic verification through CrossHair for symbolic-friendly contracted top-level functions within analysis bounds.
+6. Example-based unit tests for edge cases, boundary conditions, regressions, and behavior that is important but awkward for automated strategy generation.
 
 **Adapter and composition-root modules** (`adapters/`, `cli.py`, `__init__.py`, `init.py`) must pass:
 1. `mypy --strict` — zero errors.
@@ -370,7 +373,7 @@ tests/
 - If a new domain type or function signature is hard for the adapter to generate, extend the strategy derivation in the adapter or add a focused explicit Hypothesis test.
 - Use explicit Hypothesis tests for reusable predicates, strategy builders, and bug-prone helpers where they give clearer regression coverage than only relying on the pipeline.
 - When Hypothesis finds a failing example, preserve it as a regression test or a dedicated strategy/example in the relevant test suite.
-- Do not claim Level 3 was achieved for a run that produced no property-testing findings at all.
+- Do not claim Level 4 was achieved for a run that produced no property-testing findings at all.
 
 ```python
 from hypothesis import example, given, settings
@@ -397,7 +400,7 @@ def test_compute_mean_contract(items: list[float]) -> None:
 - Standalone files and non-package modules must remain verifiable. If a backend needs file-and-line targeting instead of a dotted import path, use it.
 - Keep the default CrossHair budgets in mind: 30 seconds per condition, 10 seconds per path, 300 seconds per module.
 - The module timeout is a true whole-module budget, including the CLI fallback path.
-- Do not claim Level 4 was achieved for a scoped run that produced no symbolic findings at all.
+- Do not claim Level 5 was achieved for a scoped run that produced no symbolic findings at all.
 - When CrossHair finds a counterexample, the fix loop is:
   1. Examine the counterexample.
   2. Determine if the contract is wrong (fix the contract) or the implementation is wrong (fix the code).
@@ -461,7 +464,7 @@ Steps 1-3 may be done together, but steps 4-8 MUST NOT be skipped or deferred.
 - Commit messages follow conventional commits format: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`.
 - All code must pass `uv run serenecode check src --structural` before committing.
 - All code must pass `uv run mypy src` before committing.
-- Changes that affect the verification engine, source discovery, configuration, docs claims, or shipped examples should keep `uv run serenecode check src --level 5 --allow-code-execution` green and preserve the shipped example's strict Level 5 check.
+- Changes that affect the verification engine, source discovery, configuration, docs claims, or shipped examples should keep `uv run serenecode check src --level 6 --allow-code-execution` green and preserve the shipped example's strict Level 6 check.
 
 ---
 

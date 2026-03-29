@@ -24,10 +24,10 @@ _UPPER_SNAKE_CASE_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$")
 
 # Valid verification levels
 _MIN_VERIFICATION_LEVEL = 1
-_MAX_VERIFICATION_LEVEL = 5
+_MAX_VERIFICATION_LEVEL = 6
 
 # Valid exit codes per spec
-_VALID_EXIT_CODES = frozenset({0, 1, 2, 3, 4, 5, 10})
+_VALID_EXIT_CODES = frozenset({0, 1, 2, 3, 4, 5, 6, 10})
 
 
 @icontract.require(lambda value: isinstance(value, str), "value must be a string")
@@ -47,13 +47,13 @@ def is_non_empty_string(value: str) -> bool:
 @icontract.require(lambda level: isinstance(level, int), "level must be an integer")
 @icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
 def is_valid_verification_level(level: int) -> bool:
-    """Check that an integer is a valid verification level (1-5).
+    """Check that an integer is a valid verification level (1-6).
 
     Args:
         level: The level to validate.
 
     Returns:
-        True if level is between 1 and 5 inclusive.
+        True if level is between 1 and 6 inclusive.
     """
     return _MIN_VERIFICATION_LEVEL <= level <= _MAX_VERIFICATION_LEVEL
 
@@ -72,7 +72,7 @@ def is_valid_exit_code(code: int) -> bool:
         True if the code is a valid Serenecode exit code.
     """
     # Keep this predicate solver-friendly for symbolic tools.
-    return 0 <= code <= 5 or code == 10
+    return 0 <= code <= 6 or code == 10
 
 
 @icontract.require(lambda value: isinstance(value, int), "value must be an integer")
