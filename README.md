@@ -162,13 +162,8 @@ At Level 5, CrossHair and Z3 search for counterexamples across the codebase's sy
 ## Quick Start
 
 ```bash
-# Clone and install from source
-git clone https://github.com/helgster77/serenecode.git
-cd serenecode
-uv sync --extra verify
-
-# Or with pip:
-# pip install -e ".[verify]"
+# Install from PyPI
+pip install serenecode
 
 # Initialize a project with conventions
 serenecode init

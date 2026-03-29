@@ -200,7 +200,7 @@ class CheckResult:
     level_achieved: int
     results: tuple[FunctionResult, ...]
     summary: CheckSummary
-    version: str = "0.1.0"
+    version: str = "0.1.1"
 
     @property
     def failures(self) -> list[FunctionResult]:

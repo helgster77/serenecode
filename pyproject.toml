@@ -1,6 +1,6 @@
 [project]
 name = "serenecode"
-version = "0.1.0"
+version = "0.1.1"
 description = "Verification framework for AI-generated Python — test coverage, property testing, and symbolic execution"
 requires-python = ">=3.10"
 license = "MIT"
@@ -24,6 +24,10 @@ classifiers = [
 dependencies = [
     "icontract>=2.7.0",
     "click>=8.0",
+    "coverage>=7.0",
+    "mypy>=1.0",
+    "hypothesis>=6.0",
+    "crosshair-tool>=0.0.60",
 ]
 
 [project.urls]
@@ -89,4 +93,10 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "pass",
     "\\.\\.\\.",
+]
+
+[dependency-groups]
+dev = [
+    "build>=1.4.2",
+    "twine>=6.2.0",
 ]
