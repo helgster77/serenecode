@@ -10,21 +10,29 @@ import pytest
 from hypothesis import HealthCheck, settings
 
 
+_ICONTRACT_ENABLED: bool | None = None
+
+
 def icontract_enabled() -> bool:
     """Check if icontract invariant checking is still active.
 
     CrossHair monkey-patches icontract internals when imported,
     which can disable invariant checking in the same process.
+    The result is cached because the state never reverts.
     """
+    global _ICONTRACT_ENABLED
+    if _ICONTRACT_ENABLED is not None:
+        return _ICONTRACT_ENABLED
     try:
         @icontract.invariant(lambda self: self.x > 0, "x must be positive")
         class _Probe:
             def __init__(self, x: int) -> None:
                 self.x = x
         _Probe(-1)
-        return False  # invariant was not enforced
+        _ICONTRACT_ENABLED = False  # invariant was not enforced
     except icontract.ViolationError:
-        return True  # invariant is working
+        _ICONTRACT_ENABLED = True  # invariant is working
+    return _ICONTRACT_ENABLED
 
 
 def assert_violation_or_skip(fn: object) -> None:

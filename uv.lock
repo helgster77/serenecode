@@ -1016,7 +1016,7 @@ wheels = [
 
 [[package]]
 name = "serenecode"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1029,17 +1029,8 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "crosshair-tool" },
-    { name = "hypothesis" },
-    { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
-]
-verify = [
-    { name = "coverage" },
-    { name = "crosshair-tool" },
-    { name = "hypothesis" },
-    { name = "mypy" },
 ]
 
 [package.dev-dependencies]
@@ -1052,21 +1043,14 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
     { name = "coverage", specifier = ">=7.0" },
-    { name = "coverage", marker = "extra == 'verify'", specifier = ">=7.0" },
     { name = "crosshair-tool", specifier = ">=0.0.60" },
-    { name = "crosshair-tool", marker = "extra == 'dev'", specifier = ">=0.0.60" },
-    { name = "crosshair-tool", marker = "extra == 'verify'", specifier = ">=0.0.60" },
     { name = "hypothesis", specifier = ">=6.0" },
-    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "hypothesis", marker = "extra == 'verify'", specifier = ">=6.0" },
     { name = "icontract", specifier = ">=2.7.0" },
     { name = "mypy", specifier = ">=1.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "mypy", marker = "extra == 'verify'", specifier = ">=1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0" },
 ]
-provides-extras = ["verify", "dev"]
+provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [

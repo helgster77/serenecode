@@ -40,7 +40,7 @@ class MockDependency:
     "test suggestion description must be non-empty",
 )
 @dataclass(frozen=True)
-class TestSuggestion:
+class CoverageSuggestion:
     """A suggested test to cover an uncovered code path.
 
     Includes the mock setup code needed and whether each mock
@@ -83,7 +83,7 @@ class CoverageFinding:
     branch_coverage_percent: float
     uncovered_lines: tuple[int, ...]
     uncovered_branches: tuple[tuple[int, int], ...]
-    suggestions: tuple[TestSuggestion, ...]
+    suggestions: tuple[CoverageSuggestion, ...]
     meets_threshold: bool
     message: str
 

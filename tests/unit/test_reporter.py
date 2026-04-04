@@ -103,7 +103,7 @@ class TestFormatJson:
         output = format_json(result)
         parsed = json.loads(output)
         assert "version" in parsed
-        assert parsed["version"] == "0.1.0"
+        assert parsed["version"] == "0.2.0"
 
     def test_has_timestamp(self) -> None:
         result = _make_sample_result()
@@ -153,6 +153,12 @@ class TestFormatHtml:
         output = format_html(result)
         assert output.startswith("<!DOCTYPE html>")
         assert "</html>" in output
+        assert "<head>" in output
+        assert "</head>" in output
+        assert "<body>" in output
+        assert "</body>" in output
+        assert "<table" in output
+        assert "results-table" in output
 
     def test_contains_title(self) -> None:
         result = _make_sample_result()
@@ -199,7 +205,7 @@ class TestFormatHtml:
     def test_contains_version(self) -> None:
         result = _make_sample_result()
         output = format_html(result)
-        assert "0.1.0" in output
+        assert "0.2.0" in output
 
     def test_escapes_html_special_chars(self) -> None:
         detail = Detail(

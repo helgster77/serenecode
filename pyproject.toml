@@ -1,6 +1,6 @@
 [project]
 name = "serenecode"
-version = "0.1.1"
+version = "0.2.0"
 description = "Verification framework for AI-generated Python — test coverage, property testing, and symbolic execution"
 requires-python = ">=3.10"
 license = "MIT"
@@ -36,18 +36,9 @@ Repository = "https://github.com/helgster77/serenecode"
 Issues = "https://github.com/helgster77/serenecode/issues"
 
 [project.optional-dependencies]
-verify = [
-    "coverage>=7.0",
-    "mypy>=1.0",
-    "hypothesis>=6.0",
-    "crosshair-tool>=0.0.60",
-]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "mypy>=1.0",
-    "hypothesis>=6.0",
-    "crosshair-tool>=0.0.60",
 ]
 
 [project.scripts]

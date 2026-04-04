@@ -17,6 +17,14 @@ from serenecode.core.exceptions import ConfigurationError
 from serenecode.core.pipeline import SourceFile
 from serenecode.ports.file_system import FileReader
 
+__all__ = [
+    "build_source_files",
+    "discover_test_file_stems",
+    "find_serenecode_md",
+    "normalize_search_root",
+    "determine_context_root",
+]
+
 _ARCHITECTURE_DIR_NAMES = frozenset({
     "adapters",
     "checker",
@@ -67,7 +75,7 @@ def build_source_files(
         ConfigurationError: If any discovered file cannot be read.
     """
     source_files: list[SourceFile] = []
-    normalized_root = _determine_context_root(search_root)
+    normalized_root = determine_context_root(search_root)
 
     # Loop invariant: source_files contains SourceFile objects for file_paths[0..i]
     for file_path in file_paths:
@@ -90,6 +98,55 @@ def build_source_files(
 
 
 @icontract.require(
+    lambda search_root: is_non_empty_string(search_root),
+    "search_root must be a non-empty string",
+)
+@icontract.require(
+    lambda reader: reader is not None,
+    "reader must be provided",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, frozenset),
+    "result must be a frozenset",
+)
+def discover_test_file_stems(
+    search_root: str,
+    reader: FileReader,
+) -> frozenset[str]:
+    """Discover test file stems from the project's tests/ directory.
+
+    Searches for a ``tests/`` directory at the project root and collects
+    the basenames (without ``.py``) of all files matching ``test_*.py``.
+
+    Args:
+        search_root: The user-supplied path (file or directory).
+        reader: File reader for listing files.
+
+    Returns:
+        Frozenset of test file stems, e.g. ``{"test_engine", "test_models"}``.
+    """
+    project_root = determine_context_root(search_root)
+    tests_dir = os.path.join(project_root, "tests")
+
+    if not os.path.isdir(tests_dir):
+        return frozenset()
+
+    try:
+        test_files = reader.list_python_files(tests_dir)
+    except Exception:
+        return frozenset()
+
+    stems: set[str] = set()
+    # Loop invariant: stems contains test stems from test_files[0..i]
+    for test_file in test_files:
+        basename = os.path.basename(test_file)
+        if basename.startswith("test_") and basename.endswith(".py"):
+            stems.add(basename.removesuffix(".py"))
+
+    return frozenset(stems)
+
+
+@icontract.require(
     lambda path: is_non_empty_string(path),
     "path must be a non-empty string",
 )
@@ -103,10 +160,13 @@ def build_source_files(
 )
 def find_serenecode_md(path: str, reader: FileReader) -> str | None:
     """Find SERENECODE.md by searching up from the given path."""
-    current = _normalize_search_root(path)
+    current = normalize_search_root(path)
 
+    max_depth = 50
+    remaining = max_depth
     # Loop invariant: no ancestor directory checked so far contains SERENECODE.md
-    while True:
+    # Variant: remaining decreases towards 0, guaranteeing termination
+    while remaining > 0:
         candidate = os.path.join(current, "SERENECODE.md")
         if reader.file_exists(candidate):
             return candidate
@@ -114,13 +174,14 @@ def find_serenecode_md(path: str, reader: FileReader) -> str | None:
         if parent == current:
             break
         current = parent
+        remaining -= 1
 
     return None
 
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.ensure(lambda result: is_non_empty_string(result), "result must be a non-empty string")
-def _normalize_search_root(path: str) -> str:
+def normalize_search_root(path: str) -> str:
     """Normalize a user-supplied search path to a directory path."""
     absolute = os.path.abspath(path)
     if os.path.isdir(absolute):
@@ -130,9 +191,17 @@ def _normalize_search_root(path: str) -> str:
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.ensure(lambda result: is_non_empty_string(result), "result must be a non-empty string")
-def _determine_context_root(path: str) -> str:
-    """Determine the stable root used for module-path derivation."""
-    search_root = _normalize_search_root(path)
+def determine_context_root(path: str) -> str:
+    """Determine the stable root used for module-path derivation.
+
+    Walks up from the search root looking for project markers
+    (SERENECODE.md, pyproject.toml, .git) or a ``src/`` directory.
+    If the user passes a deeply nested path like ``checker/`` without
+    any ancestor markers, the fallback returns the search root as-is,
+    which may produce incorrect relative module paths. Always run
+    from a project root or a path that has ancestor markers.
+    """
+    search_root = normalize_search_root(path)
 
     current = search_root
     # Loop invariant: current is an ancestor of search_root already checked for markers

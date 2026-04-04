@@ -70,8 +70,8 @@ class SourceFile:
     "max_workers must be at least 1",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, CheckResult),
-    "result must be a CheckResult",
+    lambda level, result: result.level_requested == level,
+    "result must report the correct requested level",
 )
 def run_pipeline(
     source_files: tuple[SourceFile, ...],
@@ -86,6 +86,9 @@ def run_pipeline(
     early_termination: bool = True,
     progress: Callable[[str], None] | None = None,
     max_workers: int = 4,
+    known_test_stems: frozenset[str] = frozenset(),
+    spec_content: str | None = None,
+    test_sources: tuple[tuple[str, str], ...] = (),
 ) -> CheckResult:
     """Run the verification pipeline up to the specified level.
 
@@ -105,6 +108,15 @@ def run_pipeline(
         early_termination: Stop at first failing level if True.
         progress: Optional callback for progress messages.
         max_workers: Max concurrent modules for Level 5 symbolic verification.
+        known_test_stems: Frozenset of test file stems (e.g. {"test_engine",
+            "test_models"}) discovered from the tests/ directory. When
+            non-empty, Level 1 checks that each source module has a
+            corresponding test file.
+        spec_content: Content of SPEC.md for traceability checking. When
+            provided, Level 1 verifies that every REQ-xxx in the spec
+            has implementation and test references.
+        test_sources: Tuple of (file_path, source_content) for test files,
+            used by spec traceability checking to find Verifies: tags.
 
     Returns:
         An aggregated CheckResult across all executed levels.
@@ -128,6 +140,25 @@ def run_pipeline(
     if start_level <= 1 <= level:
         _emit(f"Level 1: Structural check ({len(source_files)} files)...")
         level_1_results = _run_level_1(source_files, config, structural_checker)
+        if known_test_stems:
+            level_1_results.extend(
+                _check_test_existence(source_files, known_test_stems, config)
+            )
+        if spec_content is not None:
+            from serenecode.checker.spec_traceability import (
+                check_spec_traceability,
+                validate_spec,
+            )
+
+            _emit("  Spec validation...")
+            validation_result = validate_spec(spec_content)
+            level_1_results.extend(validation_result.results)
+
+            _emit("  Spec traceability check...")
+            spec_result = check_spec_traceability(
+                spec_content, source_files, test_sources,
+            )
+            level_1_results.extend(spec_result.results)
         all_results.extend(level_1_results)
 
         if early_termination and _has_failures(level_1_results):
@@ -267,8 +298,8 @@ def run_pipeline(
 
 
 @icontract.require(
-    lambda results: isinstance(results, list),
-    "results must be a list",
+    lambda results: results is not None,
+    "results must not be None",
 )
 @icontract.ensure(
     lambda result: isinstance(result, bool),
@@ -291,8 +322,8 @@ def _has_failures(results: list[FunctionResult]) -> bool:
 
 
 @icontract.require(
-    lambda results: isinstance(results, list),
-    "results must be a list",
+    lambda results: results is not None,
+    "results must not be None",
 )
 @icontract.ensure(
     lambda result: isinstance(result, bool),
@@ -308,8 +339,8 @@ def _has_skips(results: list[FunctionResult]) -> bool:
 
 
 @icontract.require(
-    lambda results: isinstance(results, list),
-    "results must be a list",
+    lambda results: results is not None,
+    "results must not be None",
 )
 @icontract.ensure(
     lambda result: isinstance(result, bool),
@@ -344,10 +375,6 @@ def _level_achieved(
 
 
 @icontract.require(
-    lambda source_files: isinstance(source_files, tuple),
-    "source_files must be a tuple",
-)
-@icontract.require(
     lambda requested_level: requested_level in (2, 3, 4, 5),
     "requested_level must be a backend verification level",
 )
@@ -364,8 +391,8 @@ def _level_achieved(
     "message must be a non-empty string",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
+    lambda source_files, result: len(result) == len(source_files),
+    "must produce one result per source file",
 )
 def _make_unavailable_results(
     source_files: tuple[SourceFile, ...],
@@ -405,16 +432,16 @@ def _make_unavailable_results(
 
 
 @icontract.require(
-    lambda source_files: isinstance(source_files, tuple),
-    "source_files must be a tuple",
+    lambda source_files: source_files is not None,
+    "source_files must be provided",
 )
 @icontract.require(
-    lambda config: isinstance(config, SerenecodeConfig),
-    "config must be a SerenecodeConfig",
+    lambda config: config.template_name in ("default", "strict", "minimal"),
+    "config must have a valid template",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
+    lambda result: result is not None,
+    "result must not be None",
 )
 def _run_level_1(
     source_files: tuple[SourceFile, ...],
@@ -446,17 +473,140 @@ def _run_level_1(
     return results
 
 
-@icontract.require(
-    lambda source_files: isinstance(source_files, tuple),
-    "source_files must be a tuple",
+# Modules with no testable logic are exempt from test-file requirements.
+# This is narrower than the contract-exemption list: adapters, CLI, and
+# init modules contain real logic that must be tested, even though they
+# are exempt from full contract requirements.
+_TEST_FILE_EXEMPT_PATTERNS = (
+    "ports/",
+    "templates/",
+    "tests/fixtures/",
+    "exceptions.py",
 )
+
+
+@icontract.require(
+    lambda module_path: isinstance(module_path, str),
+    "module_path must be a string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_test_file_exempt(module_path: str) -> bool:
+    """Check whether a module has no testable logic and needs no test file.
+
+    Exempts only protocol definitions, static templates, exception
+    hierarchies, and test fixtures. Adapter modules, CLI code, and
+    other modules with real logic are NOT exempt.
+
+    Args:
+        module_path: The module's path (e.g. 'serenecode/ports/file_system.py').
+
+    Returns:
+        True if the module needs no dedicated test file.
+    """
+    from serenecode.config import _path_pattern_matches
+
+    # Loop invariant: no pattern in _TEST_FILE_EXEMPT_PATTERNS[0..i] matched
+    for pattern in _TEST_FILE_EXEMPT_PATTERNS:
+        if _path_pattern_matches(module_path, pattern):
+            return True
+    return False
+
+
+@icontract.require(
+    lambda known_test_stems: known_test_stems is not None,
+    "test stems must be provided",
+)
+@icontract.ensure(
+    lambda result: result is not None,
+    "result must not be None",
+)
+def _check_test_existence(
+    source_files: tuple[SourceFile, ...],
+    known_test_stems: frozenset[str],
+    config: SerenecodeConfig,
+) -> list[FunctionResult]:
+    """Check that each source module has a corresponding test file.
+
+    For a source file named ``foo.py``, this looks for ``test_foo`` in the
+    known test stems. ``__init__.py`` files are skipped since they rarely
+    need dedicated test files. Modules with no testable logic (protocol
+    definitions, static templates, exception hierarchies, test fixtures)
+    are also skipped.
+
+    Args:
+        source_files: Source files to check.
+        known_test_stems: Set of test file stems (e.g. ``test_engine``).
+        config: Active configuration (used for exemption checks).
+
+    Returns:
+        List of FAILED results for source modules missing test files,
+        and PASSED results for those that have them.
+    """
+    results: list[FunctionResult] = []
+
+    # Loop invariant: results contains test-existence findings for source_files[0..i]
+    for sf in source_files:
+        basename = sf.file_path.rsplit("/", 1)[-1] if "/" in sf.file_path else sf.file_path
+        if basename == "__init__.py":
+            continue
+
+        # Skip modules with no testable logic: protocol definitions,
+        # static templates, exception hierarchies, and test fixtures.
+        if _is_test_file_exempt(sf.module_path):
+            continue
+
+        module_stem = basename.removesuffix(".py")
+        expected_test_stem = f"test_{module_stem}"
+        has_test = expected_test_stem in known_test_stems
+
+        if has_test:
+            results.append(FunctionResult(
+                function="<module>",
+                file=sf.file_path,
+                line=1,
+                level_requested=1,
+                level_achieved=1,
+                status=CheckStatus.PASSED,
+                details=(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="test_exists",
+                    message=f"Test file found for '{module_stem}'",
+                ),),
+            ))
+        else:
+            results.append(FunctionResult(
+                function="<module>",
+                file=sf.file_path,
+                line=1,
+                level_requested=1,
+                level_achieved=0,
+                status=CheckStatus.FAILED,
+                details=(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="missing_tests",
+                    message=f"No test file found for '{module_stem}'",
+                    suggestion=(
+                        f"Create a test file named '{expected_test_stem}.py' "
+                        f"in your tests/ directory."
+                    ),
+                ),),
+            ))
+
+    return results
+
+
 @icontract.require(
     lambda type_checker: type_checker is not None,
     "type_checker must be provided",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
+    lambda result: result is not None,
+    "result must not be None",
 )
 def _run_level_2(
     source_files: tuple[SourceFile, ...],
@@ -484,40 +634,38 @@ def _run_level_2(
 
 
 @icontract.require(
-    lambda source_files: isinstance(source_files, tuple),
-    "source_files must be a tuple",
+    lambda source_files: source_files is not None,
+    "source_files must be provided",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, tuple),
-    "result must be a tuple",
+    lambda result: result is not None,
+    "result must not be None",
 )
 def _collect_type_check_search_paths(
     source_files: tuple[SourceFile, ...],
 ) -> tuple[str, ...]:
     """Collect unique import roots needed for static type checking."""
+    seen: set[str] = set()
     search_paths: list[str] = []
 
     # Loop invariant: search_paths contains unique import roots from source_files[0..i]
     for sf in source_files:
         # Loop invariant: search_paths contains unique roots from sf.import_search_paths[0..j]
         for path in sf.import_search_paths:
-            if path not in search_paths:
+            if path not in seen:
+                seen.add(path)
                 search_paths.append(path)
 
     return tuple(search_paths)
 
 
 @icontract.require(
-    lambda source_files: isinstance(source_files, tuple),
-    "source_files must be a tuple",
-)
-@icontract.require(
     lambda coverage_analyzer: coverage_analyzer is not None,
     "coverage_analyzer must be provided",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
+    lambda result: result is not None,
+    "result must not be None",
 )
 def _run_level_3_coverage(
     source_files: tuple[SourceFile, ...],
@@ -579,16 +727,12 @@ def _run_level_3_coverage(
 
 
 @icontract.require(
-    lambda source_files: isinstance(source_files, tuple),
-    "source_files must be a tuple",
-)
-@icontract.require(
     lambda property_tester: property_tester is not None,
     "property_tester must be provided",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
+    lambda result: result is not None,
+    "result must not be None",
 )
 def _run_level_4(
     source_files: tuple[SourceFile, ...],
@@ -651,10 +795,6 @@ def _run_level_4(
 
 
 @icontract.require(
-    lambda source_files: isinstance(source_files, tuple),
-    "source_files must be a tuple",
-)
-@icontract.require(
     lambda symbolic_checker: symbolic_checker is not None,
     "symbolic_checker must be provided",
 )
@@ -667,8 +807,8 @@ def _run_level_4(
     "max_workers must be at least 1",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
+    lambda result: result is not None,
+    "result must not be None",
 )
 def _run_level_5(
     source_files: tuple[SourceFile, ...],
@@ -692,9 +832,11 @@ def _run_level_5(
         List of function results from symbolic verification.
     """
     import concurrent.futures
+    import threading
 
     from serenecode.checker.symbolic import transform_symbolic_results
 
+    emit_lock = threading.Lock()
     verifiable: list[SourceFile] = []
     results: list[FunctionResult] = []
 
@@ -736,7 +878,11 @@ def _run_level_5(
         except Exception as exc:
             return (sf, None, exc)
 
-    emit(f"  Verifying {total} modules ({max_workers} workers)...")
+    def _safe_emit(msg: str) -> None:
+        with emit_lock:
+            emit(msg)
+
+    _safe_emit(f"  Verifying {total} modules ({max_workers} workers)...")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_verify_one, sf): sf for sf in verifiable}
@@ -746,7 +892,7 @@ def _run_level_5(
             sf, findings, error = future.result()
             module_name = sf.importable_module
             if error is not None:
-                emit(f"  [{completed}/{total}] Skipped {module_name}: {error}")
+                _safe_emit(f"  [{completed}/{total}] Skipped {module_name}: {error}")
                 results.append(FunctionResult(
                     function="<module>",
                     file=sf.file_path,
@@ -764,7 +910,7 @@ def _run_level_5(
                     ),),
                 ))
             elif findings is not None:
-                emit(f"  [{completed}/{total}] Done {module_name}")
+                _safe_emit(f"  [{completed}/{total}] Done {module_name}")
                 check_result = transform_symbolic_results(findings, sf.file_path, 0.0)
                 results.extend(check_result.results)
 
@@ -772,16 +918,12 @@ def _run_level_5(
 
 
 @icontract.require(
-    lambda source_files: isinstance(source_files, tuple),
-    "source_files must be a tuple",
-)
-@icontract.require(
-    lambda config: isinstance(config, SerenecodeConfig),
-    "config must be a SerenecodeConfig",
+    lambda config: config.template_name in ("default", "strict", "minimal"),
+    "config must have a valid template",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
+    lambda result: result is not None,
+    "result must not be None",
 )
 def _run_level_6(
     source_files: tuple[SourceFile, ...],

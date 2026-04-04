@@ -636,3 +636,116 @@ class TestPipelineLevel3Coverage:
         assert result.passed is False
         # Property tester should not have been called due to early termination
         assert property_tester.captured_search_paths == []
+
+
+class TestPipelineTestExistence:
+    """Tests for L1 test-existence checking."""
+
+    def test_missing_test_file_fails(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/engine.py",
+            module_path="pkg/engine.py",
+            source=_make_valid_source(),
+        )
+        result = run_pipeline(
+            (sf,),
+            level=1,
+            start_level=1,
+            config=default_config(),
+            known_test_stems=frozenset({"test_models"}),
+        )
+        assert result.passed is False
+        failed = [r for r in result.results if r.status == CheckStatus.FAILED]
+        assert any("missing_tests" in d.finding_type for r in failed for d in r.details)
+
+    def test_present_test_file_passes(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/engine.py",
+            module_path="pkg/engine.py",
+            source=_make_valid_source(),
+        )
+        result = run_pipeline(
+            (sf,),
+            level=1,
+            start_level=1,
+            config=default_config(),
+            known_test_stems=frozenset({"test_engine"}),
+        )
+        assert result.passed is True
+
+    def test_init_files_are_skipped(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/__init__.py",
+            module_path="pkg/__init__.py",
+            source='"""Package init."""\n',
+        )
+        result = run_pipeline(
+            (sf,),
+            level=1,
+            start_level=1,
+            config=default_config(),
+            known_test_stems=frozenset(),
+        )
+        # __init__.py is exempt from structural checks AND skipped by test-existence
+        assert result.passed is True
+
+    def test_empty_test_stems_skips_check(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/engine.py",
+            module_path="pkg/engine.py",
+            source=_make_valid_source(),
+        )
+        # When known_test_stems is empty (default), no test-existence check runs
+        result = run_pipeline(
+            (sf,),
+            level=1,
+            start_level=1,
+            config=default_config(),
+            known_test_stems=frozenset(),
+        )
+        assert result.passed is True
+
+    def test_suggestion_includes_expected_filename(self) -> None:
+        sf = SourceFile(
+            file_path="src/pkg/engine.py",
+            module_path="pkg/engine.py",
+            source=_make_valid_source(),
+        )
+        result = run_pipeline(
+            (sf,),
+            level=1,
+            start_level=1,
+            config=default_config(),
+            known_test_stems=frozenset({"test_other"}),
+        )
+        failed = [r for r in result.results if r.status == CheckStatus.FAILED]
+        suggestions = [d.suggestion for r in failed for d in r.details if d.suggestion]
+        assert any("test_engine.py" in s for s in suggestions)
+
+
+class TestLevelAchievedEvidenceRequirement:
+    """Tests for the pipeline's require_evidence guard on L3-L5.
+
+    make_check_result intentionally claims the requested level for empty
+    results (correct for L1/L2/L6). The pipeline layer uses
+    _level_achieved(require_evidence=True) to prevent L3-L5 from
+    advancing when no functions were actually exercised.
+    """
+
+    def test_level_achieved_requires_evidence_for_empty_results(self) -> None:
+        """Empty results with require_evidence=True must not claim achievement."""
+        from serenecode.core.pipeline import _level_achieved
+
+        assert _level_achieved([], has_source_files=True, require_evidence=True) is False
+
+    def test_level_achieved_allows_empty_without_evidence_flag(self) -> None:
+        """Empty results without require_evidence still count as achieved (L1/L2/L6)."""
+        from serenecode.core.pipeline import _level_achieved
+
+        assert _level_achieved([], has_source_files=True, require_evidence=False) is True
+
+    def test_level_achieved_empty_results_no_source_files(self) -> None:
+        """No source files at all — always achieved regardless of evidence flag."""
+        from serenecode.core.pipeline import _level_achieved
+
+        assert _level_achieved([], has_source_files=False, require_evidence=True) is True

@@ -4,9 +4,9 @@
 
 <h3 align="center">A Framework for AI-Driven Development of Verifiable Systems</h3>
 
-SereneCode is a verification framework for AI-generated Python. It tells the AI *how* to write verifiable code, checks that the AI followed instructions, and then verifies the code at multiple levels — from test coverage analysis that catches gaps in AI-written tests, through property-based testing that checks contracts against hundreds of random inputs, to symbolic execution that uses an SMT solver to search for *any* input that breaks a contract. You choose the verification depth that matches your project: lightweight for internal tools, balanced for production systems, strict for safety-critical code. AI agents write code fast but can be suboptimal at testing their own work; SereneCode closes that gap by surfacing untested paths, generating test suggestions, and verifying behavior beyond what hand-written tests cover.
+SereneCode is a spec-to-verified-implementation framework for AI-generated Python. It ensures that every requirement in your spec is implemented, tested, and formally verified — closing the gap between what you asked for and what the AI built. The workflow starts from a spec with traceable requirements (REQ-xxx), enforces that the AI writes verifiable code with contracts and tests, then verifies at multiple levels — from structural checks and test coverage through property-based testing to symbolic execution with an SMT solver. You choose the verification depth during interactive setup: lightweight for internal tools, balanced for production systems, strict for safety-critical code. AI agents write code fast but can miss requirements and skip edge cases; SereneCode closes that gap with spec traceability, test-existence enforcement, and formal verification.
 
-> **This framework was bootstrapped with AI under its own rules.** SereneCode's SERENECODE.md was written before the first line of code, and the codebase has been developed under those conventions from the start. The current tree passes its own `serenecode check src --level 6 --allow-code-execution`, an internal strict-config Level 6 self-check in the test suite, `mypy src examples/dosage-serenecode/src`, the shipped example's strict Level 6 check, and the full `pytest` suite. The verification output is transparent about scope: exempt modules (adapters, CLI, ports) and functions excluded from deep verification (non-primitive parameter types) are reported as "exempt" rather than silently omitted.
+> **This framework was bootstrapped with AI under its own rules.** SereneCode's SERENECODE.md was written before the first line of code, and the codebase has been developed under those conventions from the start. The current tree passes its own `serenecode check src --level 6 --allow-code-execution`, an internal strict-config Level 6 self-check in the test suite, `mypy src examples/dosage-serenecode/src`, the shipped example's check, and the full `pytest` suite (769 passing tests, 16 skipped). The verification output is transparent about scope: exempt modules (adapters, CLI, ports) and functions excluded from deep verification (non-primitive parameter types) are reported as "exempt" rather than silently omitted.
 
 ---
 
@@ -20,17 +20,17 @@ SereneCode is designed for **building new verifiable systems from scratch with A
 
 ### Choosing the Right Level
 
-The cost of verification should be proportional to the cost of a bug. Each level generates a different SERENECODE.md with different requirements for the AI, so the choice shapes how code is *written*, not just how it's checked.
+The cost of verification should be proportional to the cost of a bug. Each level generates a different SERENECODE.md with different requirements for the AI, so the choice shapes how code is *written*, not just how it's checked. You make this choice during `serenecode init` — it cannot be changed after implementation starts.
 
-| | `--minimal` | **Default** | `--strict` |
+| | **Minimal** (Level 2) | **Default** (Level 4) | **Strict** (Level 6) |
 |---|---|---|---|
 | **Verifies through** | L2 (structure + types) | L4 (+ test coverage + properties) | L6 (+ symbolic + compositional) |
 | **What the AI must write** | Contracts on public functions, type annotations | + description strings, class invariants, hexagonal architecture | + contracts on *all* functions, loop invariants, domain exceptions, no exemptions |
 | **What catches bugs** | Runtime contract checks, mypy | + L3 surfaces untested code paths and generates test suggestions; L4 tests contracts against hundreds of random inputs | + SMT solver searches for *any* counterexample within analysis bounds |
-| **Good for** | Internal tools, scripts, prototypes, incremental adoption | Production APIs, business logic, data pipelines | Medical, financial, infrastructure, regulated systems |
+| **Good for** | Internal tools, scripts, prototypes | Production APIs, business logic, data pipelines | Medical, financial, infrastructure, regulated systems |
 | **The tradeoff** | Low ceremony, but contracts are only checked at the boundaries you wrote them | Moderate overhead; architecture rules keep core logic pure and testable | Significant overhead — every loop gets an invariant comment, every helper gets a contract. Justified when the cost of an undiscovered bug is measured in patient harm, financial loss, or regulatory failure |
 
-Pick the level that matches the stakes, and pick it early. Moving up later means retrofitting contracts, invariants, and architecture onto existing code — it's not just flipping a flag. Safety-critical code should be written for `--strict` from the first line.
+Pick the level that matches the stakes. Safety-critical code should start at Strict.
 
 ---
 
@@ -46,44 +46,49 @@ Both versions implement the same requirements, and the plain version passes its 
 |---|---|---|
 | **Dose never exceeds maximum** | Covered by unit tests | Encoded as a postcondition; bounded symbolic search found no counterexample within analysis bounds |
 | **Renal adjustment never increases a dose** | Covered by unit tests | `result <= dose_mg` is an executable contract, not just a test expectation |
-| **Safety result is internally consistent** | No validation — you can construct `SafetyResult(total=9999, max=100, is_safe=True)` | Representation invariants make inconsistent `SafetyResult` states unconstructable |
-| **Objects are truly immutable** | `frozen=True` with mutable `set` on Drug | `_Frozen` mixin + immutable `tuple`/`frozenset` fields — fully locked down |
+| **Safety result is internally consistent** | No validation — you can construct `SafetyResult(total=9999, max=100, is_safe=True)` | Postcondition on `check_daily_safety` enforces `is_safe == (total <= max)` — inconsistent results cannot be produced through the contracted API |
+| **Objects are truly immutable** | `frozen=True` with mutable `set` on Drug | `frozen=True` with class invariants enforcing valid state — mutations raise `FrozenInstanceError` and invariants guarantee internal consistency |
 | **Boundary behavior (CrCl exactly 30.0)** | Covered by explicit tests | Boundary behavior is specified in contracts; bounded symbolic search found no counterexample |
 | **What if someone changes the code later?** | You rely on the tests you remembered to keep | Contracts stay attached to the code and keep checking every contracted call |
-| **Can a solver verify it?** | No executable specification for a solver to target | 120 executable contracts and a clean `serenecode check ... --level 6 --allow-code-execution` run |
+| **Can a solver verify it?** | No executable specification for a solver to target | 42 executable contracts and a clean `serenecode check ... --level 6 --allow-code-execution` run |
 | **Confidence in a safety-critical setting** | Better than ad hoc code, but still test-shaped confidence | Higher: behavior is formally specified, runtime-checked, and solver-checked within analysis bounds — but bounded search is not proof |
 
-The plain version relies on 59 tests that check specific scenarios. The SereneCode version adds 120 executable contracts across its domain models and core dosage logic. Those contracts define *what correct means* in code, get checked at runtime, and give CrossHair/Z3 something precise to search against when looking for counterexamples within analysis bounds.
+The plain version relies on 59 tests that check specific scenarios. The SereneCode version adds 42 executable contracts across its domain models and core dosage logic. Those contracts define *what correct means* in code, get checked at runtime, and give CrossHair/Z3 something precise to search against when looking for counterexamples within analysis bounds.
 
 > Both examples live in [`examples/dosage-regular/`](examples/dosage-regular/) and [`examples/dosage-serenecode/`](examples/dosage-serenecode/). Read them side by side.
 
-The Serenecode dosage example currently passes `serenecode check examples/dosage-serenecode/src --level 6 --allow-code-execution`. Its local `pytest` suite is also green with 74 passing tests.
+The Serenecode dosage example currently passes `serenecode check src/ --level 6 --allow-code-execution` from within the example directory. Its local `pytest` suite is also green with 67 passing tests.
 
 ---
 
 ## How It Works
 
-### 1. SERENECODE.md — Your AI Writes Code That's Built for Verification
+### 1. Interactive Setup — `serenecode init`
 
-A markdown file in your project root that tells AI coding agents exactly how to write code: what contracts to include, what architecture to follow, what patterns to use. When Claude Code (or another agent) reads this before generating code, it has a concrete target for producing verification-friendly output from the first keystroke.
+Run `serenecode init` and answer two questions:
 
-```bash
-serenecode init              # balanced defaults — contracts on public APIs, test coverage, hexagonal architecture
-serenecode init --strict     # maximum rigor — contracts on ALL functions (public and private), no exemptions
-serenecode init --minimal    # lightweight — public-function contracts only, relaxed architecture rules
-```
+**Spec question:** Do you already have a spec, or will you write one with your coding assistant? Both options set up spec traceability with REQ-xxx requirement identifiers — the difference is the workflow your assistant follows.
 
-This creates a SERENECODE.md tailored to your project and integrates with CLAUDE.md so Claude Code follows the conventions automatically. You write the rules once, and the agent has a stable spec to follow on every iteration.
-
-### 2. The Checker — Instant Feedback
-
-A lightweight AST-based linter that validates code follows SERENECODE.md conventions in seconds. Missing a postcondition? No class invariant? I/O imports in a core module? Caught before you waste time on heavy verification.
+**Verification level:** Minimal (L2), Default (L4), or Strict (L6). This determines what conventions your SERENECODE.md will require and cannot be changed after implementation starts.
 
 ```bash
-serenecode check src/ --structural    # seconds
+serenecode init
 ```
 
-### 3. The Verifier — Symbolic Verification
+This creates SERENECODE.md (project conventions including spec traceability) and CLAUDE.md (instructions for your AI coding assistant) tailored to your answers. The conventions become the contract between you, your coding assistant, and the verification tool. SERENECODE.md includes instructions for converting raw specs into SereneCode format (REQ-xxx identifiers), validating them with `serenecode spec SPEC.md`, creating an implementation plan, and building from it — the coding agent handles this workflow automatically.
+
+### 2. The Checker — Structural Enforcement
+
+A lightweight AST-based checker that validates code follows SERENECODE.md conventions in seconds. Missing a postcondition? No class invariant? No test file for a module? Caught before you waste time on heavy verification.
+
+```bash
+serenecode check src/ --structural          # structural conventions
+serenecode check src/ --spec SPEC.md        # + spec traceability
+```
+
+The `--spec` flag verifies that every REQ in the spec has an `Implements: REQ-xxx` tag in the code and a `Verifies: REQ-xxx` tag in the tests. No requirement goes unimplemented or untested.
+
+### 3. The Verifier — Deep Verification
 
 A six-level verification pipeline that escalates from fast checks to full symbolic verification:
 
@@ -100,7 +105,7 @@ A six-level verification pipeline that escalates from fast checks to full symbol
 serenecode check src/ --level 6 --allow-code-execution  # verify it
 ```
 
-**L3 Test Coverage** is where SereneCode checks that the AI's tests actually exercise the code it wrote. AI agents can be suboptimal at writing tests — they tend to cover the happy path, skip edge cases, and miss error branches. L3 runs your existing tests under coverage.py tracing, measures per-function line and branch coverage, and reports exactly which lines and branches are untested. For each coverage gap, it generates concrete test suggestions including mock necessity assessments: each dependency is classified as REQUIRED (external I/O — must mock) or OPTIONAL (internal code — consider using the real implementation). This gives the AI agent actionable feedback to improve its own tests rather than leaving coverage gaps undetected. When no tests exist for a module, L3 reports this as informational rather than failing, so the coverage level serves as a baseline measurement before L4 property testing generates new test inputs.
+**L3 Test Coverage** is where SereneCode checks that the AI's tests actually exercise the code it wrote. AI agents can be suboptimal at writing tests — they tend to cover the happy path, skip edge cases, and miss error branches. L3 runs your existing tests under coverage.py tracing, measures per-function line and branch coverage, and reports exactly which lines and branches are untested. For each coverage gap, it generates concrete test suggestions including mock necessity assessments: each dependency is classified as REQUIRED (external I/O — must mock) or OPTIONAL (internal code — consider using the real implementation). This gives the AI agent actionable feedback to improve its own tests rather than leaving coverage gaps undetected. When no tests exist for a module, L3 reports this as a failure — missing tests must be written. At L1, the structural checker also verifies that every non-exempt source module has a corresponding `test_<module>.py` file.
 
 The full pipeline is thorough but not instant. Larger systems will take longer, and the deepest runs may surface skipped items when Hypothesis cannot synthesize valid values for complex domain types or when CrossHair hits its time budget. By default, L5 focuses on contracted top-level functions defined in each module and skips modules or signatures that are currently poor fits for direct symbolic execution, such as adapter/composition-root code, helper predicate modules, and object-heavy APIs. Not everything needs L5/L6. Critical paths get full symbolic and compositional verification. Utility functions get property testing. A Level 4 run only counts as achieved when at least one contracted property target was actually exercised.
 
@@ -112,19 +117,21 @@ Scoped targets keep their package/import context across verification levels. In 
 
 ## The AI Agent Loop
 
-SereneCode is designed for AI agents that write code and fix their own mistakes:
+SereneCode is designed for spec-driven development with AI agents:
 
 ```
-AI reads SERENECODE.md           → knows how to write verification-ready code
-AI generates code with contracts → postconditions, input preconditions, invariants
-serenecode check --structural                        → instant: did the AI follow the rules?
-serenecode check --level 5 --allow-code-execution   → deep: can the solver find any counterexample?
-AI reads counterexamples         → "input x=[-1] violates postcondition"
-AI fixes the code                → adjusts implementation or contract
-Repeat until verified            → no counterexample found, not just tested
+serenecode init                  → interactive setup: spec mode + verification level
+serenecode spec SPEC.md          → validate spec is ready (REQ-xxx format, no gaps)
+AI reads SERENECODE.md + SPEC.md → knows the conventions and what to build
+AI implements from spec          → Implements: REQ-xxx in docstrings, contracts, tests
+serenecode check src/ --spec SPEC.md --structural   → did the AI follow rules? all REQs covered?
+serenecode check src/ --level 5 --allow-code-execution --spec SPEC.md   → deep verification
+AI reads findings                → missing REQs, counterexamples, untested paths
+AI fixes the code                → adjusts implementation, adds tests, closes gaps
+Repeat until verified            → all REQs implemented + tested + no counterexamples
 ```
 
-AI-generated code won't always pass verification on the first try — and that's the point. SereneCode gives the coding agent structured feedback on exactly what failed and why: counterexamples, violated contracts, and suggested fixes. The agent uses that feedback to iterate until the code passes. The value isn't in one-shotting perfection — it's in the loop that converges on verified correctness.
+AI-generated code won't always pass verification on the first try — and that's the point. SereneCode gives the coding agent structured feedback on exactly what failed and why: missing requirement implementations, counterexamples, violated contracts, untested modules, and suggested fixes. When there are many findings, SereneCode suggests the agent spawn subagents to address groups of related issues in parallel. **The value isn't in one-shotting perfection — it's in the loop that converges on verified completeness and correctness.**
 
 Works in Claude Code, works in the terminal, works in CI:
 
@@ -149,7 +156,7 @@ SereneCode isn't just a tool that *tells* you to write verified code. It *is* ve
 
 The SERENECODE.md convention file was the first artifact created — before any Python was written. The framework has been developed under those conventions with AI as a first-class contributor, and the repository continuously checks itself with:
 
-- `pytest` across the full suite (currently 651 passing tests, 16 skipped)
+- `pytest` across the full suite (currently 769 passing tests, 16 skipped)
 - `mypy --strict` across `src/` and `examples/dosage-serenecode/src/`
 - SereneCode's own structural, type, property, symbolic, and compositional passes
 
@@ -165,26 +172,32 @@ At Level 5, CrossHair and Z3 search for counterexamples across the codebase's sy
 # Install from PyPI
 pip install serenecode
 
-# Initialize a project with conventions
+# Initialize — interactive setup (spec mode + verification level)
 serenecode init
 
-# Let your AI agent write code following SERENECODE.md...
-# Then verify:
-serenecode check src/ --structural
+# Place your spec in the project directory, then start a coding session.
+# Your agent reads SERENECODE.md, converts the spec to REQ-xxx format,
+# validates it, creates an implementation plan, and builds from it.
 
-# Or go deep:
-serenecode check src/core/ --level 5 --allow-code-execution --format json
+# Verify structure + spec traceability:
+serenecode check src/ --spec SPEC.md --structural
+
+# Go deep — test coverage, property testing, symbolic verification:
+serenecode check src/ --level 5 --allow-code-execution --spec SPEC.md
 ```
 
-JSON output includes top-level `passed`, `level_requested`, and `level_achieved` fields alongside the summary and per-function results.
+JSON output (via `--format json`) includes top-level `passed`, `level_requested`, and `level_achieved` fields alongside the summary and per-function results.
 
-When you verify a nested package or a single module, Serenecode now preserves the package root and module-path context used by mypy, Hypothesis, CrossHair, and the architectural checks. That lets package-local absolute imports, relative imports, and scoped core-module rules behave the same way they do in project-wide runs.
+When you verify a nested package or a single module, Serenecode preserves the package root and module-path context used by mypy, Hypothesis, CrossHair, and the architectural checks. That lets package-local absolute imports, relative imports, and scoped core-module rules behave the same way they do in project-wide runs.
 
 ## CLI Reference
 
 ```bash
-serenecode init [<path>] [--strict | --minimal]                         # set up conventions
+serenecode init [<path>]                                                # interactive setup
+serenecode spec <SPEC.md>                                               # validate spec readiness
+                [--format human|json]
 serenecode check [<path>] [--level 1-6] [--allow-code-execution]        # run verification
+                          [--spec SPEC.md]                              #   spec traceability
                           [--format human|json]                         #   output format
                           [--structural] [--verify]                     #   L1 only / L3-6 only
                           [--per-condition-timeout N]                   #   L5 CrossHair budgets
@@ -228,10 +241,12 @@ SereneCode is honest about what it can and can't do:
 SereneCode follows hexagonal architecture — the same pattern it enforces on your code:
 
 ```
-CLI / Library API           ← composition roots
+CLI / Library API           ← composition roots (interactive init, spec validation)
     │
     ├──▸ Pipeline           ← orchestrates L1 → L2 → L3 → L4 → L5 → L6
     │       ├──▸ Structural Checker    (ast)
+    │       ├──▸ Spec Traceability     (REQ-xxx → Implements/Verifies)
+    │       ├──▸ Test Existence        (test_<module>.py discovery)
     │       ├──▸ Type Checker          (mypy)
     │       ├──▸ Coverage Analyzer     (coverage.py)
     │       ├──▸ Property Tester       (Hypothesis)

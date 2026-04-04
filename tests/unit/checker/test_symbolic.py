@@ -71,7 +71,9 @@ class TestTransformSymbolicResults:
         ]
         result = transform_symbolic_results(findings, "test.py", 0.1)
         # Unsupported functions are EXEMPT: visible but don't block passing.
-        assert result.passed is True
+        # All-EXEMPT results do not claim the level was achieved.
+        assert result.passed is False
+        assert result.level_achieved == 0
         assert result.summary.passed_count == 0
         assert result.summary.exempt_count == 1
         assert result.results[0].status == CheckStatus.EXEMPT

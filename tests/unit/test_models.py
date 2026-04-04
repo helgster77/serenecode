@@ -327,7 +327,7 @@ class TestCheckResult:
         )
         json_str = result.to_json()
         parsed = json.loads(json_str)
-        assert parsed["version"] == "0.1.0"
+        assert parsed["version"] == "0.2.0"
         assert parsed["summary"]["total_functions"] == 1
         assert len(parsed["results"]) == 1
 
@@ -384,6 +384,7 @@ class TestMakeCheckResult:
         assert check.level_achieved == 0
 
     def test_empty_results(self) -> None:
+        """Empty results (nothing to check) count as passed at L1/L2."""
         check = make_check_result((), level_requested=1, duration_seconds=0.0)
         assert check.passed is True
         assert check.summary.total_functions == 0
@@ -403,3 +404,71 @@ class TestMakeCheckResult:
         assert check.passed is False
         assert check.summary.skipped_count == 1
         assert check.level_achieved == 1
+
+    def test_all_exempt_does_not_inflate_level(self) -> None:
+        """All-EXEMPT results must not claim the requested level was achieved."""
+        results = (
+            FunctionResult(
+                function="<module>",
+                file="adapters/foo.py",
+                line=1,
+                level_requested=6,
+                level_achieved=0,
+                status=CheckStatus.EXEMPT,
+            ),
+            FunctionResult(
+                function="<module>",
+                file="adapters/bar.py",
+                line=1,
+                level_requested=6,
+                level_achieved=0,
+                status=CheckStatus.EXEMPT,
+            ),
+        )
+        check = make_check_result(results, level_requested=6, duration_seconds=0.1)
+        assert check.level_achieved == 0
+        assert check.passed is False
+        assert check.summary.exempt_count == 2
+
+    def test_mixed_exempt_and_passed(self) -> None:
+        """EXEMPT results should not affect level computed from non-exempt results."""
+        results = (
+            FunctionResult(
+                function="func_a",
+                file="core.py",
+                line=1,
+                level_requested=3,
+                level_achieved=3,
+                status=CheckStatus.PASSED,
+            ),
+            FunctionResult(
+                function="<module>",
+                file="adapters/foo.py",
+                line=1,
+                level_requested=3,
+                level_achieved=0,
+                status=CheckStatus.EXEMPT,
+            ),
+        )
+        check = make_check_result(results, level_requested=3, duration_seconds=0.1)
+        assert check.level_achieved == 3
+        assert check.passed is True
+        assert check.summary.passed_count == 1
+        assert check.summary.exempt_count == 1
+
+    def test_empty_results_pass_at_requested_level(self) -> None:
+        """Empty results claim the requested level in make_check_result.
+
+        This is intentional: make_check_result is a low-level builder that
+        treats empty results as "nothing to check, no issues found." For
+        L1/L2/L6 this is correct (the checker examined all files and found
+        nothing wrong). For L3-L5 the pipeline layer enforces the evidence
+        requirement via _level_achieved(require_evidence=True), which
+        refuses to advance the achieved level when results are empty.
+
+        See test_pipeline.py::test_level_achieved_requires_evidence for
+        the pipeline-level guard.
+        """
+        check = make_check_result((), level_requested=5, duration_seconds=0.0)
+        assert check.passed is True
+        assert check.level_achieved == 5

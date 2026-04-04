@@ -1,6 +1,6 @@
-"""Symbolic verification checker for Serenecode (Level 4).
+"""Symbolic verification checker for Serenecode (Level 5).
 
-This module implements Level 4 verification: it transforms results from
+This module implements Level 5 verification: it transforms results from
 symbolic execution backends into structured CheckResult objects.
 The actual verification is delegated to adapters.
 

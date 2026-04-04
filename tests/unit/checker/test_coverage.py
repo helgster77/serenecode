@@ -11,7 +11,7 @@ from serenecode.models import CheckStatus
 from serenecode.ports.coverage_analyzer import (
     CoverageFinding,
     MockDependency,
-    TestSuggestion,
+    CoverageSuggestion,
 )
 from tests.conftest import assert_violation_or_skip
 
@@ -43,7 +43,7 @@ def _make_failing_finding(name: str = "func") -> CoverageFinding:
         uncovered_lines=(5, 6, 7, 12, 13),
         uncovered_branches=((8, 9),),
         suggestions=(
-            TestSuggestion(
+            CoverageSuggestion(
                 description="branch: if x > 0 (lines 5-7)",
                 target_lines=(5, 6, 7),
                 suggested_test_code="def test_func_line_5():\n    result = func()\n    assert result is not None",
@@ -178,7 +178,7 @@ class TestBuildSuggestion:
             uncovered_lines=(3, 4),
             uncovered_branches=(),
             suggestions=(
-                TestSuggestion(
+                CoverageSuggestion(
                     description="lines 3-4",
                     target_lines=(3, 4),
                     suggested_test_code="def test(): pass",
@@ -203,7 +203,7 @@ class TestBuildSuggestion:
             uncovered_lines=(3,),
             uncovered_branches=(),
             suggestions=(
-                TestSuggestion(
+                CoverageSuggestion(
                     description="line 3",
                     target_lines=(3,),
                     suggested_test_code="def test(): pass",

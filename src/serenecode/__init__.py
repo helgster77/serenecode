@@ -22,18 +22,32 @@ from serenecode.core.exceptions import UnsafeCodeExecutionError
 from serenecode.core.pipeline import run_pipeline
 from serenecode.init import InitResult, initialize_project
 from serenecode.models import CheckResult
-from serenecode.source_discovery import build_source_files, find_serenecode_md
+from serenecode.source_discovery import build_source_files, discover_test_file_stems, find_serenecode_md
+
+__all__ = [
+    "init",
+    "check",
+    "check_structural",
+    "check_types",
+    "check_coverage",
+    "check_properties",
+    "check_symbolic",
+    "check_compositional",
+    "status",
+    "CheckResult",
+    "InitResult",
+]
 
 _TRUST_REQUIRED_MESSAGE = (
     "Levels 3-6 import and execute project modules. "
-    "Pass allow_code_execution=True only for trusted code."
+    "Only run on trusted code with allow_code_execution=True / --allow-code-execution."
 )
 
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
 @icontract.require(lambda template: is_valid_template_name(template), "template must be a valid template name")
-@icontract.ensure(lambda result: isinstance(result, InitResult), "result must be an InitResult")
+@icontract.ensure(lambda result: result.template_used in ("default", "strict", "minimal"), "result must report a valid template")
 def init(path: str = ".", template: str = "default") -> InitResult:
     """Initialize a Serenecode project.
 
@@ -57,7 +71,7 @@ def init(path: str = ".", template: str = "default") -> InitResult:
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
 @icontract.require(lambda level: is_valid_verification_level(level), "level must be between 1 and 6")
-@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+@icontract.ensure(lambda level, result: result.level_requested == level, "result must report the requested level")
 def check(
     path: str = ".",
     level: int = 6,
@@ -82,7 +96,7 @@ def check(
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
-@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+@icontract.ensure(lambda result: result.level_requested == 1, "structural check must request level 1")
 def check_structural(path: str = ".") -> CheckResult:
     """Run only the structural checker (Level 1).
 
@@ -97,7 +111,7 @@ def check_structural(path: str = ".") -> CheckResult:
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
-@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+@icontract.ensure(lambda result: result.level_requested == 2, "type check must request level 2")
 def check_types(path: str = ".") -> CheckResult:
     """Run the Level 2 type checker."""
     return _run_check(path, level=2)
@@ -105,7 +119,7 @@ def check_types(path: str = ".") -> CheckResult:
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
-@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+@icontract.ensure(lambda result: result.level_requested == 3, "coverage check must request level 3")
 def check_coverage(
     path: str = ".",
     allow_code_execution: bool = False,
@@ -125,7 +139,7 @@ def check_coverage(
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
-@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+@icontract.ensure(lambda result: result.level_requested == 4, "properties check must request level 4")
 def check_properties(
     path: str = ".",
     allow_code_execution: bool = False,
@@ -145,7 +159,7 @@ def check_properties(
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
-@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+@icontract.ensure(lambda result: result.level_requested == 5, "symbolic check must request level 5")
 def check_symbolic(
     path: str = ".",
     allow_code_execution: bool = False,
@@ -165,7 +179,7 @@ def check_symbolic(
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
-@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+@icontract.ensure(lambda result: result.level_requested == 6, "compositional check must request level 6")
 def check_compositional(
     path: str = ".",
     allow_code_execution: bool = False,
@@ -185,7 +199,7 @@ def check_compositional(
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
-@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+@icontract.ensure(lambda result: result.level_requested == 1, "status check must request level 1")
 def status(path: str = ".") -> CheckResult:
     """Show verification status of the codebase.
 
@@ -201,7 +215,7 @@ def status(path: str = ".") -> CheckResult:
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(lambda path: is_valid_file_path_string(path), "path must be a valid path string")
 @icontract.require(lambda level: is_valid_verification_level(level), "level must be between 1 and 6")
-@icontract.ensure(lambda result: isinstance(result, CheckResult), "result must be a CheckResult")
+@icontract.ensure(lambda level, result: result.level_requested == level, "result must report the requested level")
 def _run_check(
     path: str,
     level: int,
@@ -269,6 +283,7 @@ def _run_check(
         except ImportError:
             pass
 
+    test_stems = discover_test_file_stems(path, reader)
     return run_pipeline(
         source_files=source_files,
         level=level,
@@ -278,4 +293,5 @@ def _run_check(
         coverage_analyzer=coverage_analyzer,
         property_tester=property_tester,
         symbolic_checker=symbolic_checker,
+        known_test_stems=test_stems,
     )

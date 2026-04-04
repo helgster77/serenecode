@@ -18,6 +18,19 @@ import icontract
 from serenecode.contracts.predicates import is_non_empty_string, is_non_negative_int
 
 
+@icontract.ensure(lambda result: len(result) > 0, "version string must be non-empty")
+def _get_version() -> str:
+    """Read the package version from metadata, falling back to a default."""
+    try:
+        from importlib.metadata import version
+        return version("serenecode")
+    except Exception:
+        return "0.0.0"
+
+
+_VERSION = _get_version()
+
+
 class VerificationLevel(Enum):
     """Verification levels in the Serenecode pipeline."""
 
@@ -71,8 +84,8 @@ class Detail:
     suggestion: str | None = None
 
     @icontract.ensure(
-        lambda result: isinstance(result, dict),
-        "result must be a dictionary",
+        lambda self, result: result["level"] == self.level.value and result["message"] == self.message,
+        "serialized dict must preserve level and message",
     )
     def to_dict(self) -> dict[str, object]:
         """Convert to a plain dictionary for serialization."""
@@ -117,8 +130,8 @@ class FunctionResult:
     details: tuple[Detail, ...] = ()
 
     @icontract.ensure(
-        lambda result: isinstance(result, dict),
-        "result must be a dictionary",
+        lambda self, result: result["function"] == self.function and result["status"] == self.status.value,
+        "serialized dict must preserve function name and status",
     )
     def to_dict(self) -> dict[str, object]:
         """Convert to a plain dictionary matching the JSON output spec."""
@@ -157,6 +170,10 @@ class FunctionResult:
     lambda self: self.total_functions == self.passed_count + self.failed_count + self.skipped_count + self.exempt_count,
     "counts must sum to total",
 )
+@icontract.invariant(
+    lambda self: self.duration_seconds >= 0.0,
+    "duration must be non-negative",
+)
 @dataclass(frozen=True)
 class CheckSummary:
     """Summary statistics for a verification run."""
@@ -169,8 +186,8 @@ class CheckSummary:
     duration_seconds: float = 0.0
 
     @icontract.ensure(
-        lambda result: isinstance(result, dict),
-        "result must be a dictionary",
+        lambda self, result: result["total_functions"] == self.total_functions and result["passed"] == self.passed_count,
+        "serialized dict must preserve counts",
     )
     def to_dict(self) -> dict[str, object]:
         """Convert to the summary dict matching the JSON output spec."""
@@ -183,6 +200,14 @@ class CheckSummary:
         }
 
 
+@icontract.invariant(
+    lambda self: 1 <= self.level_requested <= 6,
+    "level_requested must be between 1 and 6",
+)
+@icontract.invariant(
+    lambda self: 0 <= self.level_achieved <= 6,
+    "level_achieved must be between 0 and 6",
+)
 @icontract.invariant(
     lambda self: self.level_achieved <= self.level_requested,
     "level_achieved must not exceed level_requested",
@@ -200,7 +225,7 @@ class CheckResult:
     level_achieved: int
     results: tuple[FunctionResult, ...]
     summary: CheckSummary
-    version: str = "0.1.1"
+    version: str = _VERSION
 
     @property
     def failures(self) -> list[FunctionResult]:
@@ -209,8 +234,8 @@ class CheckResult:
         return [r for r in self.results if r.status == CheckStatus.FAILED]
 
     @icontract.ensure(
-        lambda result: isinstance(result, dict),
-        "result must be a dictionary",
+        lambda self, result: result["passed"] == self.passed and result["level_requested"] == self.level_requested,
+        "serialized dict must preserve pass status and level",
     )
     def to_dict(self) -> dict[str, object]:
         """Convert to a plain dictionary matching the JSON output spec."""
@@ -224,8 +249,8 @@ class CheckResult:
         }
 
     @icontract.ensure(
-        lambda result: isinstance(result, str),
-        "result must be a string",
+        lambda self, result: len(result) > 0 and '"passed"' in result,
+        "JSON output must be non-empty and contain required fields",
     )
     def to_json(self) -> str:
         """Convert to a JSON string matching the spec output format."""
@@ -235,6 +260,14 @@ class CheckResult:
 @icontract.require(
     lambda results: isinstance(results, tuple),
     "results must be a tuple",
+)
+@icontract.ensure(
+    lambda results, level_requested, result: result.level_requested == level_requested,
+    "result must report the correct requested level",
+)
+@icontract.ensure(
+    lambda result: result.level_achieved <= result.level_requested,
+    "achieved level must not exceed requested level",
 )
 @icontract.ensure(
     lambda result: isinstance(result, CheckResult),
@@ -263,13 +296,16 @@ def make_check_result(
     failed_count = 0
     skipped_count = 0
     exempt_count = 0
+    has_non_exempt = False
     min_achieved = level_requested
 
-    # Loop invariant: counts reflect classifications of results[0..i]
+    # Loop invariant: counts reflect classifications of results[0..i];
+    # has_non_exempt is True iff any non-EXEMPT result was seen so far.
     for r in results:
         if r.status == CheckStatus.EXEMPT:
             exempt_count += 1
             continue
+        has_non_exempt = True
         if r.level_achieved < min_achieved:
             min_achieved = r.level_achieved
         if r.status == CheckStatus.PASSED:
@@ -278,6 +314,14 @@ def make_check_result(
             failed_count += 1
         else:
             skipped_count += 1
+
+    # If results exist but every one is EXEMPT, nothing was actually
+    # verified — do not claim the requested level was achieved.
+    # (Truly empty results are left at level_requested; the pipeline's
+    # _level_achieved() with require_evidence=True handles L3-L5 empty
+    # results separately.)
+    if exempt_count > 0 and not has_non_exempt:
+        min_achieved = 0
 
     overall_level_achieved = (
         min_achieved if level_achieved is None else level_achieved

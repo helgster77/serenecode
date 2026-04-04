@@ -18,6 +18,24 @@ import icontract
 
 from serenecode.contracts.predicates import is_non_empty_string
 
+__all__ = [
+    "ContractConfig",
+    "TypeConfig",
+    "ArchitectureConfig",
+    "ErrorHandlingConfig",
+    "LoopRecursionConfig",
+    "NamingConfig",
+    "ExemptionConfig",
+    "SerenecodeConfig",
+    "default_config",
+    "strict_config",
+    "minimal_config",
+    "config_for_template",
+    "parse_serenecode_md",
+    "is_core_module",
+    "is_exempt_module",
+]
+
 
 @icontract.invariant(
     lambda self: not self.require_on_private or self.require_on_public_functions,
@@ -182,8 +200,8 @@ _DEFAULT_FORBIDDEN_EXCEPTIONS = (
 
 
 @icontract.ensure(
-    lambda result: isinstance(result, SerenecodeConfig),
-    "result must be a SerenecodeConfig",
+    lambda result: result.template_name == "default",
+    "default config must have template_name 'default'",
 )
 def default_config() -> SerenecodeConfig:
     """Return the default Serenecode configuration.
@@ -228,8 +246,8 @@ def default_config() -> SerenecodeConfig:
 
 
 @icontract.ensure(
-    lambda result: isinstance(result, SerenecodeConfig),
-    "result must be a SerenecodeConfig",
+    lambda result: result.template_name == "strict",
+    "strict config must have template_name 'strict'",
 )
 def strict_config() -> SerenecodeConfig:
     """Return the strict Serenecode configuration.
@@ -274,8 +292,8 @@ def strict_config() -> SerenecodeConfig:
 
 
 @icontract.ensure(
-    lambda result: isinstance(result, SerenecodeConfig),
-    "result must be a SerenecodeConfig",
+    lambda result: result.template_name == "minimal",
+    "minimal config must have template_name 'minimal'",
 )
 def minimal_config() -> SerenecodeConfig:
     """Return the minimal Serenecode configuration.
@@ -324,8 +342,8 @@ def minimal_config() -> SerenecodeConfig:
     "template_name must be 'default', 'strict', or 'minimal'",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, SerenecodeConfig),
-    "result must be a SerenecodeConfig",
+    lambda template_name, result: result.template_name == template_name,
+    "returned config must match the requested template",
 )
 def config_for_template(template_name: str) -> SerenecodeConfig:
     """Return the configuration for a named template.
@@ -349,8 +367,8 @@ def config_for_template(template_name: str) -> SerenecodeConfig:
     "content must be a string",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, SerenecodeConfig),
-    "result must be a SerenecodeConfig",
+    lambda result: result.template_name in ("default", "strict", "minimal"),
+    "parsed config must have a valid template name",
 )
 def parse_serenecode_md(content: str) -> SerenecodeConfig:
     """Parse a SERENECODE.md file content into a SerenecodeConfig.
@@ -373,16 +391,12 @@ def parse_serenecode_md(content: str) -> SerenecodeConfig:
 
 
 @icontract.require(
-    lambda content: isinstance(content, str),
-    "content must be a string",
-)
-@icontract.require(
-    lambda config: isinstance(config, SerenecodeConfig),
-    "config must be a SerenecodeConfig",
+    lambda content: content is not None,
+    "content must be provided",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, SerenecodeConfig),
-    "result must be a SerenecodeConfig",
+    lambda config, result: result.naming_conventions == config.naming_conventions,
+    "naming conventions are preserved through overrides",
 )
 def _apply_content_overrides(
     content: str,
@@ -444,7 +458,7 @@ def _apply_content_overrides(
     loop_recursion_rules = LoopRecursionConfig(
         require_loop_invariant_comments=_matches_rule(
             content,
-            r"Loops? MUST include a comment describing the loop invariant|Every loop MUST include a comment describing the loop invariant",
+            r"[Ll]oops? MUST include (?:a comment describing the loop invariant|invariant comments)",
             config.loop_recursion_rules.require_loop_invariant_comments,
         ),
         require_recursion_variant_comments=_matches_rule(
@@ -500,8 +514,8 @@ def _apply_content_overrides(
     "pattern must be a string",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, bool),
-    "result must be a bool",
+    lambda default, result: not default or result,
+    "when default is True, result must also be True (rules can only be activated, not deactivated)",
 )
 def _matches_rule(content: str, pattern: str, default: bool) -> bool:
     """Return a parsed rule value when the file mentions the rule, else keep default.
@@ -533,7 +547,9 @@ def _extract_forbidden_exception_types(content: str) -> tuple[str, ...] | None:
 def _detect_template(content: str) -> str:
     """Detect which template a SERENECODE.md most closely matches.
 
-    Uses the presence of key section headings and rule keywords.
+    First checks for an explicit ``Template: <name>`` declaration.
+    Falls back to heuristic detection using section headings and
+    rule keywords.
 
     Args:
         content: SERENECODE.md file content.
@@ -541,6 +557,13 @@ def _detect_template(content: str) -> str:
     Returns:
         Template name: 'default', 'strict', or 'minimal'.
     """
+    # Explicit declaration takes precedence over heuristic detection
+    template_match = re.search(
+        r"Template:\s*(default|strict|minimal)", content, re.IGNORECASE,
+    )
+    if template_match:
+        return template_match.group(1).lower()
+
     has_contract_section = "## Contract Standards" in content
     has_architecture_section = "## Architecture Standards" in content
     has_loop_section = "## Loop and Recursion Standards" in content
@@ -630,7 +653,14 @@ def _path_segments(path: str) -> tuple[str, ...]:
     "result must be a bool",
 )
 def _path_pattern_matches(module_path: str, pattern: str) -> bool:
-    """Check whether a configured path pattern matches a module path by segments."""
+    """Check whether a configured path pattern matches a module path by segments.
+
+    Matching is segment-based (not substring): ``"cli.py"`` matches any file
+    whose last segment is ``cli.py``, and ``"adapters/"`` matches any
+    directory segment named ``adapters``. This is by design for single-project
+    repos. In monorepo layouts with duplicate directory names, use longer
+    path patterns (e.g. ``"billing/adapters/"``) for disambiguation.
+    """
     module_segments = _path_segments(module_path)
     pattern_segments = _path_segments(pattern)
     if not module_segments or not pattern_segments:
@@ -669,6 +699,10 @@ def _path_pattern_matches(module_path: str, pattern: str) -> bool:
     lambda result: isinstance(result, bool),
     "result must be a boolean",
 )
+@icontract.ensure(
+    lambda module_path, config, result: not result or len(config.architecture_rules.core_module_patterns) > 0,
+    "a module can only be core if core patterns are configured",
+)
 def is_core_module(module_path: str, config: SerenecodeConfig) -> bool:
     """Check whether a module path matches any core module pattern.
 
@@ -693,6 +727,10 @@ def is_core_module(module_path: str, config: SerenecodeConfig) -> bool:
 @icontract.ensure(
     lambda result: isinstance(result, bool),
     "result must be a boolean",
+)
+@icontract.ensure(
+    lambda module_path, config, result: not result or len(config.exemptions.exempt_paths) > 0,
+    "a module can only be exempt if exempt paths are configured",
 )
 def is_exempt_module(module_path: str, config: SerenecodeConfig) -> bool:
     """Check whether a module path is exempt from full verification.

@@ -30,7 +30,7 @@ from serenecode.core.exceptions import ToolNotInstalledError, UnsafeCodeExecutio
 from serenecode.ports.coverage_analyzer import (
     CoverageFinding,
     MockDependency,
-    TestSuggestion,
+    CoverageSuggestion,
 )
 
 try:
@@ -110,12 +110,14 @@ class CoverageAnalyzerAdapter:
         self,
         allow_code_execution: bool = False,
         coverage_threshold: float = 80.0,
+        test_timeout: int = 120,
     ) -> None:
         """Initialize the coverage analyzer.
 
         Args:
             allow_code_execution: Must be True to run tests.
             coverage_threshold: Default coverage threshold percentage.
+            test_timeout: Maximum seconds for the pytest subprocess to run.
         """
         if not allow_code_execution:
             raise UnsafeCodeExecutionError(_TRUST_REQUIRED_MESSAGE)
@@ -125,6 +127,7 @@ class CoverageAnalyzerAdapter:
             )
         self._allow_code_execution = allow_code_execution
         self._coverage_threshold = coverage_threshold
+        self._test_timeout = test_timeout
         self._coverage_cache: dict[str, dict[str, Any]] = {}
 
     @icontract.require(
@@ -187,7 +190,9 @@ class CoverageAnalyzerAdapter:
         if cache_key in self._coverage_cache:
             coverage_data = self._coverage_cache[cache_key]
         else:
-            coverage_data = _run_tests_with_coverage(source_file, search_paths)
+            coverage_data = _run_tests_with_coverage(
+                source_file, search_paths, test_timeout=self._test_timeout,
+            )
             self._coverage_cache[cache_key] = coverage_data
 
         # Check for timeout or other errors signalled by _run_tests_with_coverage.
@@ -208,10 +213,9 @@ class CoverageAnalyzerAdapter:
             )]
 
         # If no coverage data at all (no tests found or pytest failed), report
-        # as informational rather than failing — the purpose of L3 is to analyze
-        # existing test coverage, not to fail when tests haven't been written yet.
-        # Check if any lines were actually executed — if zero lines were
-        # covered across all files, no tests exercised this module.
+        # as a failure — missing tests must be written. Check if any lines were
+        # actually executed — if zero lines were covered across all files,
+        # no tests exercised this module.
         total_covered = sum(
             len(f.get("executed_lines", []))
             for f in coverage_data.get("files", {}).values()
@@ -255,7 +259,7 @@ class CoverageAnalyzerAdapter:
             )
             meets = line_pct >= effective_threshold and branch_pct >= effective_threshold
 
-            suggestions: tuple[TestSuggestion, ...] = ()
+            suggestions: tuple[CoverageSuggestion, ...] = ()
             if not meets and fc.missing_lines:
                 suggestions = _generate_suggestions(
                     fc, source, module_path,
@@ -380,12 +384,14 @@ def _walk_for_functions(
 def _run_tests_with_coverage(
     source_file: str,
     search_paths: tuple[str, ...],
+    test_timeout: int = 120,
 ) -> dict[str, Any]:
     """Run tests in subprocess with coverage and return JSON data.
 
     Args:
         source_file: Absolute path to the source file being analyzed.
         search_paths: Import roots for the project.
+        test_timeout: Maximum seconds for the pytest subprocess.
 
     Returns:
         Parsed coverage JSON data, or empty dict on failure.
@@ -419,27 +425,33 @@ def _run_tests_with_coverage(
         else:
             cmd.append(project_root)
 
-        env = dict(os.environ)
-        # Loop invariant: env PYTHONPATH includes all search_paths[0..i]
-        for sp in search_paths:
-            existing = env.get("PYTHONPATH", "")
-            # Split on os.pathsep to check exact path entries, avoiding
-            # false matches from substring containment (e.g., "/foo" in "/foo/bar").
-            existing_paths = set(existing.split(os.pathsep)) if existing else set()
-            if sp not in existing_paths:
-                env["PYTHONPATH"] = f"{sp}{os.pathsep}{existing}" if existing else sp
+        from serenecode.adapters import safe_subprocess_env
+
+        extra: dict[str, str] = {}
+        if search_paths:
+            existing_pypath = os.environ.get("PYTHONPATH", "")
+            existing_parts = set(existing_pypath.split(os.pathsep)) if existing_pypath else set()
+            new_parts: list[str] = []
+            # Loop invariant: new_parts contains search_paths[0..i] not already in existing
+            for sp in search_paths:
+                if sp not in existing_parts:
+                    new_parts.append(sp)
+            if new_parts or existing_pypath:
+                all_parts = new_parts + ([existing_pypath] if existing_pypath else [])
+                extra["PYTHONPATH"] = os.pathsep.join(all_parts)
+        env = safe_subprocess_env(extra_paths=extra)
 
         try:
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=test_timeout,
                 cwd=project_root,
                 env=env,
             )
         except subprocess.TimeoutExpired:
-            return {"_error": "test execution timed out after 120 seconds"}
+            return {"_error": f"test execution timed out after {test_timeout} seconds"}
         except FileNotFoundError:
             return {"_error": "pytest not found — install pytest and pytest-cov"}
         except OSError as os_err:
@@ -709,7 +721,7 @@ def _generate_suggestions(
     fc: _FunctionCoverage,
     source: str,
     module_path: str,
-) -> tuple[TestSuggestion, ...]:
+) -> tuple[CoverageSuggestion, ...]:
     """Generate test suggestions for uncovered code paths.
 
     Args:
@@ -728,7 +740,7 @@ def _generate_suggestions(
 
     # Group contiguous uncovered lines into blocks
     blocks = _group_contiguous_lines(sorted(fc.missing_lines))
-    suggestions: list[TestSuggestion] = []
+    suggestions: list[CoverageSuggestion] = []
 
     # Loop invariant: suggestions contains entries for blocks[0..i]
     for block in blocks:
@@ -745,7 +757,7 @@ def _generate_suggestions(
 
         all_necessary = all(d.mock_necessary for d in deps) if deps else True
 
-        suggestions.append(TestSuggestion(
+        suggestions.append(CoverageSuggestion(
             description=context,
             target_lines=tuple(block),
             suggested_test_code=test_code,

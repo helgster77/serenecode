@@ -16,14 +16,20 @@ import icontract
 
 from serenecode.models import CheckResult, CheckStatus, FunctionResult
 
+__all__ = [
+    "format_human",
+    "format_json",
+    "format_html",
+]
+
 
 @icontract.require(
-    lambda check_result: isinstance(check_result, CheckResult),
-    "check_result must be a CheckResult",
+    lambda check_result: check_result.level_requested >= 1,
+    "check_result must have a valid requested level",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, str),
-    "output must be a string",
+    lambda check_result, result: ("PASSED" if check_result.passed else "FAILED") in result,
+    "output must contain the correct status marker",
 )
 def format_human(check_result: CheckResult) -> str:
     """Format a CheckResult as human-readable terminal output.
@@ -112,16 +118,24 @@ def format_human(check_result: CheckResult) -> str:
     lines.append(", ".join(summary_parts))
     lines.append(f"Duration: {summary.duration_seconds:.3f}s")
 
+    if summary.failed_count >= 5:
+        lines.append("")
+        lines.append(
+            f"Tip: {summary.failed_count} findings to address. "
+            "Consider spawning subagents to fix groups of related "
+            "findings in parallel."
+        )
+
     return "\n".join(lines)
 
 
 @icontract.require(
-    lambda check_result: isinstance(check_result, CheckResult),
-    "check_result must be a CheckResult",
+    lambda check_result: check_result.level_requested >= 1,
+    "check_result must have a valid requested level",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, str),
-    "output must be a string",
+    lambda result: result.startswith("{") and result.endswith("}"),
+    "output must be a valid JSON object string",
 )
 def format_json(check_result: CheckResult) -> str:
     """Format a CheckResult as JSON matching the spec Section 4.3 format.
@@ -149,12 +163,12 @@ def format_json(check_result: CheckResult) -> str:
 
 
 @icontract.require(
-    lambda check_result: isinstance(check_result, CheckResult),
-    "check_result must be a CheckResult",
+    lambda check_result: check_result.level_requested >= 1,
+    "check_result must have a valid requested level",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, str),
-    "output must be a string",
+    lambda result: result.startswith("<!DOCTYPE html>") and "</html>" in result,
+    "output must be a complete HTML document",
 )
 def format_html(check_result: CheckResult) -> str:
     """Format a CheckResult as an HTML verification report.
@@ -295,14 +309,14 @@ def format_html(check_result: CheckResult) -> str:
 </div>
 {files_html}
 <div class="footer">
-  Serenecode v{check_result.version} &mdash; Formal verification for AI-generated Python code
+  Serenecode v{_escape_html(check_result.version)} &mdash; Formal verification for AI-generated Python code
 </div>
 </body>
 </html>"""
 
 
-@icontract.require(lambda level: isinstance(level, int), "level must be an integer")
-@icontract.ensure(lambda result: isinstance(result, str), "result must be a string")
+@icontract.require(lambda level: level >= 0, "level must be non-negative")
+@icontract.ensure(lambda result: '<span class="badge' in result, "result must be an HTML badge element")
 def _level_badge(level: int) -> str:
     """Generate an HTML badge for a verification level.
 
@@ -326,8 +340,8 @@ def _level_badge(level: int) -> str:
     return f'<span class="badge {badge_class}">{name}</span>'
 
 
-@icontract.require(lambda text: isinstance(text, str), "text must be a string")
-@icontract.ensure(lambda result: isinstance(result, str), "result must be a string")
+@icontract.require(lambda text: text is not None, "text must be provided")
+@icontract.ensure(lambda result: "<" not in result and ">" not in result, "escaped text must not contain raw angle brackets")
 def _escape_html(text: str) -> str:
     """Escape HTML special characters.
 

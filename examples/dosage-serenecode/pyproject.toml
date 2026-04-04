@@ -1,22 +1,11 @@
 [project]
-name = "dosage-serenecode"
+name = "dosage"
 version = "0.1.0"
-description = "Medical dosage calculator example for serenecode"
 requires-python = ">=3.10"
 dependencies = [
-    "icontract>=2.7.0",
-    "serenecode[verify]",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "hypothesis>=6.0",
+    "icontract",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
-
-[tool.uv.sources]
-serenecode = { path = "../..", editable = true }
+pythonpath = ["src"]

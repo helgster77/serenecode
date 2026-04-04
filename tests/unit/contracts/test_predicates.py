@@ -100,7 +100,14 @@ class TestIsValidFilePathString:
 
     @pytest.mark.parametrize(
         "value",
-        ["", "path\x00with_null"],
+        [
+            "",
+            "path\x00with_null",
+            "../escape",
+            "foo/../../etc/passwd",
+            "..\\windows\\escape",
+            "..",
+        ],
     )
     def test_rejects_invalid_paths(self, value: str) -> None:
         assert is_valid_file_path_string(value) is False

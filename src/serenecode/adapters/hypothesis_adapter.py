@@ -1738,20 +1738,19 @@ def _check_preconditions(
                 }
                 if not condition(**condition_kwargs):
                     return False
+            except (TypeError, ValueError, KeyError, AttributeError):
+                # Precondition evaluation failed due to type mismatch or
+                # missing attribute — treat as "inputs don't satisfy precondition"
+                return False
             except Exception:
+                # Unexpected error evaluating precondition — treat as unsatisfied
+                # rather than crashing the property tester mid-run. This is a
+                # safety net; the common cases are caught above.
                 return False
 
     return True
 
 
-@icontract.require(
-    lambda exc: isinstance(exc, icontract.ViolationError),
-    "exc must be an icontract violation",
-)
-@icontract.ensure(
-    lambda result: result is None or isinstance(result, dict),
-    "result must be a dictionary or None",
-)
 @icontract.require(
     lambda error_str: isinstance(error_str, str),
     "error_str must be a string",

@@ -14,6 +14,8 @@ import re
 import icontract
 
 # Pattern for valid snake_case identifiers
+_REQ_ID_PATTERN = re.compile(r"^REQ-\d{3,4}$")
+
 _SNAKE_CASE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
 # Pattern for valid PascalCase identifiers
@@ -71,8 +73,7 @@ def is_valid_exit_code(code: int) -> bool:
     Returns:
         True if the code is a valid Serenecode exit code.
     """
-    # Keep this predicate solver-friendly for symbolic tools.
-    return 0 <= code <= 6 or code == 10
+    return code in _VALID_EXIT_CODES
 
 
 @icontract.require(lambda value: isinstance(value, int), "value must be an integer")
@@ -109,7 +110,7 @@ def is_valid_file_path_string(value: str) -> bool:
     """Check that a string looks like a valid file path syntactically.
 
     This is a pure syntactic check — it does not touch the filesystem.
-    Checks that the string is non-empty and does not contain null bytes.
+    Rejects empty strings, null bytes, and path-traversal components.
 
     Args:
         value: The string to check.
@@ -117,7 +118,14 @@ def is_valid_file_path_string(value: str) -> bool:
     Returns:
         True if value is a syntactically valid file path string.
     """
-    return len(value) > 0 and "\x00" not in value
+    if len(value) == 0 or "\x00" in value:
+        return False
+    # Reject path-traversal components (.. as a path segment)
+    # Loop invariant: no segment examined so far equals ".."
+    for segment in value.replace("\\", "/").split("/"):
+        if segment == "..":
+            return False
+    return True
 
 
 @icontract.require(lambda name: isinstance(name, str), "name must be a string")
@@ -174,3 +182,17 @@ def is_valid_template_name(name: str) -> bool:
         True if name is 'default', 'strict', or 'minimal'.
     """
     return name in ("default", "strict", "minimal")
+
+
+@icontract.require(lambda value: isinstance(value, str), "value must be a string")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
+def is_valid_req_id(value: str) -> bool:
+    """Check that a string is a valid requirement ID (REQ-001 through REQ-9999).
+
+    Args:
+        value: The string to check.
+
+    Returns:
+        True if value matches the REQ-xxx pattern.
+    """
+    return bool(_REQ_ID_PATTERN.match(value))

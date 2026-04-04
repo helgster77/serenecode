@@ -589,3 +589,69 @@ class TestModuleLoader:
 
         assert loaded is not models
         assert sys.modules["serenecode.models"] is models
+
+
+class TestSafeSubprocessEnv:
+    """Tests for the safe_subprocess_env environment filtering."""
+
+    def test_filters_out_sensitive_variables(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from serenecode.adapters import safe_subprocess_env
+
+        monkeypatch.setenv("PATH", "/usr/bin")
+        monkeypatch.setenv("HOME", "/home/test")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret123")
+        monkeypatch.setenv("API_TOKEN", "tok_abc")
+        monkeypatch.setenv("DATABASE_URL", "postgres://secret")
+        env = safe_subprocess_env()
+        assert env.get("PATH") == "/usr/bin"
+        assert env.get("HOME") == "/home/test"
+        assert "AWS_SECRET_ACCESS_KEY" not in env
+        assert "API_TOKEN" not in env
+        assert "DATABASE_URL" not in env
+
+    def test_extra_paths_merged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from serenecode.adapters import safe_subprocess_env
+
+        monkeypatch.setenv("PATH", "/usr/bin")
+        env = safe_subprocess_env(extra_paths={"PYTHONPATH": "/my/src", "MYPYPATH": "/my/stubs"})
+        assert env["PYTHONPATH"] == "/my/src"
+        assert env["MYPYPATH"] == "/my/stubs"
+        assert env["PATH"] == "/usr/bin"
+
+    def test_no_leakage_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from serenecode.adapters import safe_subprocess_env, _SAFE_ENV_KEYS
+
+        monkeypatch.setenv("RANDOM_VARIABLE", "should_not_leak")
+        env = safe_subprocess_env()
+        # Every key in env must be in the allowlist or extra_paths
+        for key in env:
+            assert key in _SAFE_ENV_KEYS, f"Unexpected key '{key}' leaked into env"
+
+
+class TestExtractViolatedCondition:
+    """Tests for _extract_violated_condition parsing."""
+
+    def test_extracts_condition_from_standard_format(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _extract_violated_condition
+
+        error_str = "Postcondition violated\nresult must be positive: result > 0:\nresult was -1"
+        result = _extract_violated_condition(error_str)
+        assert result == "result > 0"
+
+    def test_returns_none_for_single_line(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _extract_violated_condition
+
+        assert _extract_violated_condition("single line error") is None
+
+    def test_returns_none_for_no_colon_separator(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _extract_violated_condition
+
+        error_str = "line one\nline two without colon separator"
+        assert _extract_violated_condition(error_str) is None
+
+    def test_extracts_condition_with_description(self) -> None:
+        from serenecode.adapters.hypothesis_adapter import _extract_violated_condition
+
+        error_str = "Postcondition violated\nresult within range: min(items) <= result <= max(items):"
+        result = _extract_violated_condition(error_str)
+        assert result == "min(items) <= result <= max(items)"

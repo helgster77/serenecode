@@ -22,7 +22,43 @@ from serenecode.ports.file_system import FileReader, FileWriter
 # SERENECODE.md template content (embedded as string constants)
 # ---------------------------------------------------------------------------
 
-_CLAUDE_MD_SECTIONS = {
+_SPEC_WORKFLOW_EXISTING = """\
+
+### Spec-Driven Workflow
+
+This project has an existing spec document. Follow the Spec Traceability \
+section in SERENECODE.md for the full workflow. The key steps are:
+
+1. Read the existing spec and SERENECODE.md before writing any code.
+2. If the spec is not already in SereneCode format (REQ-xxx headings), \
+convert it into SPEC.md following the "Preparing a SereneCode-Ready Spec" \
+instructions in SERENECODE.md. Validate with `serenecode spec SPEC.md`.
+3. Create an implementation plan mapping each REQ to functions, modules, \
+and contracts. Get user approval before writing code.
+4. Implement and tag with `Implements: REQ-xxx`. Test and tag with \
+`Verifies: REQ-xxx`.
+5. Run `serenecode check src/ --spec SPEC.md` to verify full traceability.
+"""
+
+_SPEC_WORKFLOW_GENERATE = """\
+
+### Spec-Driven Workflow
+
+This project's spec will be written alongside the code. Follow the Spec \
+Traceability section in SERENECODE.md for the full workflow. The key steps are:
+
+1. Read SERENECODE.md before writing any code.
+2. Write SPEC.md with the user following the format in SERENECODE.md. \
+Each requirement must be a testable behavior with a REQ-xxx identifier. \
+Validate with `serenecode spec SPEC.md`.
+3. Create an implementation plan mapping each REQ to functions, modules, \
+and contracts. Get user approval before writing code.
+4. Implement and tag with `Implements: REQ-xxx`. Test and tag with \
+`Verifies: REQ-xxx`.
+5. Run `serenecode check src/ --spec SPEC.md` to verify full traceability.
+"""
+
+_CLAUDE_MD_BASE = {
     "default": """\
 ## Serenecode
 
@@ -47,9 +83,9 @@ serenecode check src/ --structural
 serenecode check src/ --level 4 --allow-code-execution
 ```
 
-**Generate an HTML report:**
+**Spec traceability check:**
 ```bash
-serenecode report src/ --format html --output report.html --allow-code-execution
+serenecode check src/ --spec SPEC.md
 ```
 
 Levels 3-6 import and execute project modules. Only use \
@@ -58,6 +94,15 @@ Levels 3-6 import and execute project modules. Only use \
 If verification fails, read the error messages and fix the issues. Each failure \
 includes the function name, file, line number, and a suggested fix. Iterate \
 until all checks pass.
+
+### Testing
+
+Write tests alongside code. Every new module must have a corresponding \
+test file. Contracts verify invariants at runtime, but tests verify \
+behavior — both are required.
+
+Run `pytest -q` after writing tests. Do not consider a task complete \
+until tests exist and pass.
 """,
     "strict": """\
 ## Serenecode (Strict Mode)
@@ -88,9 +133,9 @@ serenecode check src/ --level 4 --allow-code-execution
 serenecode check src/ --level 6 --allow-code-execution
 ```
 
-**Generate an HTML report:**
+**Spec traceability check:**
 ```bash
-serenecode report src/ --format html --output report.html --allow-code-execution
+serenecode check src/ --spec SPEC.md
 ```
 
 Levels 3-6 import and execute project modules. Only use \
@@ -99,6 +144,17 @@ Levels 3-6 import and execute project modules. Only use \
 If verification fails, read the error messages and fix the issues. Each failure \
 includes the function name, file, line number, and a suggested fix. Iterate \
 until all checks pass. Do not commit code that fails verification.
+
+### Testing
+
+You MUST write tests for every function. Do not skip this.
+
+- Unit tests for core functions in `tests/unit/`
+- Integration tests for adapters in `tests/integration/`
+- Property-based tests (Hypothesis) for pure functions
+
+Run `pytest -q` before considering any task complete. Do not commit \
+code without passing tests.
 """,
     "minimal": """\
 ## Serenecode
@@ -109,13 +165,22 @@ preconditions, and public functions should have postconditions.
 
 ### Verification
 
-After completing a feature or fix, consider running a quick check:
+After completing a feature or fix, run a quick check:
 
 ```bash
 serenecode check src/ --structural
 ```
 
+**Spec traceability check:**
+```bash
+serenecode check src/ --spec SPEC.md
+```
+
 If issues are found, fix them before moving on.
+
+### Testing
+
+Write basic tests for public functions. Run `pytest -q` to verify.
 """,
 }
 
@@ -140,6 +205,7 @@ class InitResult:
     claude_md_created: bool
     claude_md_updated: bool
     template_used: str
+    spec_mode: str = "generate"
 
 
 # ---------------------------------------------------------------------------
@@ -155,41 +221,57 @@ class InitResult:
     lambda result: isinstance(result, str) and len(result) > 0,
     "result must be a non-empty string",
 )
-def generate_serenecode_md(template: str) -> str:
+def generate_serenecode_md(
+    template: str,
+    include_spec_traceability: bool = True,
+) -> str:
     """Return the SERENECODE.md content for the given template name.
 
     Args:
         template: One of 'default', 'strict', or 'minimal'.
+        include_spec_traceability: Whether to include the spec traceability section.
 
     Returns:
         The SERENECODE.md markdown content.
     """
     from serenecode.templates import content as template_content
 
-    return template_content.get_template(template)
+    return template_content.get_template_with_options(
+        template, include_spec_traceability=include_spec_traceability,
+    )
 
 
 @icontract.require(
     lambda template: is_valid_template_name(template),
     "template must be a valid template name",
 )
+@icontract.require(
+    lambda spec_mode: spec_mode in ("existing", "generate"),
+    "spec_mode must be 'existing' or 'generate'",
+)
 @icontract.ensure(
     lambda result: isinstance(result, str) and len(result) > 0,
     "result must be a non-empty string",
 )
-def generate_claude_md_section(template: str = "default") -> str:
+def generate_claude_md_section(
+    template: str = "default",
+    spec_mode: str = "generate",
+) -> str:
     """Return the Serenecode directive section for CLAUDE.md.
 
-    The section content varies by template — strict mode uses stronger
-    language and requires verification before commits.
+    The section content varies by template and spec workflow.
 
     Args:
         template: The template name ('default', 'strict', or 'minimal').
+        spec_mode: Either 'existing' (user has a spec) or 'generate'
+            (user will write one with their coding assistant).
 
     Returns:
         The markdown section to add to CLAUDE.md.
     """
-    return _CLAUDE_MD_SECTIONS[template]
+    base = _CLAUDE_MD_BASE[template]
+    workflow = _SPEC_WORKFLOW_EXISTING if spec_mode == "existing" else _SPEC_WORKFLOW_GENERATE
+    return base.rstrip() + "\n" + workflow
 
 
 @icontract.require(
@@ -241,6 +323,7 @@ def initialize_project(
     file_reader: FileReader,
     file_writer: FileWriter,
     confirm_callback: Callable[[str], bool] | None = None,
+    spec_mode: str = "generate",
 ) -> InitResult:
     """Initialize a Serenecode project in the given directory.
 
@@ -254,6 +337,8 @@ def initialize_project(
         file_writer: A FileWriter implementation.
         confirm_callback: Optional callback for user confirmation prompts.
             If None, proceeds without confirmation.
+        spec_mode: Either 'existing' (user has a spec) or 'generate'
+            (user will write one with their coding assistant).
 
     Returns:
         An InitResult describing what was created/modified.
@@ -276,12 +361,20 @@ def initialize_project(
         )
 
     if should_write_serenecode:
-        content = generate_serenecode_md(template)
+        # Best-effort backup of the existing file before overwrite
+        if serenecode_exists:
+            backup_path = serenecode_path + ".bak"
+            try:
+                existing_content = file_reader.read_file(serenecode_path)
+                file_writer.write_file(backup_path, existing_content)
+            except Exception:
+                pass  # Best-effort — don't block init on backup failure
+        content = generate_serenecode_md(template, include_spec_traceability=True)
         file_writer.write_file(serenecode_path, content)
         serenecode_md_created = True
 
     # Generate and write/update CLAUDE.md
-    claude_section = generate_claude_md_section(template)
+    claude_section = generate_claude_md_section(template, spec_mode=spec_mode)
     claude_exists = file_reader.file_exists(claude_path)
     if claude_exists:
         existing = file_reader.read_file(claude_path)
@@ -304,4 +397,5 @@ def initialize_project(
         claude_md_created=claude_md_created,
         claude_md_updated=claude_md_updated,
         template_used=template,
+        spec_mode=spec_mode,
     )

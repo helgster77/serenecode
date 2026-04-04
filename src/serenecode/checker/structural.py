@@ -222,6 +222,127 @@ def _decorator_has_description(
 
 
 @icontract.require(
+    lambda node: isinstance(node, ast.expr),
+    "node must be an AST expression",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_tautological_lambda(node: ast.expr) -> bool:
+    """Check if an AST expression is a lambda that always returns True.
+
+    Detects patterns like ``lambda result: True``, ``lambda self: True``,
+    and ``lambda: True`` which provide no verification value.
+
+    Args:
+        node: An AST expression node (expected to be a Lambda).
+
+    Returns:
+        True if the expression is a tautological lambda.
+    """
+    if not isinstance(node, ast.Lambda):
+        return False
+    body = node.body
+    # lambda ...: True
+    if isinstance(body, ast.Constant) and body.value is True:
+        return True
+    # lambda ...: True and True, lambda ...: True or True (unlikely but possible)
+    if isinstance(body, ast.BoolOp):
+        # Loop invariant: all values checked so far in [0..i] are True constants
+        for val in body.values:
+            if not (isinstance(val, ast.Constant) and val.value is True):
+                return False
+        return True
+    return False
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)),
+    "node must be a function or class definition",
+)
+@icontract.require(
+    lambda names: isinstance(names, frozenset),
+    "names must be a frozenset",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list of decorator detail strings",
+)
+def _find_tautological_contracts(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+    names: frozenset[str],
+) -> list[str]:
+    """Find contract decorators with tautological conditions.
+
+    Returns a list of decorator names whose condition is always True,
+    e.g. ``@icontract.ensure(lambda result: True, ...)``.
+
+    Args:
+        node: An AST node with a decorator_list.
+        names: Set of decorator name strings to match.
+
+    Returns:
+        List of decorator name strings that have tautological conditions.
+    """
+    tautological: list[str] = []
+    # Loop invariant: tautological contains names of tautological decorators in [0..i]
+    for dec in node.decorator_list:
+        if isinstance(dec, ast.Call) and dec.args:
+            dec_name = get_decorator_name(dec)
+            if dec_name in names and _is_tautological_lambda(dec.args[0]):
+                tautological.append(dec_name)
+    return tautological
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)),
+    "node must be a function or class definition",
+)
+@icontract.require(
+    lambda names: isinstance(names, frozenset),
+    "names must be a frozenset",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _decorator_descriptions_are_literals(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+    names: frozenset[str],
+) -> bool:
+    """Check that all contract description arguments are string literals.
+
+    A description passed as a variable (not a string constant) bypasses
+    the intent of the convention and may be empty or misleading at runtime.
+
+    Args:
+        node: An AST node with a decorator_list.
+        names: Set of decorator name strings to match.
+
+    Returns:
+        True if every matched decorator's description is a string literal.
+    """
+    # Loop invariant: all matched decorators in [0..i] have literal string descriptions
+    for dec in node.decorator_list:
+        if isinstance(dec, ast.Call) and get_decorator_name(dec) in names:
+            # Check positional description (second arg)
+            if len(dec.args) >= 2:
+                desc_arg = dec.args[1]
+                if not (isinstance(desc_arg, ast.Constant) and isinstance(desc_arg.value, str)):
+                    return False
+            else:
+                # Check description= keyword argument
+                # Loop invariant: checked keywords [0..j] for "description"
+                for kw in dec.keywords:
+                    if kw.arg == "description":
+                        if not (isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)):
+                            return False
+                        break
+    return True
+
+
+@icontract.require(
     lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
     "node must be a function definition",
 )
@@ -710,6 +831,28 @@ def check_contracts(
                     message=f"Function '{node.name}' has contract without description string",
                     suggestion="Add a description string as second argument to contract decorator",
                 ))
+            elif not _decorator_descriptions_are_literals(node, all_names):
+                details.append(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="violation",
+                    message=f"Function '{node.name}' has contract description that is not a string literal",
+                    suggestion="Contract descriptions must be string literals, not variables or expressions",
+                ))
+
+        # Tautological contract check (always runs when decorators are present)
+        if not details:
+            all_contract_names = aliases.require_names | aliases.ensure_names
+            tautological = _find_tautological_contracts(node, all_contract_names)
+            # Loop invariant: details contains one finding per tautological decorator in [0..i]
+            for taut_name in tautological:
+                details.append(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="violation",
+                    message=f"Function '{node.name}' has tautological contract '{taut_name}' (condition is always True)",
+                    suggestion="Replace with a meaningful condition that constrains behavior",
+                ))
 
         status = CheckStatus.PASSED if not details else CheckStatus.FAILED
         results.append(FunctionResult(
@@ -798,6 +941,18 @@ def check_class_invariants(
                 message=f"Class '{node.name}' missing @icontract.invariant",
                 suggestion=suggestion,
             ))
+        else:
+            # Check for tautological invariants (e.g. lambda self: True)
+            tautological = _find_tautological_contracts(node, aliases.invariant_names)
+            # Loop invariant: details contains one finding per tautological invariant in [0..i]
+            for taut_name in tautological:
+                details.append(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="violation",
+                    message=f"Class '{node.name}' has tautological invariant (condition is always True)",
+                    suggestion="Replace with a meaningful invariant that constrains instance state",
+                ))
 
         status = CheckStatus.PASSED if not details else CheckStatus.FAILED
         results.append(FunctionResult(

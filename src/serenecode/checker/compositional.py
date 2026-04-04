@@ -1,6 +1,6 @@
-"""Compositional verification checker for Serenecode (Level 5).
+"""Compositional verification checker for Serenecode (Level 6).
 
-This module implements Level 5 verification: module-level analysis that
+This module implements Level 6 verification: module-level analysis that
 checks component interactions, dependency direction, interface compliance,
 and system-level properties across the entire codebase.
 
@@ -57,9 +57,12 @@ class MethodSignature:
     required_parameters: int = -1
     return_annotation: str | None = None
 
-    @icontract.ensure(lambda result: result is None, "post-init returns None")
+    @icontract.ensure(
+        lambda self: 0 <= self.required_parameters <= len(self.parameters),
+        "required_parameters must be within bounds after init",
+    )
     def __post_init__(self) -> None:
-        """Fill in backwards-compatible defaults for optional metadata."""
+        """Default required_parameters to len(parameters) when not explicitly set."""
         if self.required_parameters < 0:
             object.__setattr__(self, "required_parameters", len(self.parameters))
 

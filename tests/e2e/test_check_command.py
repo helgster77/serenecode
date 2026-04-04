@@ -189,10 +189,18 @@ def wrapped_double(x: int) -> int:
 import sys
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent / "src"))
 from pkg.helper import double
-from pkg.mod import wrapped_double
 
 def test_double():
     assert double(3) == 6
+''',
+            encoding="utf-8",
+        )
+        (tests_dir / "test_mod.py").write_text(
+            '''\
+"""Tests for mod."""
+import sys
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent / "src"))
+from pkg.mod import wrapped_double
 
 def test_wrapped_double():
     assert wrapped_double(3) == 6
@@ -255,16 +263,24 @@ def wrapped_double(x: int) -> int:
         # Add basic tests so L3 coverage analysis passes
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
-        (tests_dir / "test_pkg.py").write_text(
+        (tests_dir / "test_helper.py").write_text(
             '''\
-"""Tests for pkg."""
+"""Tests for helper."""
 import sys
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent / "src"))
 from pkg.helper import double
-from pkg.mod import wrapped_double
 
 def test_double():
     assert double(3) == 6
+''',
+            encoding="utf-8",
+        )
+        (tests_dir / "test_mod.py").write_text(
+            '''\
+"""Tests for mod."""
+import sys
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent / "src"))
+from pkg.mod import wrapped_double
 
 def test_wrapped_double():
     assert wrapped_double(3) == 6
@@ -305,3 +321,56 @@ import os
 
         assert result.exit_code == 1
         assert "Forbidden import 'os' in core module" in result.output
+
+
+class TestSpecCommand:
+    """E2E tests for the serenecode spec validation command."""
+
+    def test_valid_spec_passes(self, tmp_path: Path) -> None:
+        spec_file = tmp_path / "SPEC.md"
+        spec_file.write_text(
+            "### REQ-001: Auth\nUsers must authenticate.\n\n"
+            "### REQ-002: Sessions\nSessions expire.\n",
+            encoding="utf-8",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["spec", str(spec_file)])
+
+        assert result.exit_code == 0
+        assert "PASSED" in result.output
+
+    def test_missing_requirements_fails(self, tmp_path: Path) -> None:
+        spec_file = tmp_path / "SPEC.md"
+        spec_file.write_text("This spec has no requirements.\n", encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["spec", str(spec_file)])
+
+        assert result.exit_code == 1
+        assert "FAILED" in result.output
+
+    def test_duplicate_req_detected(self, tmp_path: Path) -> None:
+        spec_file = tmp_path / "SPEC.md"
+        spec_file.write_text(
+            "### REQ-001: First\nDesc.\n\n### REQ-001: Dup\nDesc.\n",
+            encoding="utf-8",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["spec", str(spec_file)])
+
+        assert result.exit_code == 1
+        assert "duplicate" in result.output.lower() or "FAILED" in result.output
+
+    def test_gap_in_sequence_detected(self, tmp_path: Path) -> None:
+        spec_file = tmp_path / "SPEC.md"
+        spec_file.write_text(
+            "### REQ-001: First\nDesc.\n\n### REQ-003: Third\nDesc.\n",
+            encoding="utf-8",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["spec", str(spec_file)])
+
+        assert result.exit_code == 1

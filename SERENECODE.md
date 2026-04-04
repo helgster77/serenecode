@@ -311,13 +311,15 @@ Every meaningful code change in this project MUST come with verification. Writin
 
 ### Verification Tiers by Module Type
 
-**Pure core modules** (`core/`, `checker/`, `models.py`, `contracts/`, `config.py`, `reporter.py`, `source_discovery.py`) should remain friendly to Serenecode's full pipeline:
+**Pure core modules** (`core/`, `checker/`, `models.py`, `contracts/`, `config.py`, `reporter.py`) should remain friendly to Serenecode's full pipeline:
 1. Structural check — required contracts present on public functions and classes.
 2. `mypy --strict` — zero errors.
 3. Test coverage analysis through Serenecode's coverage adapter.
 4. Property-based verification through Serenecode's Hypothesis adapter, plus explicit property tests where they add signal.
 5. Symbolic verification through CrossHair for symbolic-friendly contracted top-level functions within analysis bounds.
 6. Example-based unit tests for edge cases, boundary conditions, regressions, and behavior that is important but awkward for automated strategy generation.
+
+**Infrastructure modules** (`source_discovery.py`) use filesystem operations to locate and prepare source files. They are not pure core modules but should maintain contracts and full test coverage.
 
 **Adapter and composition-root modules** (`adapters/`, `cli.py`, `__init__.py`, `init.py`) must pass:
 1. `mypy --strict` — zero errors.
@@ -473,6 +475,7 @@ Steps 1-3 may be done together, but steps 4-8 MUST NOT be skipped or deferred.
 The following modules are exempt from full contract requirements due to their nature:
 - `cli.py` — Thin CLI layer, tested via integration tests.
 - `__init__.py` — Composition roots, tested via integration tests.
+- `init.py` — Composition root for project initialization, tested via e2e tests.
 - `adapters/` — I/O boundary code, tested via integration tests.
 - `templates/` — Static markdown files, not code.
 - `tests/fixtures/` — Intentionally broken or incomplete code used for testing the checker.

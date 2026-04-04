@@ -112,8 +112,10 @@ class TestIsPositiveIntProperty:
 class TestIsValidFilePathStringProperty:
     """Property-based tests for is_valid_file_path_string."""
 
-    @given(value=st.text(min_size=1).filter(lambda s: "\x00" not in s))
-    def test_non_null_non_empty_accepted(self, value: str) -> None:
+    @given(value=st.text(min_size=1).filter(
+        lambda s: "\x00" not in s and ".." not in s.replace("\\", "/").split("/"),
+    ))
+    def test_safe_non_empty_accepted(self, value: str) -> None:
         assert is_valid_file_path_string(value) is True
 
     @given(prefix=st.text(min_size=1), suffix=st.text())
@@ -123,6 +125,14 @@ class TestIsValidFilePathStringProperty:
 
     def test_empty_rejected(self) -> None:
         assert is_valid_file_path_string("") is False
+
+    @given(prefix=st.text(), suffix=st.text())
+    @example(prefix="", suffix="etc/passwd")
+    @example(prefix="foo/bar", suffix="baz")
+    def test_path_traversal_rejected(self, prefix: str, suffix: str) -> None:
+        sep = "/" if prefix else ""
+        value = f"{prefix}{sep}../{suffix}" if prefix else f"../{suffix}"
+        assert is_valid_file_path_string(value) is False
 
 
 class TestIsSnakeCaseProperty:

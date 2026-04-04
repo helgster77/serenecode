@@ -19,6 +19,7 @@ import queue
 import re
 import subprocess
 import sys
+import threading
 import time
 import types
 import typing
@@ -41,6 +42,7 @@ except ImportError:
     _CROSSHAIR_API_AVAILABLE = False
 
 _CROSSHAIR_CLI_AVAILABLE: bool | None = None
+_CLI_CHECK_LOCK = threading.Lock()
 _TRUST_REQUIRED_MESSAGE = (
     "Level 4 symbolic verification imports and executes project modules. "
     "Re-run with allow_code_execution=True only for trusted code."
@@ -49,19 +51,23 @@ _TRUST_REQUIRED_MESSAGE = (
 
 @icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
 def _check_crosshair_cli() -> bool:
-    """Check if CrossHair CLI is available."""
+    """Check if CrossHair CLI is available (thread-safe)."""
     global _CROSSHAIR_CLI_AVAILABLE
     if _CROSSHAIR_CLI_AVAILABLE is not None:
         return _CROSSHAIR_CLI_AVAILABLE
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "crosshair", "--help"],
-            capture_output=True,
-            timeout=10,
-        )
-        _CROSSHAIR_CLI_AVAILABLE = result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        _CROSSHAIR_CLI_AVAILABLE = False
+    with _CLI_CHECK_LOCK:
+        # Double-check after acquiring lock
+        if _CROSSHAIR_CLI_AVAILABLE is not None:
+            return _CROSSHAIR_CLI_AVAILABLE
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "crosshair", "--help"],
+                capture_output=True,
+                timeout=10,
+            )
+            _CROSSHAIR_CLI_AVAILABLE = result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            _CROSSHAIR_CLI_AVAILABLE = False
     return _CROSSHAIR_CLI_AVAILABLE
 
 
@@ -1056,14 +1062,16 @@ def _subprocess_env(search_paths: tuple[str, ...]) -> dict[str, str]:
     """Build subprocess environment with project import roots on PYTHONPATH."""
     import os
 
-    env = dict(os.environ)
-    existing = env.get("PYTHONPATH", "")
+    from serenecode.adapters import safe_subprocess_env
+
+    extra: dict[str, str] = {}
     paths: list[str] = list(search_paths)
+    existing = os.environ.get("PYTHONPATH", "")
 
     if existing:
         paths.append(existing)
 
     if paths:
-        env["PYTHONPATH"] = os.pathsep.join(paths)
+        extra["PYTHONPATH"] = os.pathsep.join(paths)
 
-    return env
+    return safe_subprocess_env(extra_paths=extra)

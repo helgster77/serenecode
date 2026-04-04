@@ -25,7 +25,6 @@ class Wallet:
         """Withdraw a valid amount."""
         self._balance -= amount
 
-    @icontract.require(lambda self: True, "self must exist")
     @icontract.ensure(lambda result: result >= 0, "balance must be non-negative")
     def get_balance(self) -> float:
         """Get the current balance."""

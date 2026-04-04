@@ -79,13 +79,16 @@ class MypyTypeChecker:
         cmd.extend(file_paths)
 
         try:
-            env = dict(os.environ)
-            existing = env.get("MYPYPATH", "")
+            from serenecode.adapters import safe_subprocess_env
+
+            extra: dict[str, str] = {}
             if search_paths:
                 combined = list(search_paths)
-                if existing:
-                    combined.append(existing)
-                env["MYPYPATH"] = os.pathsep.join(combined)
+                existing_mypypath = os.environ.get("MYPYPATH", "")
+                if existing_mypypath:
+                    combined.append(existing_mypypath)
+                extra["MYPYPATH"] = os.pathsep.join(combined)
+            env = safe_subprocess_env(extra_paths=extra)
             result = subprocess.run(
                 cmd,
                 capture_output=True,

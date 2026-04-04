@@ -1,6 +1,6 @@
-"""Property-based testing checker for Serenecode (Level 3).
+"""Property-based testing checker for Serenecode (Level 4).
 
-This module implements Level 3 verification: it transforms results from
+This module implements Level 4 verification: it transforms results from
 property-based testing backends into structured CheckResult objects.
 The actual test execution is delegated to adapters.
 

@@ -13,6 +13,9 @@ import pytest
 
 from serenecode.checker.structural import (
     IcontractNames,
+    _find_tautological_contracts,
+    _is_tautological_lambda,
+    _decorator_descriptions_are_literals,
     check_class_invariants,
     check_contracts,
     check_docstrings,
@@ -682,7 +685,7 @@ class TestCheckLoopInvariants:
         tree = ast.parse(source)
         results = check_loop_invariants(source, tree, strict_config(), "test.py")
         assert len(results) >= 1
-        variant_results = [r for r in results if "variant" in r.details[0].message.lower()]
+        variant_results = [r for r in results if r.details and "variant" in r.details[0].message.lower()]
         assert len(variant_results) == 1
 
     def test_recursive_function_with_variant_passes(self) -> None:
@@ -699,7 +702,7 @@ class TestCheckLoopInvariants:
         results = check_loop_invariants(source, tree, default_config(), "test.py")
         variant_results = [
             r for r in results
-            if r.function != "<loop>" and "variant" in r.details[0].message.lower()
+            if r.details and r.function != "<loop>" and "variant" in r.details[0].message.lower()
         ]
         assert len(variant_results) == 0
 
@@ -863,7 +866,8 @@ class TestCheckStructuralOrchestrator:
         assert len(result.results) == 1
         assert "syntax" in result.results[0].details[0].message.lower()
 
-    def test_exempt_module_passes(self) -> None:
+    def test_exempt_module_is_reported_as_exempt(self) -> None:
+        """Exempt modules produce EXEMPT results but do not count as passed."""
         source = "x = 1"  # no docstring, no contracts, etc.
         result = check_structural(
             source,
@@ -871,8 +875,10 @@ class TestCheckStructuralOrchestrator:
             module_path="adapters/local_fs.py",
             file_path="test.py",
         )
-        assert result.passed is True
-        # Exempt modules now produce a visible EXEMPT result instead of being invisible.
+        # All-exempt results cannot claim the level was achieved.
+        assert result.passed is False
+        assert result.level_achieved == 0
+        # Exempt modules produce a visible EXEMPT result instead of being invisible.
         assert len(result.results) == 1
         assert result.results[0].status == CheckStatus.EXEMPT
         assert result.summary.exempt_count == 1
@@ -947,3 +953,131 @@ class TestCheckStructuralOrchestrator:
             if r.function == "fetch" and any("require" in d.message.lower() for d in r.details)
         ]
         assert len(contract_failures) == 1
+
+
+class TestTautologicalContracts:
+    """Tests for detecting tautological contracts (always-True conditions)."""
+
+    def test_tautological_ensure_detected(self) -> None:
+        source = textwrap.dedent('''\
+            import icontract
+
+            @icontract.require(lambda x: x > 0, "x must be positive")
+            @icontract.ensure(lambda result: True, "always passes")
+            def compute(x: int) -> int:
+                """Compute."""
+                return x
+        ''')
+        result = check_structural(source, default_config(), file_path="test.py")
+        taut_failures = [
+            r for r in result.results
+            if r.function == "compute"
+            and any("tautological" in d.message.lower() for d in r.details)
+        ]
+        assert len(taut_failures) == 1
+
+    def test_tautological_require_detected(self) -> None:
+        source = textwrap.dedent('''\
+            import icontract
+
+            @icontract.require(lambda x: True, "accepts everything")
+            @icontract.ensure(lambda result: result > 0, "positive result")
+            def compute(x: int) -> int:
+                """Compute."""
+                return x
+        ''')
+        result = check_structural(source, default_config(), file_path="test.py")
+        taut_failures = [
+            r for r in result.results
+            if r.function == "compute"
+            and any("tautological" in d.message.lower() for d in r.details)
+        ]
+        assert len(taut_failures) == 1
+
+    def test_meaningful_contract_not_flagged(self) -> None:
+        source = textwrap.dedent('''\
+            import icontract
+
+            @icontract.require(lambda x: x > 0, "x must be positive")
+            @icontract.ensure(lambda result: result >= 0, "non-negative result")
+            def compute(x: int) -> int:
+                """Compute."""
+                return x
+        ''')
+        result = check_structural(source, default_config(), file_path="test.py")
+        taut_failures = [
+            r for r in result.results
+            if any("tautological" in d.message.lower() for d in r.details)
+        ]
+        assert len(taut_failures) == 0
+
+    def test_tautological_invariant_detected(self) -> None:
+        source = textwrap.dedent('''\
+            import icontract
+
+            @icontract.invariant(lambda self: True, "always true")
+            class Holder:
+                """Holds data."""
+                def __init__(self) -> None:
+                    self.value: int = 0
+        ''')
+        result = check_structural(source, default_config(), file_path="test.py")
+        taut_failures = [
+            r for r in result.results
+            if r.function == "Holder"
+            and any("tautological" in d.message.lower() for d in r.details)
+        ]
+        assert len(taut_failures) == 1
+
+    def test_is_tautological_lambda_true(self) -> None:
+        node = ast.parse("lambda x: True", mode="eval").body
+        assert _is_tautological_lambda(node) is True
+
+    def test_is_tautological_lambda_false(self) -> None:
+        node = ast.parse("lambda x: x > 0", mode="eval").body
+        assert _is_tautological_lambda(node) is False
+
+    def test_is_tautological_lambda_non_lambda(self) -> None:
+        node = ast.parse("42", mode="eval").body
+        assert _is_tautological_lambda(node) is False
+
+
+class TestDescriptionLiteralValidation:
+    """Tests that contract descriptions must be string literals."""
+
+    def test_variable_description_detected(self) -> None:
+        source = textwrap.dedent('''\
+            import icontract
+
+            DESC = "some description"
+
+            @icontract.require(lambda x: x > 0, DESC)
+            @icontract.ensure(lambda result: result > 0, "positive result")
+            def compute(x: int) -> int:
+                """Compute."""
+                return x
+        ''')
+        result = check_structural(source, default_config(), file_path="test.py")
+        literal_failures = [
+            r for r in result.results
+            if r.function == "compute"
+            and any("not a string literal" in d.message.lower() for d in r.details)
+        ]
+        assert len(literal_failures) == 1
+
+    def test_string_literal_description_passes(self) -> None:
+        source = textwrap.dedent('''\
+            import icontract
+
+            @icontract.require(lambda x: x > 0, "x must be positive")
+            @icontract.ensure(lambda result: result > 0, "positive result")
+            def compute(x: int) -> int:
+                """Compute."""
+                return x
+        ''')
+        result = check_structural(source, default_config(), file_path="test.py")
+        literal_failures = [
+            r for r in result.results
+            if any("not a string literal" in d.message.lower() for d in r.details)
+        ]
+        assert len(literal_failures) == 0
