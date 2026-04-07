@@ -93,3 +93,28 @@ class TestLocalFileWriter:
         writer = LocalFileWriter()
         writer.ensure_directory(str(new_dir))
         assert new_dir.is_dir()
+
+    def test_write_file_oserror_raises_initialization_error(self, tmp_path: Path) -> None:
+        """Branch (lines 150-151): OSError during write → InitializationError."""
+        from serenecode.core.exceptions import InitializationError
+        # Try to write into a path where the parent is an existing FILE — that
+        # makes mkdir fail with OSError because you can't create a directory
+        # under a regular file.
+        blocking_file = tmp_path / "blocker"
+        blocking_file.write_text("not a directory", encoding="utf-8")
+        target = blocking_file / "child.txt"
+        writer = LocalFileWriter()
+        import pytest
+        with pytest.raises(InitializationError, match="Cannot write file"):
+            writer.write_file(str(target), "content")
+
+    def test_ensure_directory_oserror_raises_initialization_error(self, tmp_path: Path) -> None:
+        """Branch (lines 166-167): OSError during mkdir → InitializationError."""
+        from serenecode.core.exceptions import InitializationError
+        blocking_file = tmp_path / "blocker"
+        blocking_file.write_text("not a directory", encoding="utf-8")
+        target = blocking_file / "child"
+        writer = LocalFileWriter()
+        import pytest
+        with pytest.raises(InitializationError, match="Cannot create directory"):
+            writer.ensure_directory(str(target))

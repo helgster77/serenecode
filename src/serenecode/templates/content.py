@@ -146,6 +146,22 @@ When writing a new function or class:
 
 Do not consider a feature complete until tests exist and pass.
 
+### Reading verification output
+
+`serenecode check` runs may take seconds to minutes to complete. The output \
+can be long when there are many findings. **Read the entire output before \
+acting** — never truncate, never re-run just to "see it again." Each \
+finding includes a function name, file, line number, message, and \
+suggestion; all of those are needed to fix the issue. If you re-run the \
+tool because you only read the first few findings, you waste minutes of \
+the user's time and produce the same output.
+
+If the output is genuinely too long to process in one pass, use the \
+`--format json` flag and parse it programmatically — but the human-readable \
+format is designed to be read in full. Process all findings in a single \
+batch, group related ones, and address them together rather than starting \
+a new check after each fix.
+
 ---
 
 ## Exemptions
@@ -334,6 +350,24 @@ When writing any new function:
 
 Do not commit code without passing tests and verification.
 
+### Reading verification output
+
+`serenecode check` runs at strict level can take several minutes — `mypy`, \
+`coverage.py`, `Hypothesis`, `CrossHair`, and the compositional checker all \
+execute against the full source tree. The output is correspondingly long. \
+**You MUST read the entire output before acting** — never truncate, never \
+re-run just to "see it again." Each finding includes a function name, file, \
+line number, message, and suggestion; all of those are needed to fix the \
+issue. Re-running the tool because you only read the first few findings \
+wastes minutes of the user's time and produces the same output.
+
+If the output is genuinely too long to fit in one read, use \
+`--format json` and parse it programmatically — but the human-readable \
+format is designed to be read in full. Process all findings in a single \
+batch, group related ones, and address them together rather than starting \
+a new check after each fix. Spawn subagents to fix groups of related \
+findings in parallel when there are many.
+
 ---
 
 ## No Exemptions
@@ -383,6 +417,17 @@ Place tests in `tests/test_<module>.py`. Run `pytest -q` to verify.
 def test_compute_mean_returns_correct_value():
     assert compute_mean([1.0, 2.0, 3.0]) == 2.0
 ```
+
+---
+
+## Reading Verification Output
+
+`serenecode check` runs may take seconds to minutes. **Always read the full \
+output before acting** — never truncate, never re-run just to see it again. \
+Re-running wastes the user's time and produces the same output. Address \
+all findings in a single batch rather than starting a new check after \
+each fix. If the output is too long to read inline, use `--format json` \
+and parse it programmatically.
 
 ---
 

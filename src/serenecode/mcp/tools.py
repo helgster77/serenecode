@@ -336,8 +336,8 @@ def tool_check(path: str = ".", level: int = 1) -> dict[str, object]:
 
 
 @icontract.require(
-    lambda file: isinstance(file, str) and len(file) > 0,
-    "file must be a non-empty string",
+    lambda path: isinstance(path, str) and len(path) > 0,
+    "path must be a non-empty string",
 )
 @icontract.require(
     lambda level: isinstance(level, int),
@@ -347,11 +347,12 @@ def tool_check(path: str = ".", level: int = 1) -> dict[str, object]:
     lambda result: isinstance(result, dict) and "passed" in result,
     "result must be a JSON-friendly CheckResponse dict",
 )
-def tool_check_file(file: str, level: int = 1) -> dict[str, object]:
+def tool_check_file(path: str, level: int = 1) -> dict[str, object]:
     """Run the verification pipeline scoped to a single source file.
 
     Args:
-        file: Absolute or project-relative path to the source file.
+        path: Absolute or project-relative path to the source file.
+            (Same parameter name as `serenecode_check` for consistency.)
         level: Verification level (1-6). Levels 3+ require the server to
             have been started with --allow-code-execution.
 
@@ -362,7 +363,7 @@ def tool_check_file(file: str, level: int = 1) -> dict[str, object]:
     if not 1 <= level <= 6:
         raise ValueError(f"level must be between 1 and 6, got {level}")
     _gate_code_execution(level)
-    abs_file = os.path.abspath(file)
+    abs_file = os.path.abspath(path)
     config, source_files, project_root = _build_pipeline_for_file(abs_file)
     reader = LocalFileReader()
     test_stems = discover_test_file_stems(project_root, reader)
@@ -386,8 +387,8 @@ def tool_check_file(file: str, level: int = 1) -> dict[str, object]:
 
 
 @icontract.require(
-    lambda file: isinstance(file, str) and len(file) > 0,
-    "file must be a non-empty string",
+    lambda path: isinstance(path, str) and len(path) > 0,
+    "path must be a non-empty string",
 )
 @icontract.require(
     lambda function: isinstance(function, str) and len(function) > 0,
@@ -402,7 +403,7 @@ def tool_check_file(file: str, level: int = 1) -> dict[str, object]:
     "result must be a JSON-friendly CheckResponse dict",
 )
 def tool_check_function(
-    file: str,
+    path: str,
     function: str,
     level: int = 1,
 ) -> dict[str, object]:
@@ -413,7 +414,8 @@ def tool_check_function(
     full pipeline on a single-file source set and filters afterward.
 
     Args:
-        file: Path to the source file containing the function.
+        path: Path to the source file containing the function. (Same
+            parameter name as `serenecode_check` for consistency.)
         function: Function name. The first def with this name in the file
             is what gets reported.
         level: Verification level (1-6). Levels 3+ require the server to
@@ -426,7 +428,7 @@ def tool_check_function(
     if not 1 <= level <= 6:
         raise ValueError(f"level must be between 1 and 6, got {level}")
     _gate_code_execution(level)
-    abs_file = os.path.abspath(file)
+    abs_file = os.path.abspath(path)
     config, source_files, project_root = _build_pipeline_for_file(abs_file)
     if level == 1:
         # Fast path: structural-only on a single file
@@ -456,8 +458,8 @@ def tool_check_function(
 
 
 @icontract.require(
-    lambda file: isinstance(file, str) and len(file) > 0,
-    "file must be a non-empty string",
+    lambda path: isinstance(path, str) and len(path) > 0,
+    "path must be a non-empty string",
 )
 @icontract.require(
     lambda function: isinstance(function, str) and len(function) > 0,
@@ -476,7 +478,7 @@ def tool_check_function(
     "result must contain a 'fixed' bool flag",
 )
 def tool_verify_fixed(
-    file: str,
+    path: str,
     function: str,
     finding_substring: str,
     level: int = 1,
@@ -484,7 +486,7 @@ def tool_verify_fixed(
     """Re-run the verification on one function and report whether a finding is gone.
 
     Args:
-        file: Path to the source file.
+        path: Path to the source file.
         function: Function name to re-check.
         finding_substring: A substring of the original finding's `message`
             that uniquely identifies it (e.g. "missing @icontract.ensure").
@@ -496,7 +498,7 @@ def tool_verify_fixed(
             - remaining_findings: list of finding dicts whose message still matches
             - all_findings: full CheckResponse for the function
     """
-    response_dict = tool_check_function(file=file, function=function, level=level)
+    response_dict = tool_check_function(path=path, function=function, level=level)
     findings = response_dict.get("findings", [])
     if not isinstance(findings, list):
         findings = []
@@ -519,8 +521,8 @@ def tool_verify_fixed(
 
 
 @icontract.require(
-    lambda file: isinstance(file, str) and len(file) > 0,
-    "file must be a non-empty string",
+    lambda path: isinstance(path, str) and len(path) > 0,
+    "path must be a non-empty string",
 )
 @icontract.require(
     lambda function: isinstance(function, str) and len(function) > 0,
@@ -530,7 +532,7 @@ def tool_verify_fixed(
     lambda result: isinstance(result, dict) and "suggestions" in result,
     "result must contain a 'suggestions' list",
 )
-def tool_suggest_contracts(file: str, function: str) -> dict[str, object]:
+def tool_suggest_contracts(path: str, function: str) -> dict[str, object]:
     """Suggest icontract decorators for a function.
 
     Runs the structural checker on the file and surfaces the
@@ -540,13 +542,13 @@ def tool_suggest_contracts(file: str, function: str) -> dict[str, object]:
     consistent between the CLI and the MCP server.
 
     Args:
-        file: Path to the source file.
+        path: Path to the source file.
         function: Function name.
 
     Returns:
-        A dict with `function`, `file`, and `suggestions` (list of strings).
+        A dict with `function`, `path`, and `suggestions` (list of strings).
     """
-    abs_file = os.path.abspath(file)
+    abs_file = os.path.abspath(path)
     config, source_files, _ = _build_pipeline_for_file(abs_file)
     sf = source_files[0]
     result = check_structural(sf.source, config, sf.module_path, sf.file_path)
@@ -558,7 +560,7 @@ def tool_suggest_contracts(file: str, function: str) -> dict[str, object]:
             if d.suggestion and "icontract" in d.message.lower():
                 suggestions.append(d.suggestion)
     return {
-        "file": abs_file,
+        "path": abs_file,
         "function": function,
         "suggestions": suggestions,
     }
@@ -635,28 +637,38 @@ def tool_list_reqs(spec_file: str) -> dict[str, object]:
     "spec_file must be a non-empty string",
 )
 @icontract.require(
-    lambda req_id: isinstance(req_id, str) and len(req_id) > 0,
-    "req_id must be a non-empty string",
+    lambda req_id: (req_id is None) or (isinstance(req_id, str) and len(req_id) > 0),
+    "req_id must be None or a non-empty string",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, dict) and "status" in result,
-    "result must contain a status field",
+    lambda result: isinstance(result, dict) and "reqs" in result,
+    "result must contain a 'reqs' list",
 )
-def tool_req_status(spec_file: str, req_id: str) -> dict[str, object]:
-    """Report implementation and verification status for a single REQ.
+def tool_req_status(
+    spec_file: str,
+    req_id: str | None = None,
+) -> dict[str, object]:
+    """Report implementation and verification status for spec requirements.
 
-    Scans every Python file under the project root for `Implements: REQ-xxx`
-    and `Verifies: REQ-xxx` references and returns the (file, function, line)
-    tuples that matched the requested req_id.
+    Scans every Python file under the project root that contains `spec_file`
+    for `Implements: REQ-xxx` and `Verifies: REQ-xxx` references and reports
+    where each requirement is implemented and tested. Source files are
+    auto-discovered — you do NOT pass `src_path` or `tests_path` separately.
 
     Args:
-        spec_file: Path to SPEC.md (used to confirm the REQ exists).
-        req_id: The requirement identifier (e.g. "REQ-042").
+        spec_file: Path to SPEC.md.
+        req_id: Optional requirement identifier (e.g. "REQ-042"). When
+            omitted, the response includes the status of every REQ in the
+            spec. When provided, the response is filtered to that one REQ
+            (and the `reqs` list will have at most one entry).
 
     Returns:
-        A dict with `req_id`, `exists_in_spec`, `implementations`,
-        `verifications`, and a derived `status` ("complete" |
-        "implemented_only" | "tested_only" | "orphan").
+        A dict with:
+            - `spec_file`: absolute path to the spec
+            - `project_root`: where source/test files were scanned
+            - `reqs`: list of {req_id, exists_in_spec, status, implementations,
+              verifications} entries. `status` is one of "complete",
+              "implemented_only", "tested_only", or "orphan".
     """
     reader = LocalFileReader()
     spec_content = reader.read_file(spec_file)
@@ -664,37 +676,57 @@ def tool_req_status(spec_file: str, req_id: str) -> dict[str, object]:
     project_root = _resolve_root(os.path.dirname(spec_file))
     files = reader.list_python_files(project_root)
 
-    implementations: list[dict[str, object]] = []
-    verifications: list[dict[str, object]] = []
+    # Collect all (req_id → list of refs) for implementations and verifications
+    impls_by_req: dict[str, list[dict[str, object]]] = {}
+    verifs_by_req: dict[str, list[dict[str, object]]] = {}
     for f in files:
         try:
             source = reader.read_file(f)
         except OSError:
             continue
         for func_name, found_req, line in extract_implementations(source):
-            if found_req == req_id:
-                implementations.append({"file": f, "function": func_name, "line": line})
+            impls_by_req.setdefault(found_req, []).append(
+                {"file": f, "function": func_name, "line": line},
+            )
         for func_name, found_req, line in extract_verifications(source):
-            if found_req == req_id:
-                verifications.append({"file": f, "function": func_name, "line": line})
+            verifs_by_req.setdefault(found_req, []).append(
+                {"file": f, "function": func_name, "line": line},
+            )
 
-    has_impl = len(implementations) > 0
-    has_test = len(verifications) > 0
-    if has_impl and has_test:
-        status = "complete"
-    elif has_impl:
-        status = "implemented_only"
-    elif has_test:
-        status = "tested_only"
+    # Determine which REQ ids to report on. The union of (spec ∪ found in code)
+    # so we surface code-side orphans (REQs in code that aren't in the spec) too.
+    candidate_ids: set[str]
+    if req_id is not None:
+        candidate_ids = {req_id}
     else:
-        status = "orphan"
+        candidate_ids = set(spec_reqs) | set(impls_by_req.keys()) | set(verifs_by_req.keys())
+
+    reqs: list[dict[str, object]] = []
+    for rid in sorted(candidate_ids):
+        impls = impls_by_req.get(rid, [])
+        verifs = verifs_by_req.get(rid, [])
+        has_impl = len(impls) > 0
+        has_test = len(verifs) > 0
+        if has_impl and has_test:
+            status = "complete"
+        elif has_impl:
+            status = "implemented_only"
+        elif has_test:
+            status = "tested_only"
+        else:
+            status = "orphan"
+        reqs.append({
+            "req_id": rid,
+            "exists_in_spec": rid in spec_reqs,
+            "status": status,
+            "implementations": impls,
+            "verifications": verifs,
+        })
 
     return {
-        "req_id": req_id,
-        "exists_in_spec": req_id in spec_reqs,
-        "implementations": implementations,
-        "verifications": verifications,
-        "status": status,
+        "spec_file": os.path.abspath(spec_file),
+        "project_root": project_root,
+        "reqs": reqs,
     }
 
 
@@ -753,8 +785,8 @@ def tool_orphans(spec_file: str) -> dict[str, object]:
 
 
 @icontract.require(
-    lambda file: isinstance(file, str) and len(file) > 0,
-    "file must be a non-empty string",
+    lambda path: isinstance(path, str) and len(path) > 0,
+    "path must be a non-empty string",
 )
 @icontract.require(
     lambda function: isinstance(function, str) and len(function) > 0,
@@ -764,19 +796,19 @@ def tool_orphans(spec_file: str) -> dict[str, object]:
     lambda result: isinstance(result, dict) and "passed" in result,
     "result must be a JSON-friendly CheckResponse dict",
 )
-def tool_uncovered(file: str, function: str) -> dict[str, object]:
+def tool_uncovered(path: str, function: str) -> dict[str, object]:
     """Report Level 3 coverage findings for a single function.
 
     Requires the server to have been started with --allow-code-execution.
 
     Args:
-        file: Path to the source file.
+        path: Path to the source file.
         function: Function name.
 
     Returns:
         A JSON-friendly CheckResponse-shaped dict scoped to the function.
     """
-    return tool_check_function(file=file, function=function, level=3)
+    return tool_check_function(path=path, function=function, level=3)
 
 
 # ---------------------------------------------------------------------------
@@ -785,8 +817,8 @@ def tool_uncovered(file: str, function: str) -> dict[str, object]:
 
 
 @icontract.require(
-    lambda file: isinstance(file, str) and len(file) > 0,
-    "file must be a non-empty string",
+    lambda path: isinstance(path, str) and len(path) > 0,
+    "path must be a non-empty string",
 )
 @icontract.require(
     lambda function: isinstance(function, str) and len(function) > 0,
@@ -796,7 +828,7 @@ def tool_uncovered(file: str, function: str) -> dict[str, object]:
     lambda result: isinstance(result, dict) and "suggestions" in result,
     "result must contain a 'suggestions' list",
 )
-def tool_suggest_test(file: str, function: str) -> dict[str, object]:
+def tool_suggest_test(path: str, function: str) -> dict[str, object]:
     """Return any test scaffold suggestion the coverage adapter generated.
 
     Runs Level 3 on the function and surfaces the `Detail.suggestion`
@@ -804,13 +836,13 @@ def tool_suggest_test(file: str, function: str) -> dict[str, object]:
     scaffold for uncovered paths.
 
     Args:
-        file: Path to the source file.
+        path: Path to the source file.
         function: Function name.
 
     Returns:
-        A dict with `function`, `file`, and `suggestions` (list of strings).
+        A dict with `function`, `path`, and `suggestions` (list of strings).
     """
-    response_dict = tool_check_function(file=file, function=function, level=3)
+    response_dict = tool_check_function(path=path, function=function, level=3)
     findings = response_dict.get("findings", [])
     suggestions: list[str] = []
     if isinstance(findings, list):
@@ -820,7 +852,7 @@ def tool_suggest_test(file: str, function: str) -> dict[str, object]:
                 if isinstance(s, str) and s:
                     suggestions.append(s)
     return {
-        "file": os.path.abspath(file),
+        "path": os.path.abspath(path),
         "function": function,
         "suggestions": suggestions,
     }

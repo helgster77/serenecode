@@ -749,3 +749,33 @@ class TestLevelAchievedEvidenceRequirement:
         from serenecode.core.pipeline import _level_achieved
 
         assert _level_achieved([], has_source_files=False, require_evidence=True) is True
+
+
+class TestIsTestFileExempt:
+    """Tests for _is_test_file_exempt — covers branch at line 515."""
+
+    def test_ports_module_is_exempt(self) -> None:
+        """Branch (line 515): pattern matches → return True."""
+        from serenecode.core.pipeline import _is_test_file_exempt
+        assert _is_test_file_exempt("serenecode/ports/file_system.py") is True
+
+    def test_templates_module_is_exempt(self) -> None:
+        from serenecode.core.pipeline import _is_test_file_exempt
+        assert _is_test_file_exempt("serenecode/templates/content.py") is True
+
+    def test_exceptions_module_is_exempt(self) -> None:
+        from serenecode.core.pipeline import _is_test_file_exempt
+        assert _is_test_file_exempt("serenecode/exceptions.py") is True
+
+    def test_fixture_module_is_exempt(self) -> None:
+        from serenecode.core.pipeline import _is_test_file_exempt
+        assert _is_test_file_exempt("tests/fixtures/broken.py") is True
+
+    def test_regular_module_is_not_exempt(self) -> None:
+        """Regular core modules are NOT exempt — they need test files."""
+        from serenecode.core.pipeline import _is_test_file_exempt
+        assert _is_test_file_exempt("serenecode/core/pipeline.py") is False
+
+    def test_adapter_module_is_not_exempt(self) -> None:
+        from serenecode.core.pipeline import _is_test_file_exempt
+        assert _is_test_file_exempt("serenecode/adapters/local_fs.py") is False

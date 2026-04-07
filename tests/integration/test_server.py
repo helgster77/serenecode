@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from serenecode.mcp.server import build_server
+from serenecode.mcp.server import build_server, run_stdio_server
 from serenecode.mcp.tools import get_state, reset_state
 
 
@@ -38,3 +39,32 @@ class TestBuildServer:
         build_server()
         state = get_state()
         assert state.allow_code_execution is False
+
+
+class TestRunStdioServer:
+    """Tests for run_stdio_server — covers lines 230, 234.
+
+    The function blocks on stdin until the parent closes it, so we mock
+    `build_server` to return a fake server whose `run()` is a no-op.
+    """
+
+    def test_run_calls_build_server_then_run(self, tmp_path: Path) -> None:
+        """Branch (lines 230, 234): construct server then call .run()."""
+        fake_server = MagicMock()
+        with patch("serenecode.mcp.server.build_server", return_value=fake_server) as mock_build:
+            run_stdio_server(project_root=str(tmp_path), allow_code_execution=True)
+            mock_build.assert_called_once_with(
+                project_root=str(tmp_path),
+                allow_code_execution=True,
+            )
+            fake_server.run.assert_called_once()
+
+    def test_run_defaults(self) -> None:
+        fake_server = MagicMock()
+        with patch("serenecode.mcp.server.build_server", return_value=fake_server) as mock_build:
+            run_stdio_server()
+            mock_build.assert_called_once_with(
+                project_root=None,
+                allow_code_execution=False,
+            )
+            fake_server.run.assert_called_once()

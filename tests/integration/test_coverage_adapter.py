@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from serenecode.adapters.coverage_adapter import (
     _build_import_map,
     _classify_reason,
@@ -199,6 +201,38 @@ class TestClassifyReason:
         result = _classify_reason("myproject.utils", is_external=False, is_io=False)
         assert "internal" in result
 
+    def test_socket_network_io(self) -> None:
+        """Branch (line 1021): socket library family → network I/O."""
+        result = _classify_reason("socket", is_external=True, is_io=True)
+        assert "network" in result
+
+    def test_smtplib_network_io(self) -> None:
+        result = _classify_reason("smtplib", is_external=True, is_io=True)
+        assert "network" in result
+
+    def test_redis_database(self) -> None:
+        result = _classify_reason("redis", is_external=True, is_io=True)
+        assert "database" in result
+
+    def test_pymongo_database(self) -> None:
+        result = _classify_reason("pymongo", is_external=True, is_io=True)
+        assert "database" in result
+
+    def test_boto3_cloud(self) -> None:
+        """Branch (lines 1024-1025): boto3 → cloud API."""
+        result = _classify_reason("boto3", is_external=True, is_io=True)
+        assert "cloud" in result
+
+    def test_unknown_io_default(self) -> None:
+        """Branch (line 1026): unknown I/O library → generic external I/O."""
+        result = _classify_reason("some_obscure_library", is_external=True, is_io=True)
+        assert "external I/O" in result
+
+    def test_external_non_io(self) -> None:
+        """Branch (line 1028): external but not I/O → external library."""
+        result = _classify_reason("numpy", is_external=True, is_io=False)
+        assert "external library" in result
+
 
 class TestDescribeUncoveredBlock:
     """Tests for uncovered block description."""
@@ -231,6 +265,51 @@ class TestDescribeUncoveredBlock:
     def test_out_of_range_line(self) -> None:
         result = _describe_uncovered_block(["only line"], [100])
         assert "100" in result
+
+    def test_skips_blank_lines_above(self) -> None:
+        """Branch (lines 1069-1070): scan upward past blank/comment lines."""
+        lines = ["if x > 0:", "", "    return x"]
+        result = _describe_uncovered_block(lines, [3])
+        assert "branch" in result
+
+    def test_skips_comment_lines_above(self) -> None:
+        lines = ["if x > 0:", "    # explain", "    return x"]
+        result = _describe_uncovered_block(lines, [3])
+        assert "branch" in result
+
+    def test_else_branch(self) -> None:
+        """Branch (lines 1076-1077): else: above the block."""
+        lines = ["if x > 0:", "    return 1", "else:", "    return -1"]
+        result = _describe_uncovered_block(lines, [4])
+        assert "else" in result
+
+    def test_first_line_is_if_directly(self) -> None:
+        """Branch (line 1080-1082): first line of block IS the if."""
+        lines = ["x = 1", "if x > 0:", "    pass"]
+        result = _describe_uncovered_block(lines, [2])
+        assert "branch" in result
+
+    def test_first_line_is_except_directly(self) -> None:
+        """Branch (line 1083-1084): first line is except handler."""
+        lines = ["try:", "    pass", "except ValueError:", "    pass"]
+        result = _describe_uncovered_block(lines, [3])
+        assert "exception handler" in result
+
+    def test_first_line_is_raise_directly(self) -> None:
+        lines = ["x = 1", "raise ValueError('bad')"]
+        result = _describe_uncovered_block(lines, [2])
+        assert "error path" in result
+
+    def test_first_line_is_return_directly(self) -> None:
+        lines = ["x = 1", "return x"]
+        result = _describe_uncovered_block(lines, [2])
+        assert "return path" in result
+
+    def test_falls_through_to_lines_label(self) -> None:
+        """Branch (line 1090): no recognized pattern → 'lines X-Y'."""
+        lines = ["x = 1", "y = 2", "z = x + y"]
+        result = _describe_uncovered_block(lines, [2, 3])
+        assert "lines 2-3" in result
 
 
 class TestMapCoverageToFunctions:
@@ -370,3 +449,89 @@ class TestGetCallName:
         import ast
         node = ast.parse("items[0]()").body[0].value  # type: ignore[attr-defined]
         assert _get_call_name(node) is None
+
+
+class TestCoverageAnalyzerAdapterInit:
+    """Tests for CoverageAnalyzerAdapter __init__ — covers branches at 126, 128."""
+
+    def test_without_consent_raises(self) -> None:
+        """Branch (line 126): allow_code_execution=False → UnsafeCodeExecutionError."""
+        from serenecode.adapters.coverage_adapter import CoverageAnalyzerAdapter
+        from serenecode.core.exceptions import UnsafeCodeExecutionError
+        with pytest.raises(UnsafeCodeExecutionError):
+            CoverageAnalyzerAdapter(allow_code_execution=False)
+
+    def test_with_consent_constructs_ok(self) -> None:
+        from serenecode.adapters.coverage_adapter import CoverageAnalyzerAdapter
+        adapter = CoverageAnalyzerAdapter(allow_code_execution=True)
+        assert adapter._allow_code_execution is True
+        assert adapter._coverage_threshold == 80.0
+
+    def test_custom_timeout(self) -> None:
+        from serenecode.adapters.coverage_adapter import CoverageAnalyzerAdapter
+        adapter = CoverageAnalyzerAdapter(allow_code_execution=True, test_timeout=900)
+        assert adapter._test_timeout == 900
+
+    def test_coverage_unavailable_raises_tool_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Branch (line 128): _COVERAGE_AVAILABLE=False → ToolNotInstalledError."""
+        from serenecode.adapters import coverage_adapter
+        from serenecode.core.exceptions import ToolNotInstalledError
+        monkeypatch.setattr(coverage_adapter, "_COVERAGE_AVAILABLE", False)
+        with pytest.raises(ToolNotInstalledError, match="coverage is not installed"):
+            coverage_adapter.CoverageAnalyzerAdapter(allow_code_execution=True)
+
+
+class TestFindDependenciesInLines:
+    """Tests for _find_dependencies_in_lines — covers branches at 834-868."""
+
+    def test_finds_call_on_uncovered_line(self) -> None:
+        import ast
+        source = "import os\n\ndef f():\n    os.path.exists('foo')\n"
+        tree = ast.parse(source)
+        deps = _find_dependencies_in_lines(tree, [4], source, "mod.py")
+        assert len(deps) >= 1
+        assert any("os.path.exists" in dep.name for dep in deps)
+
+    def test_no_calls_returns_empty(self) -> None:
+        import ast
+        source = "def f():\n    return 1\n"
+        tree = ast.parse(source)
+        deps = _find_dependencies_in_lines(tree, [2], source, "mod.py")
+        assert deps == []
+
+    def test_dedupes_by_call_name(self) -> None:
+        import ast
+        source = (
+            "import os\n"
+            "\n"
+            "def f():\n"
+            "    os.path.exists('a')\n"
+            "    os.path.exists('b')\n"
+        )
+        tree = ast.parse(source)
+        deps = _find_dependencies_in_lines(tree, [4, 5], source, "mod.py")
+        # Both calls are the same name → deduped
+        assert len(deps) == 1
+
+    def test_skips_calls_outside_uncovered_lines(self) -> None:
+        import ast
+        source = (
+            "import os\n"
+            "def f():\n"
+            "    os.path.exists('a')\n"  # line 3
+            "    os.path.exists('b')\n"  # line 4
+        )
+        tree = ast.parse(source)
+        # Only line 4 is uncovered — line 3 should be ignored
+        deps = _find_dependencies_in_lines(tree, [4], source, "mod.py")
+        assert len(deps) == 1
+
+    def test_classifies_external_io(self) -> None:
+        import ast
+        source = "import os\ndef f():\n    os.system('ls')\n"
+        tree = ast.parse(source)
+        deps = _find_dependencies_in_lines(tree, [3], source, "mod.py")
+        assert len(deps) == 1
+        assert deps[0].mock_necessary is True

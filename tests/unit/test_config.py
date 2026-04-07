@@ -284,3 +284,54 @@ class TestIsExemptModule:
         config = default_config()
         assert is_exempt_module("src/domain/notcli.py", config) is False
         assert is_exempt_module("src/domain/real_cli.py", config) is False
+
+
+class TestPathPatternMatches:
+    """Tests for _path_pattern_matches — covers branch gaps at lines 804-812."""
+
+    def test_directory_pattern_matches(self) -> None:
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("src/serenecode/adapters/local_fs.py", "adapters/") is True
+
+    def test_directory_pattern_matches_in_middle(self) -> None:
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("src/proj/adapters/sub/file.py", "adapters/") is True
+
+    def test_directory_pattern_no_match(self) -> None:
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("src/proj/core/file.py", "adapters/") is False
+
+    def test_directory_pattern_window_too_large(self) -> None:
+        """Branch: pattern segments > module segments returns False."""
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("file.py", "very/deep/nested/") is False
+
+    def test_single_segment_pattern_matches_basename(self) -> None:
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("src/foo/cli.py", "cli.py") is True
+
+    def test_single_segment_pattern_no_match(self) -> None:
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("src/foo/init.py", "cli.py") is False
+
+    def test_multi_segment_pattern_matches_window(self) -> None:
+        """Branch (lines 804-812): multi-segment non-trailing-slash pattern."""
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("src/proj/billing/adapters/file.py", "billing/adapters") is True
+
+    def test_multi_segment_pattern_no_match(self) -> None:
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("src/proj/core/file.py", "billing/adapters") is False
+
+    def test_multi_segment_pattern_too_long(self) -> None:
+        """Branch (lines 805-806): pattern_segments longer than module_segments → False."""
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("a/b.py", "x/y/z") is False
+
+    def test_empty_module_path(self) -> None:
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("", "adapters/") is False
+
+    def test_empty_pattern(self) -> None:
+        from serenecode.config import _path_pattern_matches
+        assert _path_pattern_matches("foo.py", "") is False

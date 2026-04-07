@@ -110,7 +110,7 @@ class CoverageAnalyzerAdapter:
         self,
         allow_code_execution: bool = False,
         coverage_threshold: float = 80.0,
-        test_timeout: int = 120,
+        test_timeout: int = 600,
     ) -> None:
         """Initialize the coverage analyzer.
 
@@ -118,6 +118,9 @@ class CoverageAnalyzerAdapter:
             allow_code_execution: Must be True to run tests.
             coverage_threshold: Default coverage threshold percentage.
             test_timeout: Maximum seconds for the pytest subprocess to run.
+                Defaults to 600 seconds (10 minutes), enough headroom for
+                a project test suite of a few minutes. Override via the
+                CLI's --coverage-timeout flag for very large suites.
         """
         if not allow_code_execution:
             raise UnsafeCodeExecutionError(_TRUST_REQUIRED_MESSAGE)
@@ -384,7 +387,7 @@ def _walk_for_functions(
 def _run_tests_with_coverage(
     source_file: str,
     search_paths: tuple[str, ...],
-    test_timeout: int = 120,
+    test_timeout: int = 600,
 ) -> dict[str, Any]:
     """Run tests in subprocess with coverage and return JSON data.
 

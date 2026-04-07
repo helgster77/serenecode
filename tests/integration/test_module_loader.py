@@ -119,6 +119,28 @@ class TestInferImportRoot:
         # No __init__.py to walk above, stays at parent dir
         assert root == str(tmp_path)
 
+    def test_walk_terminates_at_filesystem_root(self, tmp_path: Path) -> None:
+        """Branch (line 444): if parent == current → break out of walk.
+
+        Triggered when the package walk reaches the filesystem root (where
+        Path('/').parent == Path('/')). We force it by mocking is_file()
+        to always return True for __init__.py probes.
+        """
+        from unittest.mock import patch
+
+        original_is_file = Path.is_file
+
+        def fake_is_file(self: Path) -> bool:
+            if self.name == "__init__.py":
+                return True
+            return original_is_file(self)
+
+        with patch.object(Path, "is_file", new=fake_is_file):
+            module_file = tmp_path / "deep.py"
+            result = _infer_import_root(module_file)
+            # The walk should terminate at the filesystem root
+            assert Path(result).parent == Path(result)
+
 
 class TestFreshSourceFinder:
     """Tests for _FreshSourceFinder.find_spec."""

@@ -75,3 +75,22 @@ class TestResources:
         data = json.loads(text)
         assert data["count"] == 1
         assert data["req_ids"] == ["REQ-001"]
+
+    def test_config_resource_no_serenecode_md_uses_default(self, tmp_path: Path) -> None:
+        """Branch (line 41): no SERENECODE.md → fall back to default_config()."""
+        # tmp_path has no SERENECODE.md anywhere up the tree
+        build_server(project_root=str(tmp_path))
+        text = resource_config()
+        data = json.loads(text)
+        assert data["template_name"] == "default"
+        # Confirm it didn't try to parse a missing file
+        assert data["serenecode_md"] is None
+
+    def test_exempt_modules_no_serenecode_md_uses_default(self, tmp_path: Path) -> None:
+        """Branch (line 86): no SERENECODE.md → fall back to default_config()."""
+        build_server(project_root=str(tmp_path))
+        text = resource_exempt_modules()
+        data = json.loads(text)
+        assert "exempt_paths" in data
+        # Default config has the standard exempt paths
+        assert "cli.py" in data["exempt_paths"]

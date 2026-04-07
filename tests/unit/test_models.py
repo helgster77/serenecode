@@ -472,3 +472,29 @@ class TestMakeCheckResult:
         check = make_check_result((), level_requested=5, duration_seconds=0.0)
         assert check.passed is True
         assert check.level_achieved == 5
+
+
+class TestGetVersion:
+    """Tests for _get_version — covers the ImportError fallback at lines 28-29."""
+
+    def test_returns_string(self) -> None:
+        from serenecode.models import _get_version
+        result = _get_version()
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_falls_back_when_metadata_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Branch (lines 28-29): importlib.metadata.version raises → fallback."""
+        from serenecode import models
+
+        # Patch importlib.metadata.version to raise PackageNotFoundError
+        import importlib.metadata as metadata
+
+        def fake_version(name: str) -> str:
+            raise metadata.PackageNotFoundError(name)
+
+        monkeypatch.setattr(metadata, "version", fake_version)
+        # Re-call the function to exercise the except branch
+        assert models._get_version() == "0.0.0"

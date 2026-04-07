@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import time
+from typing import Callable
 
 import click
 import icontract
@@ -85,15 +86,26 @@ def init(path: str) -> None:
     template = {1: "minimal", 2: "default", 3: "strict"}[level_choice]
     click.echo("")
 
-    # Warning
-    click.echo("Important: these choices will be written to SERENECODE.md.")
-    click.echo("Serenecode does not support changing them once implementation")
-    click.echo("has started. The conventions become the contract between you,")
-    click.echo("your coding assistant, and the verification tool.")
+    # Question 3: MCP server
+    click.echo("Set up the Serenecode MCP server for your AI coding assistant?")
     click.echo("")
-    if not click.confirm("Proceed?", default=True):
-        click.echo("Aborted.")
-        return
+    click.echo("  The MCP server lets your assistant call Serenecode tools while")
+    click.echo("  it writes code — verifying contracts, running tests, and catching")
+    click.echo("  findings inside its edit loop instead of waiting until the end.")
+    click.echo("  Works with Claude Code, Cursor, Cline, Continue, and any other")
+    click.echo("  MCP client. Highly recommended for AI-driven development.")
+    click.echo("")
+    setup_mcp = click.confirm("Set up MCP?", default=True)
+    click.echo("")
+
+    # Final notice before writing files. Existing SERENECODE.md / CLAUDE.md
+    # are protected by the confirm_callback inside initialize_project — this
+    # text is informational, not a separate confirmation step.
+    click.echo("Note: your choices will be written to SERENECODE.md and become the")
+    click.echo("contract between you, your coding assistant, and the verification")
+    click.echo("tool. Serenecode does not support changing them once implementation")
+    click.echo("has started.")
+    click.echo("")
 
     reader = LocalFileReader()
     writer = LocalFileWriter()
@@ -126,6 +138,9 @@ def init(path: str) -> None:
         click.echo("Place your spec in the project directory before starting.")
         click.echo("Your assistant will convert it to SereneCode format, validate")
         click.echo("it, create an implementation plan, and build from it.")
+
+    if setup_mcp:
+        _print_mcp_setup_snippet(click.echo)
 
 
 @main.command()
@@ -233,6 +248,7 @@ def mcp(allow_code_execution: bool, project_root: str | None) -> None:
 @click.option("--per-condition-timeout", type=int, default=30, show_default=True, help="Timeout in seconds per condition for symbolic verification (Level 5)")
 @click.option("--per-path-timeout", type=int, default=10, show_default=True, help="Timeout in seconds per execution path for symbolic verification (Level 5)")
 @click.option("--module-timeout", type=int, default=300, show_default=True, help="Timeout in seconds per module for symbolic verification (Level 5)")
+@click.option("--coverage-timeout", type=int, default=600, show_default=True, help="Timeout in seconds for the L3 coverage subprocess (whole pytest run, cached per project)")
 @click.option("--workers", type=int, default=4, show_default=True, help="Number of parallel workers for symbolic verification (Level 5)")
 @click.option("--spec", "spec_path", default=None, help="Path to SPEC.md for traceability checking")
 @click.option(
@@ -262,6 +278,10 @@ def mcp(allow_code_execution: bool, project_root: str | None) -> None:
     "module_timeout must be at least 1",
 )
 @icontract.require(
+    lambda coverage_timeout: is_positive_int(coverage_timeout),
+    "coverage_timeout must be at least 1",
+)
+@icontract.require(
     lambda workers: is_positive_int(workers),
     "workers must be at least 1",
 )
@@ -275,6 +295,7 @@ def check(
     per_condition_timeout: int,
     per_path_timeout: int,
     module_timeout: int,
+    coverage_timeout: int,
     workers: int,
     spec_path: str | None,
     allow_code_execution: bool,
@@ -360,7 +381,10 @@ def check(
     if level >= 3:
         try:
             from serenecode.adapters.coverage_adapter import CoverageAnalyzerAdapter
-            coverage_analyzer = CoverageAnalyzerAdapter(allow_code_execution=True)
+            coverage_analyzer = CoverageAnalyzerAdapter(
+                allow_code_execution=True,
+                test_timeout=coverage_timeout,
+            )
         except ImportError:
             click.echo("Warning: coverage not available for Level 3 checks.", err=True)
 
@@ -607,6 +631,72 @@ def report(
         click.echo(f"Report written to {output_file}")
     else:
         click.echo(formatted)
+
+
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a boolean",
+)
+def _mcp_extra_installed() -> bool:
+    """Return True if the optional `mcp` package is importable.
+
+    Used by `serenecode init` to decide whether to print the
+    `pip install 'serenecode[mcp]'` line in the post-init MCP
+    setup snippet, or skip it because the user already has it.
+    """
+    # silent-except: probing for an optional dependency; absence is the answer, not an error
+    try:
+        import mcp.server.fastmcp  # noqa: F401  pragma: no cover
+    except ImportError:
+        return False
+    return True
+
+
+@icontract.require(
+    lambda echo: callable(echo),
+    "echo must be a callable that accepts one string",
+)
+@icontract.ensure(lambda result: result is None, "snippet printer returns None")
+def _print_mcp_setup_snippet(echo: Callable[[str], None]) -> None:
+    """Print the post-init MCP server setup instructions to the user.
+
+    Detects whether the `mcp` extra is already installed and adapts
+    the snippet (install + register, or register only).
+    """
+    echo("")
+    echo("MCP server setup")
+    echo("----------------")
+    echo("Your AI assistant can verify code mid-edit by calling Serenecode")
+    echo("tools through MCP, instead of waiting for `serenecode check` at")
+    echo("the end. Recommended for any project where an AI is doing the work.")
+    echo("")
+    if not _mcp_extra_installed():
+        echo("  1. Install the optional `mcp` extra:")
+        echo("       # If you installed serenecode from PyPI:")
+        echo("       pip install 'serenecode[mcp]'")
+        echo("       # or: uv add 'serenecode[mcp]'")
+        echo("")
+        echo("       # If you cloned the repo and are running from source,")
+        echo("       # from the serenecode repo root:")
+        echo("       uv sync --extra mcp")
+        echo("       # or: pip install -e '.[mcp]'")
+        echo("")
+        echo("       # From a sibling/subproject venv pointing at the source:")
+        echo('       pip install -e "/path/to/serenecode[mcp]"')
+        echo("       # The whole argument MUST be quoted — `[mcp]` is a shell glob.")
+        echo("")
+        echo("  2. Register the server with your AI coding tool:")
+    else:
+        echo("  Register the server with your AI coding tool:")
+    echo("       # Claude Code:")
+    echo("       claude mcp add serenecode -- uv run serenecode mcp --allow-code-execution")
+    echo("")
+    echo("       # Cursor / Cline / Continue: see their MCP docs — same `serenecode mcp`")
+    echo("       # stdio command works for every MCP-speaking client.")
+    echo("")
+    echo("Once registered, your assistant can call `serenecode_check_function`")
+    echo("after every function it writes. See SERENECODE.md 'MCP Integration'")
+    echo("for the full tool catalog and recommended workflow.")
 
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")

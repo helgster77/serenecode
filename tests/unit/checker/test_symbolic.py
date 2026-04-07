@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from serenecode.checker.symbolic import transform_symbolic_results
+from serenecode.checker.symbolic import (
+    _suggest_fix_symbolic,
+    transform_symbolic_results,
+)
 from serenecode.models import CheckStatus
 from serenecode.ports.symbolic_checker import SymbolicFinding
 
@@ -142,3 +145,78 @@ class TestTransformSymbolicResults:
         result = transform_symbolic_results([], "test.py", 0.0)
         assert result.passed is True
         assert result.summary.total_functions == 0
+
+
+class TestSuggestFixSymbolic:
+    """Tests for _suggest_fix_symbolic — covers branch gaps at lines 167, 170."""
+
+    def test_counterexample_with_condition(self) -> None:
+        """Branch (line 167): both counterexample and condition present."""
+        finding = SymbolicFinding(
+            function_name="f",
+            module_path="test",
+            outcome="counterexample",
+            message="violated",
+            counterexample={"x": -1},
+            condition="result >= 0",
+            duration_seconds=0.1,
+        )
+        suggestion = _suggest_fix_symbolic(finding)
+        assert suggestion is not None
+        assert "x=-1" in suggestion
+        assert "result >= 0" in suggestion
+
+    def test_counterexample_without_condition(self) -> None:
+        finding = SymbolicFinding(
+            function_name="f",
+            module_path="test",
+            outcome="counterexample",
+            message="violated",
+            counterexample={"x": -1},
+            duration_seconds=0.1,
+        )
+        suggestion = _suggest_fix_symbolic(finding)
+        assert suggestion is not None
+        assert "x=-1" in suggestion
+
+    def test_condition_only_no_counterexample(self) -> None:
+        """Branch (line 170): no counterexample, just a condition string."""
+        finding = SymbolicFinding(
+            function_name="f",
+            module_path="test",
+            outcome="counterexample",
+            message="violated",
+            counterexample=None,
+            condition="result >= 0",
+            duration_seconds=0.1,
+        )
+        suggestion = _suggest_fix_symbolic(finding)
+        assert suggestion is not None
+        assert "result >= 0" in suggestion
+
+    def test_no_counterexample_no_condition(self) -> None:
+        finding = SymbolicFinding(
+            function_name="f",
+            module_path="test",
+            outcome="counterexample",
+            message="violated",
+            counterexample=None,
+            condition=None,
+            duration_seconds=0.1,
+        )
+        suggestion = _suggest_fix_symbolic(finding)
+        assert suggestion is not None
+        assert "Symbolic verification" in suggestion
+
+    def test_empty_counterexample_dict_treated_as_none(self) -> None:
+        finding = SymbolicFinding(
+            function_name="f",
+            module_path="test",
+            outcome="counterexample",
+            message="violated",
+            counterexample={},
+            condition=None,
+            duration_seconds=0.1,
+        )
+        suggestion = _suggest_fix_symbolic(finding)
+        assert suggestion is not None
