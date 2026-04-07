@@ -28,8 +28,8 @@ from serenecode.ports.symbolic_checker import SymbolicFinding
     "findings must be a list",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, CheckResult),
-    "result must be a CheckResult",
+    lambda findings, result: len(result.results) == len(findings),
+    "output count must match input findings count",
 )
 def transform_symbolic_results(
     findings: list[SymbolicFinding],

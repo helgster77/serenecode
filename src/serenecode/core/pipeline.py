@@ -131,10 +131,11 @@ def run_pipeline(
 
     def _emit(msg: str) -> None:
         if progress is not None:
+            # silent-except: progress callback is best-effort UI; failures must not abort the pipeline
             try:
                 progress(msg)
             except Exception:
-                pass  # Never let progress callback failures abort the pipeline
+                pass
 
     # Level 1: Structural check
     if start_level <= 1 <= level:

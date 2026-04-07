@@ -103,6 +103,23 @@ behavior — both are required.
 
 Run `pytest -q` after writing tests. Do not consider a task complete \
 until tests exist and pass.
+
+### Serenecode MCP server (optional but recommended)
+
+Serenecode ships an MCP server that exposes the verification pipeline \
+as tools your AI assistant can call mid-edit, instead of waiting for \
+a full `serenecode check` run at the end. Register it once per project:
+
+```bash
+claude mcp add serenecode -- uv run serenecode mcp
+```
+
+Add `--allow-code-execution` to the command if you want Levels 3-6 \
+(coverage, properties, symbolic, compositional) available to the agent. \
+Once registered, use the tools `serenecode_check_function`, \
+`serenecode_suggest_contracts`, `serenecode_verify_fixed`, and \
+`serenecode_uncovered` in the inner edit loop, and \
+`serenecode_validate_spec` / `serenecode_req_status` for spec traceability.
 """,
     "strict": """\
 ## Serenecode (Strict Mode)
@@ -155,6 +172,22 @@ You MUST write tests for every function. Do not skip this.
 
 Run `pytest -q` before considering any task complete. Do not commit \
 code without passing tests.
+
+### Serenecode MCP server (recommended)
+
+You MUST register the Serenecode MCP server so verification runs as part \
+of your inner edit loop, not only at the end:
+
+```bash
+claude mcp add serenecode -- uv run serenecode mcp --allow-code-execution
+```
+
+After every function you write or edit, call \
+`serenecode_check_function` and fix any findings before reporting the \
+work as complete. Use `serenecode_suggest_contracts` to derive \
+contracts from a signature, `serenecode_verify_fixed` to confirm a \
+specific finding is gone after a fix, `serenecode_uncovered` for \
+coverage gaps, and `serenecode_req_status` for spec traceability.
 """,
     "minimal": """\
 ## Serenecode
@@ -181,6 +214,15 @@ If issues are found, fix them before moving on.
 ### Testing
 
 Write basic tests for public functions. Run `pytest -q` to verify.
+
+### Serenecode MCP server (optional)
+
+If you'd like the verification tools available to your AI assistant \
+inside its edit loop, register the MCP server:
+
+```bash
+claude mcp add serenecode -- uv run serenecode mcp
+```
 """,
 }
 

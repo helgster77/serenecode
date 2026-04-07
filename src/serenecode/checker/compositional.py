@@ -174,8 +174,8 @@ class ModuleInfo:
     "module_path must be a valid module path string",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, ModuleInfo),
-    "result must be a ModuleInfo",
+    lambda file_path, module_path, result: result.file_path == file_path and result.module_path == module_path,
+    "parsed ModuleInfo must record the supplied file_path and module_path verbatim",
 )
 def parse_module_info(
     source: str,
@@ -2136,8 +2136,8 @@ def check_system_invariants(
     "sources must be a list or tuple",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, CheckResult),
-    "result must be a CheckResult",
+    lambda result: result.level_requested == 6,
+    "compositional check reports findings at the compositional level",
 )
 def check_compositional(
     sources: list[tuple[str, str, str]] | tuple[tuple[str, str, str], ...],

@@ -28,10 +28,6 @@ from serenecode.ports.coverage_analyzer import CoverageFinding
     "findings must be a list",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, CheckResult),
-    "result must be a CheckResult",
-)
-@icontract.ensure(
     lambda findings, result: len(result.results) == len(findings),
     "output count must match input findings count",
 )

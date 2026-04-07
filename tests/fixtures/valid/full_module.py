@@ -32,7 +32,7 @@ class Counter:
 
 @icontract.require(lambda items: len(items) > 0, "items must be non-empty")
 @icontract.require(lambda items: all(isinstance(x, (int, float)) for x in items), "all items must be numeric")
-@icontract.ensure(lambda result: isinstance(result, float), "result must be a float")
+@icontract.ensure(lambda items, result: min(items) <= result <= max(items), "result must lie within the input range")
 def compute_average(items: list[float]) -> float:
     """Compute the average of a non-empty list of numbers."""
     # Loop invariant: total accumulates sum of items[0..i]

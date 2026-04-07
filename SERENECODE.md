@@ -173,6 +173,28 @@ class FileReader(Protocol):
 - Error conditions SHOULD be captured in postconditions where possible.
 - Adapter layers catch external exceptions and translate them to domain exceptions.
 - All custom exceptions must inherit from a base `SerenecodeError` class.
+- Silent exception handling is forbidden. An `except` clause MUST NOT swallow the exception by doing nothing — re-raise, raise a domain exception, or use the captured exception value (e.g. log it with the error). The structural checker flags handlers whose body is only `pass`, `...`, `continue`, `break`, or a bare `return`/constant return, and flags bare `except:` clauses regardless of body. If a silent fallback is genuinely intentional (e.g. a best-effort progress callback that must not abort the caller), opt out with a `# silent-except: <reason>` comment on the line above the `try` or `except`.
+
+```python
+# BAD — swallows the exception, hides bugs
+try:
+    risky()
+except Exception:
+    pass
+
+# GOOD — re-raise after wrapping
+try:
+    risky()
+except ValueError as exc:
+    raise DomainError("risky failed") from exc
+
+# OK — explicit, documented opt-out for a best-effort fallback
+# silent-except: progress callback is best-effort UI; failures must not abort the pipeline
+try:
+    progress(msg)
+except Exception:
+    pass
+```
 
 ```python
 class SerenecodeError(Exception):
@@ -187,6 +209,126 @@ class VerificationError(SerenecodeError):
     """Raised when formal verification finds a counterexample."""
     pass
 ```
+
+---
+
+## Code Quality Standards
+
+These rules target patterns AI coding agents reliably ship that compile and look correct but represent real bugs or anti-patterns. Each rule is enforced at Level 1 (structural) and has a per-rule opt-out comment for legitimate cases. Defaults differ between templates — see the table at the end of this section.
+
+### Mutable default arguments
+
+Function parameter defaults MUST NOT be mutable values (`[]`, `{}`, `set()`, `list()`, `dict()`). Mutable defaults are shared across all calls and are a classic Python footgun.
+
+```python
+# BAD — shared list across calls
+def append_item(item: int, items: list[int] = []) -> list[int]:
+    items.append(item)
+    return items
+
+# GOOD
+def append_item(item: int, items: list[int] | None = None) -> list[int]:
+    if items is None:
+        items = []
+    items.append(item)
+    return items
+```
+
+Opt-out: `# allow-mutable-default: <reason>` above the def.
+
+### Stub residue
+
+Functions whose body is only `pass`, `...`, or `raise NotImplementedError(...)` MUST be either implemented, removed, marked with `@abstractmethod`, or made part of a `Protocol`. Stub bodies are how AI agents signal "I gave up" and they tend to slip past review.
+
+The check skips Protocol methods, `@abstractmethod` methods, and `__init__` bodies that are only attribute assignments.
+
+Opt-out: `# allow-stub: <reason>` above the def.
+
+### Bare asserts in source
+
+`assert` statements outside of test files MUST NOT be used as runtime checks. They disappear under `python -O` and provide no guarantee in production. Use an explicit `raise` of a domain exception instead.
+
+```python
+# BAD — disappears under python -O
+def withdraw(balance: float, amount: float) -> float:
+    assert amount <= balance
+    return balance - amount
+
+# GOOD
+def withdraw(balance: float, amount: float) -> float:
+    if amount > balance:
+        raise InsufficientFundsError(...)
+    return balance - amount
+```
+
+Opt-out: `# allow-assert: <reason>` above the statement (legitimate uses are mostly type-narrowing for the type checker).
+
+### print() in core modules
+
+`print(...)` calls MUST NOT appear in core modules. Core code should not perform I/O — return data to the caller or use a logger configured at the composition root.
+
+Opt-out: `# allow-print: <reason>` above the call.
+
+### Dangerous calls
+
+The following calls are forbidden everywhere except behind an explicit opt-out: `eval(...)`, `exec(...)`, `pickle.loads(...)`, `pickle.load(...)`, `os.system(...)`, and `subprocess.run/Popen/call/check_call/check_output(..., shell=True)`. Each is a known security or correctness footgun. Prefer `ast.literal_eval`, `json`, argument lists, or specific library APIs.
+
+Opt-out: `# allow-dangerous: <reason>` above the call (should be very rare and reviewed).
+
+### TODO/FIXME/XXX/HACK markers
+
+Comments containing `TODO`, `FIXME`, `XXX`, or `HACK` markers MUST NOT be checked into tracked source files. Resolve the issue, file a ticket and reference it from a real comment, or delete the marker. Markers in test files are allowed (tests legitimately use `# TODO: cover this branch` as scaffolding).
+
+Opt-out: `# allow-todo: <issue link or reason>` immediately above the marker.
+
+### Tests need assertions
+
+Test functions (`def test_*`) MUST contain at least one assertion-equivalent: an `assert` statement, a `pytest.raises(...)` block, a `pytest.fail(...)` call, or a `self.assertX(...)` call. Tests with no assertions silently pass and provide no signal.
+
+Opt-out: `# allow-no-assert: <reason>` above the def (rare; for smoke tests that legitimately just check that code does not raise).
+
+### Tautological isinstance postconditions
+
+Postconditions of the form `lambda result: isinstance(result, T)` where `T` is the function's return annotation are tautological — the type annotation already enforces the type. Replace with a meaningful constraint on `result` (range, length, relationship to inputs).
+
+```python
+# BAD — adds nothing the return annotation doesn't already say
+@icontract.ensure(lambda result: isinstance(result, int), "result is int")
+def median(items: list[int]) -> int:
+    ...
+
+# GOOD
+@icontract.ensure(lambda items, result: min(items) <= result <= max(items),
+                  "result lies within input range")
+def median(items: list[int]) -> int:
+    ...
+```
+
+Scope: public functions only. Internal `_helpers` and `is_*`/`has_*` predicates are exempt because their type signature is the entire constraint and any "stronger" postcondition would just restate the body.
+
+Opt-out: `# allow-isinstance-tautology: <reason>` above the def or above the topmost decorator.
+
+### Unused parameters (strict template only)
+
+Function parameters that are never referenced in the body MUST be removed, renamed with a `_` prefix to mark them intentionally unused, or annotated with the opt-out. Skipped automatically: `self`, `cls`, `*args`, `**kwargs`, `@override`-decorated methods, and any method whose enclosing class has a non-`object` base (conservative: assume interface conformance).
+
+Default template: OFF. Strict template: ON.
+
+Opt-out: `# allow-unused-param: <reason>` above the def, OR rename the parameter with a leading underscore.
+
+### Defaults table
+
+| Rule | default | strict | minimal |
+|---|---|---|---|
+| `forbid_stub_residue` | ON | ON | OFF |
+| `forbid_mutable_default_arguments` | ON | ON | OFF |
+| `forbid_bare_asserts_outside_tests` | ON | ON | OFF |
+| `forbid_print_in_core` | ON | ON | OFF |
+| `forbid_dangerous_calls` | ON | ON | OFF |
+| `forbid_todo_comments` | ON | ON | OFF |
+| `require_test_assertions` | ON | ON | OFF |
+| `forbid_isinstance_tautology` | ON | ON | OFF |
+| `forbid_unused_parameters` | OFF | ON | OFF |
 
 ---
 
@@ -477,9 +619,51 @@ The following modules are exempt from full contract requirements due to their na
 - `__init__.py` — Composition roots, tested via integration tests.
 - `init.py` — Composition root for project initialization, tested via e2e tests.
 - `adapters/` — I/O boundary code, tested via integration tests.
+- `mcp/` — MCP server composition root: protocol shim over the existing pipeline, tested via direct tool-handler integration tests and a CLI smoke test.
 - `templates/` — Static markdown files, not code.
 - `tests/fixtures/` — Intentionally broken or incomplete code used for testing the checker.
 - `ports/` — Protocol definitions with no implementations to contract.
 - `exceptions.py` — Exception class hierarchy, no meaningful invariants.
 
 These modules MUST still have type annotations and pass mypy.
+
+---
+
+## MCP Integration
+
+Serenecode ships an MCP server that exposes the verification pipeline as tools an AI agent can call mid-edit. This is optional but recommended for any project where an AI coding assistant is doing the work — it collapses the feedback loop from "minutes after writing" to "seconds while writing" and keeps verification semantics identical between the CLI and the agent's inner loop.
+
+Register the server (one-time, per project) with your MCP-speaking AI tool:
+
+```bash
+claude mcp add serenecode -- uv run serenecode mcp
+```
+
+Add `--allow-code-execution` to enable Levels 3-6 tools:
+
+```bash
+claude mcp add serenecode -- uv run serenecode mcp --allow-code-execution
+```
+
+The server registers the following tools:
+
+- `serenecode_check` — full pipeline on a project root
+- `serenecode_check_file` — pipeline scoped to one file
+- `serenecode_check_function` — pipeline scoped to one function (the inner-loop tool)
+- `serenecode_verify_fixed` — re-run on one function and report whether a specific finding is gone
+- `serenecode_suggest_contracts` — derive `@require`/`@ensure` decorators from a function signature
+- `serenecode_uncovered` — Level 3 coverage findings for one function
+- `serenecode_suggest_test` — test scaffold for an uncovered function
+- `serenecode_validate_spec` — validate a SPEC.md
+- `serenecode_list_reqs` — list REQs in a SPEC.md
+- `serenecode_req_status` — implementation/verification status of one REQ
+- `serenecode_orphans` — REQs with no implementation or no test
+
+And the following read-only resources:
+
+- `serenecode://config` — active SerenecodeConfig as JSON
+- `serenecode://findings/last-run` — most recent CheckResponse from this server session
+- `serenecode://exempt-modules` — exempt and core path patterns
+- `serenecode://reqs` — parsed REQ list from the project's SPEC.md
+
+The agent should call `serenecode_check_function` after every function it writes or edits and only report the work complete when the result has zero failed findings. See the project's CLAUDE.md (generated by `serenecode init`) for the recommended workflow snippet.

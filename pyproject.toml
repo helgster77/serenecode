@@ -40,6 +40,9 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
 ]
+mcp = [
+    "mcp>=1.0",
+]
 
 [project.scripts]
 serenecode = "serenecode.cli:main"

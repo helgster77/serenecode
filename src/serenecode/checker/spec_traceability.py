@@ -59,8 +59,8 @@ def extract_spec_requirements(spec_content: str) -> frozenset[str]:
     "spec_content must be a non-empty string",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, CheckResult),
-    "result must be a CheckResult",
+    lambda result: result.level_requested == 1,
+    "spec validation reports findings at the structural level",
 )
 def validate_spec(spec_content: str) -> CheckResult:
     """Validate that a SPEC.md is well-formed and ready for SereneCode.
@@ -248,6 +248,7 @@ def extract_implementations(source: str) -> list[tuple[str, str, int]]:
     """
     if not source.strip():
         return []
+    # silent-except: traceability is best-effort over arbitrary user sources; unparseable files yield no refs
     try:
         tree = ast.parse(source)
     except (SyntaxError, TypeError):
@@ -290,6 +291,7 @@ def extract_verifications(source: str) -> list[tuple[str, str, int]]:
     """
     if not source.strip():
         return []
+    # silent-except: traceability is best-effort over arbitrary user sources; unparseable files yield no refs
     try:
         tree = ast.parse(source)
     except (SyntaxError, TypeError):
@@ -326,8 +328,8 @@ def extract_verifications(source: str) -> list[tuple[str, str, int]]:
     "test_sources must be a tuple",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, CheckResult),
-    "result must be a CheckResult",
+    lambda result: result.level_requested == 1,
+    "spec traceability reports findings at the structural level",
 )
 def check_spec_traceability(
     spec_content: str,

@@ -26,6 +26,7 @@ __all__ = [
     "LoopRecursionConfig",
     "NamingConfig",
     "ExemptionConfig",
+    "CodeQualityConfig",
     "SerenecodeConfig",
     "default_config",
     "strict_config",
@@ -87,6 +88,7 @@ class ErrorHandlingConfig:
 
     require_domain_exceptions: bool
     forbidden_exception_types: tuple[str, ...]
+    forbid_silent_exception_handling: bool = False
 
 
 @icontract.invariant(
@@ -128,6 +130,28 @@ class ExemptionConfig:
     exempt_paths: tuple[str, ...]
 
 
+# no-invariant: all fields are independent boolean toggles for AI-failure-mode L1 checks; there are no inter-flag relationships to constrain
+@dataclass(frozen=True)
+class CodeQualityConfig:
+    """Configuration for AI-failure-mode code quality checks (Level 1).
+
+    Each flag toggles one structural check that targets a pattern AI
+    coding agents reliably ship that compiles and looks correct but
+    represents a real bug or anti-pattern. All defaults are documented
+    in SERENECODE.md under 'Code Quality Standards'.
+    """
+
+    forbid_stub_residue: bool
+    forbid_mutable_default_arguments: bool
+    forbid_bare_asserts_outside_tests: bool
+    forbid_print_in_core: bool
+    forbid_dangerous_calls: bool
+    forbid_todo_comments: bool
+    require_test_assertions: bool
+    forbid_isinstance_tautology: bool
+    forbid_unused_parameters: bool
+
+
 @icontract.invariant(
     lambda self: 1 <= self.recommended_level <= 6,
     "Recommended level must be between 1 and 6",
@@ -151,6 +175,7 @@ class SerenecodeConfig:
     loop_recursion_rules: LoopRecursionConfig
     naming_conventions: NamingConfig
     exemptions: ExemptionConfig
+    code_quality_rules: CodeQualityConfig
     template_name: str
     recommended_level: int = 3
 
@@ -181,6 +206,7 @@ _DEFAULT_EXEMPT_PATHS = (
     "cli.py",
     "__init__.py",
     "adapters/",
+    "mcp/",
     "templates/",
     "tests/fixtures/",
     "ports/",
@@ -227,6 +253,7 @@ def default_config() -> SerenecodeConfig:
         error_handling_rules=ErrorHandlingConfig(
             require_domain_exceptions=False,
             forbidden_exception_types=(),
+            forbid_silent_exception_handling=True,
         ),
         loop_recursion_rules=LoopRecursionConfig(
             require_loop_invariant_comments=False,
@@ -239,6 +266,17 @@ def default_config() -> SerenecodeConfig:
         ),
         exemptions=ExemptionConfig(
             exempt_paths=_DEFAULT_EXEMPT_PATHS,
+        ),
+        code_quality_rules=CodeQualityConfig(
+            forbid_stub_residue=True,
+            forbid_mutable_default_arguments=True,
+            forbid_bare_asserts_outside_tests=True,
+            forbid_print_in_core=True,
+            forbid_dangerous_calls=True,
+            forbid_todo_comments=True,
+            require_test_assertions=True,
+            forbid_isinstance_tautology=True,
+            forbid_unused_parameters=False,
         ),
         template_name="default",
         recommended_level=4,
@@ -273,6 +311,7 @@ def strict_config() -> SerenecodeConfig:
         error_handling_rules=ErrorHandlingConfig(
             require_domain_exceptions=True,
             forbidden_exception_types=_DEFAULT_FORBIDDEN_EXCEPTIONS,
+            forbid_silent_exception_handling=True,
         ),
         loop_recursion_rules=LoopRecursionConfig(
             require_loop_invariant_comments=True,
@@ -285,6 +324,17 @@ def strict_config() -> SerenecodeConfig:
         ),
         exemptions=ExemptionConfig(
             exempt_paths=(),
+        ),
+        code_quality_rules=CodeQualityConfig(
+            forbid_stub_residue=True,
+            forbid_mutable_default_arguments=True,
+            forbid_bare_asserts_outside_tests=True,
+            forbid_print_in_core=True,
+            forbid_dangerous_calls=True,
+            forbid_todo_comments=True,
+            require_test_assertions=True,
+            forbid_isinstance_tautology=True,
+            forbid_unused_parameters=True,
         ),
         template_name="strict",
         recommended_level=6,
@@ -331,6 +381,17 @@ def minimal_config() -> SerenecodeConfig:
         ),
         exemptions=ExemptionConfig(
             exempt_paths=_DEFAULT_EXEMPT_PATHS,
+        ),
+        code_quality_rules=CodeQualityConfig(
+            forbid_stub_residue=False,
+            forbid_mutable_default_arguments=False,
+            forbid_bare_asserts_outside_tests=False,
+            forbid_print_in_core=False,
+            forbid_dangerous_calls=False,
+            forbid_todo_comments=False,
+            require_test_assertions=False,
+            forbid_isinstance_tautology=False,
+            forbid_unused_parameters=False,
         ),
         template_name="minimal",
         recommended_level=2,
@@ -444,6 +505,13 @@ def _apply_content_overrides(
         ),
     )
 
+    forbid_silent_exception_handling = _matches_rule(
+        content,
+        r"(?:silent|silently)[^\n]*except|except[^\n]*(?:silent|silently)|"
+        r"silent\s+exception\s+handling",
+        config.error_handling_rules.forbid_silent_exception_handling,
+    )
+
     error_handling_rules = ErrorHandlingConfig(
         require_domain_exceptions=require_domain_exceptions,
         forbidden_exception_types=(
@@ -453,6 +521,7 @@ def _apply_content_overrides(
             if require_domain_exceptions
             else ()
         ),
+        forbid_silent_exception_handling=forbid_silent_exception_handling,
     )
 
     loop_recursion_rules = LoopRecursionConfig(
@@ -492,6 +561,57 @@ def _apply_content_overrides(
         ),
     )
 
+    # Each rule activates only on an imperative statement (MUST/forbid/required/
+    # MUST NOT) so the descriptive prose in the Code Quality Standards section
+    # doesn't accidentally turn rules on or off.
+    code_quality_rules = CodeQualityConfig(
+        forbid_stub_residue=_matches_rule(
+            content,
+            r"(?:MUST(?: NOT)?|forbid)[^\n]*stub (?:residue|bod(?:y|ies))",
+            config.code_quality_rules.forbid_stub_residue,
+        ),
+        forbid_mutable_default_arguments=_matches_rule(
+            content,
+            r"(?:MUST(?: NOT)?|forbid)[^\n]*mutable default",
+            config.code_quality_rules.forbid_mutable_default_arguments,
+        ),
+        forbid_bare_asserts_outside_tests=_matches_rule(
+            content,
+            r"(?:MUST(?: NOT)?|forbid)[^\n]*bare assert|bare asserts?[^\n]*MUST NOT",
+            config.code_quality_rules.forbid_bare_asserts_outside_tests,
+        ),
+        forbid_print_in_core=_matches_rule(
+            content,
+            r"(?:MUST(?: NOT)?|forbid)[^\n]*print\s*\(",
+            config.code_quality_rules.forbid_print_in_core,
+        ),
+        forbid_dangerous_calls=_matches_rule(
+            content,
+            r"(?:MUST(?: NOT)?|forbid)[^\n]*(?:eval|exec|pickle\.loads|os\.system|shell\s*=\s*True)",
+            config.code_quality_rules.forbid_dangerous_calls,
+        ),
+        forbid_todo_comments=_matches_rule(
+            content,
+            r"(?:MUST(?: NOT)?|forbid)[^\n]*(?:TODO|FIXME|XXX|HACK)",
+            config.code_quality_rules.forbid_todo_comments,
+        ),
+        require_test_assertions=_matches_rule(
+            content,
+            r"tests? (?:must|MUST) (?:contain|have) (?:at least one\s+)?assert(?:ion)?",
+            config.code_quality_rules.require_test_assertions,
+        ),
+        forbid_isinstance_tautology=_matches_rule(
+            content,
+            r"(?:MUST(?: NOT)?|forbid)[^\n]*tautological\s+isinstance",
+            config.code_quality_rules.forbid_isinstance_tautology,
+        ),
+        forbid_unused_parameters=_matches_rule(
+            content,
+            r"(?:MUST(?: NOT)?|forbid)[^\n]*unused (?:function )?parameters?",
+            config.code_quality_rules.forbid_unused_parameters,
+        ),
+    )
+
     return SerenecodeConfig(
         contract_requirements=contract_requirements,
         type_requirements=type_requirements,
@@ -500,6 +620,7 @@ def _apply_content_overrides(
         loop_recursion_rules=loop_recursion_rules,
         naming_conventions=config.naming_conventions,
         exemptions=exemptions,
+        code_quality_rules=code_quality_rules,
         template_name=config.template_name,
         recommended_level=config.recommended_level,
     )

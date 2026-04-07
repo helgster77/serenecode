@@ -1219,6 +1219,11 @@ def _is_property_friendly_function(func: Callable[..., object]) -> bool:
         return False
     if module_name.startswith("serenecode.adapters"):
         return False
+    if module_name.startswith("serenecode.mcp"):
+        # MCP composition root: tools delegate to existing pipeline functions
+        # and run_stdio_server takes over stdin/stdout, so property-fuzzing
+        # them produces no signal and breaks the test runner's stdio.
+        return False
     return True
 
 

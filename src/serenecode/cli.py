@@ -169,6 +169,56 @@ def spec(spec_file: str, output_format: str) -> None:
 
 
 @main.command()
+@click.option(
+    "--allow-code-execution",
+    is_flag=True,
+    help="Permit Levels 3-6 tools (which import and execute project modules)",
+)
+@click.option(
+    "--project-root",
+    "project_root",
+    type=click.Path(file_okay=False, dir_okay=True),
+    default=None,
+    help="Default project root used when a tool call doesn't include a path",
+)
+@icontract.require(
+    lambda allow_code_execution: isinstance(allow_code_execution, bool),
+    "allow_code_execution must be a bool",
+)
+@icontract.require(
+    lambda project_root: project_root is None or isinstance(project_root, str),
+    "project_root must be None or a string",
+)
+@icontract.ensure(lambda result: result is None, "CLI commands return None")
+def mcp(allow_code_execution: bool, project_root: str | None) -> None:
+    """Boot the Serenecode MCP server over stdio.
+
+    Exposes the verification pipeline as MCP tools an AI agent can call
+    mid-edit. Register with Claude Code via:
+
+        claude mcp add serenecode -- uv run serenecode mcp
+
+    Add `--allow-code-execution` to enable Level 3-6 tools (coverage,
+    properties, symbolic, compositional). Without it the server runs
+    in read-only mode and Levels 3-6 calls return a structured error.
+    """
+    try:
+        from serenecode.mcp.server import run_stdio_server
+    except ImportError as exc:
+        click.echo(
+            f"Error: the 'mcp' optional dependency is not installed.\n"
+            f"Install with: uv add 'mcp>=1.0' or pip install 'serenecode[mcp]'\n"
+            f"Underlying error: {exc}",
+            err=True,
+        )
+        sys.exit(ExitCode.INTERNAL)
+    run_stdio_server(
+        project_root=project_root,
+        allow_code_execution=allow_code_execution,
+    )
+
+
+@main.command()
 @click.argument("path", default=".")
 @click.option("--level", type=click.IntRange(1, 6), default=None, help="Verification level (1-6, default: from config template)")
 @click.option(

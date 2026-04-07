@@ -28,8 +28,8 @@ from serenecode.ports.property_tester import PropertyFinding
     "findings must be a list",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, CheckResult),
-    "result must be a CheckResult",
+    lambda findings, result: len(result.results) == len(findings),
+    "output count must match input findings count",
 )
 def transform_property_results(
     findings: list[PropertyFinding],

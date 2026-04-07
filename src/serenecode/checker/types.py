@@ -29,8 +29,8 @@ from serenecode.ports.type_checker import TypeIssue
     "issues must be a list",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, CheckResult),
-    "result must be a CheckResult",
+    lambda result: result.level_requested == 2,
+    "transformed result must report level 2 (types)",
 )
 def transform_type_results(
     issues: list[TypeIssue],

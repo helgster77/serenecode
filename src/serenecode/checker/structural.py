@@ -59,8 +59,8 @@ class IcontractNames:
     "tree must be an ast.Module",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, IcontractNames),
-    "result must be an IcontractNames",
+    lambda result: result.module_alias is None or any(name.startswith(result.module_alias + ".") for name in result.require_names | result.ensure_names | result.invariant_names),
+    "when a module alias is recorded, at least one decorator name must reference it",
 )
 def resolve_icontract_aliases(tree: ast.Module) -> IcontractNames:
     """Scan imports to determine how icontract decorators are referenced.
@@ -122,8 +122,8 @@ def resolve_icontract_aliases(tree: ast.Module) -> IcontractNames:
     "decorator must be an AST node",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, str),
-    "result must be a string",
+    lambda result: result == "" or result[0].isalpha() or result[0] == "_",
+    "result must be empty or start with a valid Python identifier character",
 )
 def get_decorator_name(decorator: ast.expr) -> str:
     """Extract the full dotted name of a decorator.
@@ -1289,6 +1289,7 @@ def check_loop_invariants(
 
     # Extract comment line numbers and their content
     comments: dict[int, str] = {}
+    # silent-except: tokenization is a comment-extraction pre-pass; on tokenizer failure we skip loop-invariant checks
     try:
         tokens = tokenize.generate_tokens(io.StringIO(source).readline)
         # Loop invariant: comments dict contains all COMMENT tokens seen so far
@@ -1485,6 +1486,1245 @@ def check_exception_types(
 
 
 @icontract.require(
+    lambda handler: isinstance(handler, ast.ExceptHandler),
+    "handler must be an ast.ExceptHandler",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_silent_handler(handler: ast.ExceptHandler) -> bool:
+    """Check if an exception handler silently swallows the exception.
+
+    A handler is silent when its body contains only trivial statements
+    (``pass``, ``...``, ``continue``, ``break``, or ``return`` with no
+    value or a constant/empty-collection literal), no ``raise`` appears
+    anywhere in the body, and the exception variable (if any) is unused.
+
+    Args:
+        handler: An AST exception handler node.
+
+    Returns:
+        True if the handler silently swallows the exception.
+    """
+    # Loop invariant: any raise found in body[0..i] sets has_raise True
+    for child in ast.walk(handler):
+        if isinstance(child, ast.Raise):
+            return False
+
+    # If the handler binds the exception (`except X as exc:`), check whether
+    # the variable is referenced anywhere in the body — referencing it counts
+    # as propagating information from the exception.
+    exc_name = handler.name
+    if exc_name is not None:
+        # Loop invariant: any Name reference matching exc_name in body[0..i] returns False
+        for stmt in handler.body:
+            for child in ast.walk(stmt):
+                if isinstance(child, ast.Name) and child.id == exc_name:
+                    return False
+
+    # Loop invariant: every statement in body[0..i] has been classified as trivial
+    for stmt in handler.body:
+        if not _is_trivial_handler_stmt(stmt):
+            return False
+
+    return True
+
+
+@icontract.require(
+    lambda stmt: isinstance(stmt, ast.stmt),
+    "stmt must be an ast.stmt",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_trivial_handler_stmt(stmt: ast.stmt) -> bool:
+    """Check if a single handler-body statement is a no-op silent fallback.
+
+    Trivial statements are: ``pass``, an ellipsis expression statement,
+    ``continue``, ``break``, and ``return`` with no value or a constant /
+    empty-collection literal value.
+
+    Args:
+        stmt: An AST statement node from inside an exception handler body.
+
+    Returns:
+        True if the statement is a trivial silent-handler fallback.
+    """
+    if isinstance(stmt, ast.Pass):
+        return True
+    if isinstance(stmt, (ast.Continue, ast.Break)):
+        return True
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and stmt.value.value is Ellipsis:
+        return True
+    if isinstance(stmt, ast.Return):
+        if stmt.value is None:
+            return True
+        if isinstance(stmt.value, ast.Constant):
+            return True
+        if isinstance(stmt.value, (ast.List, ast.Tuple, ast.Set)) and not stmt.value.elts:
+            return True
+        if isinstance(stmt.value, ast.Dict) and not stmt.value.keys:
+            return True
+    return False
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda try_line: isinstance(try_line, int) and try_line >= 1,
+    "try_line must be a positive line number",
+)
+@icontract.require(
+    lambda except_line: isinstance(except_line, int) and except_line >= 1,
+    "except_line must be a positive line number",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _has_silent_except_opt_out(
+    source: str,
+    try_line: int,
+    except_line: int,
+) -> bool:
+    """Check whether a ``# silent-except: <reason>`` comment opts out the handler.
+
+    The comment may appear on the line immediately above the ``try`` block
+    or immediately above the specific ``except`` clause. The reason text
+    after the colon is required and must be non-empty.
+
+    Args:
+        source: The full module source code.
+        try_line: 1-based line number of the enclosing ``try`` statement.
+        except_line: 1-based line number of the ``except`` clause.
+
+    Returns:
+        True if a valid opt-out comment is found.
+    """
+    if not source:
+        return False
+    lines = source.splitlines()
+    candidate_indices = []
+    # Loop invariant: candidate_indices contains valid in-bounds line indices for the line numbers checked so far
+    for line_no in (try_line, except_line):
+        index = line_no - 2  # one line above
+        if 0 <= index < len(lines):
+            candidate_indices.append(index)
+    # Loop invariant: any candidate line containing a valid opt-out comment returns True
+    for index in candidate_indices:
+        stripped = lines[index].strip()
+        if not stripped.startswith("#"):
+            continue
+        comment = stripped.lstrip("#").strip()
+        if comment.lower().startswith("silent-except:"):
+            reason = comment.split(":", 1)[1].strip()
+            if reason:
+                return True
+    return False
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_silent_exception_handling(
+    source: str,
+    tree: ast.Module,
+    config: SerenecodeConfig,
+    file_path: str,
+) -> list[FunctionResult]:
+    """Check for exception handlers that silently swallow exceptions.
+
+    Flags two patterns:
+
+    - Bare ``except:`` clauses (with no exception type), which catch
+      ``BaseException`` including ``SystemExit`` and ``KeyboardInterrupt``.
+    - Handlers whose body is composed only of trivial fallbacks
+      (``pass``, ``...``, ``continue``, ``break``, ``return`` with a constant
+      or empty literal) and that neither re-raise nor reference the exception.
+
+    Handlers explicitly marked with ``# silent-except: <reason>`` on the line
+    above the ``try`` or ``except`` are exempt.
+
+    Args:
+        source: Raw source code string (used for opt-out comment lookup).
+        tree: Parsed AST module.
+        config: Active configuration.
+        file_path: Path to the source file (for reporting).
+
+    Returns:
+        List of FunctionResult for each silent-handler violation.
+    """
+    if not config.error_handling_rules.forbid_silent_exception_handling:
+        return []
+
+    results: list[FunctionResult] = []
+
+    # Loop invariant: results contains silent-handler findings for nodes[0..i]
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        try_line = node.lineno
+        # Loop invariant: results contains findings for handlers[0..j] of this try
+        for handler in node.handlers:
+            handler_line = handler.lineno
+            is_bare = handler.type is None
+            is_silent = _is_silent_handler(handler)
+            if not (is_bare or is_silent):
+                continue
+            if _has_silent_except_opt_out(source, try_line, handler_line):
+                continue
+            if is_bare:
+                message = (
+                    f"Bare 'except:' at line {handler_line} catches BaseException "
+                    f"(including SystemExit and KeyboardInterrupt)"
+                )
+                suggestion = (
+                    "Catch a specific exception type, e.g. 'except Exception as exc:', "
+                    "and either re-raise, log with the exception, or translate to a "
+                    "domain exception. If silent fallback is intentional, add "
+                    "'# silent-except: <reason>' above the try or except clause."
+                )
+            else:
+                message = (
+                    f"Silent exception handler at line {handler_line} swallows "
+                    f"the exception without re-raising or using it"
+                )
+                suggestion = (
+                    "Re-raise, raise a domain-specific exception, or capture and use "
+                    "the exception value. If silent fallback is intentional, add "
+                    "'# silent-except: <reason>' above the try or except clause."
+                )
+            results.append(FunctionResult(
+                function="<except>",
+                file=file_path,
+                line=handler_line,
+                level_requested=1,
+                level_achieved=0,
+                status=CheckStatus.FAILED,
+                details=(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="violation",
+                    message=message,
+                    suggestion=suggestion,
+                ),),
+            ))
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Code quality checks (AI failure-mode wave)
+# ---------------------------------------------------------------------------
+
+
+_TODO_PATTERN = re.compile(r"\b(?:TODO|FIXME|XXX|HACK)\b")
+_DANGEROUS_NAME_FUNCS = frozenset({"eval", "exec"})
+_DANGEROUS_ATTR_PATTERNS = frozenset({
+    ("os", "system"),
+    ("subprocess", "run"),
+    ("subprocess", "Popen"),
+    ("subprocess", "call"),
+    ("subprocess", "check_call"),
+    ("subprocess", "check_output"),
+    ("pickle", "loads"),
+    ("pickle", "load"),
+})
+_SUBPROCESS_FUNCS = frozenset({"run", "Popen", "call", "check_call", "check_output"})
+
+
+@icontract.require(
+    lambda module_path: isinstance(module_path, str),
+    "module_path must be a string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_test_module(module_path: str) -> bool:
+    """Check whether a module path refers to a test file.
+
+    A module is treated as a test if any path segment is ``tests`` or
+    if the basename starts with ``test_``.
+    """
+    if not module_path:
+        return False
+    normalized = module_path.replace("\\", "/")
+    segments = [s for s in normalized.split("/") if s and s != "."]
+    if "tests" in segments:
+        return True
+    if not segments:
+        return False
+    basename = segments[-1]
+    return basename.startswith("test_")
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda target_lines: isinstance(target_lines, tuple),
+    "target_lines must be a tuple",
+)
+@icontract.require(
+    lambda keyword: is_non_empty_string(keyword),
+    "keyword must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _has_opt_out_comment(
+    source: str,
+    target_lines: tuple[int, ...],
+    keyword: str,
+) -> bool:
+    """Check whether a `# <keyword>: <reason>` comment opts out the line(s).
+
+    The comment must appear on the line immediately above any line in
+    ``target_lines``. The reason text after the colon is required.
+    """
+    if not source:
+        return False
+    lines = source.splitlines()
+    prefix = keyword.lower() + ":"
+    seen: set[int] = set()
+    # Loop invariant: any candidate index already seen has been checked
+    for target_line in target_lines:
+        index = target_line - 2  # one line above (0-based)
+        if not (0 <= index < len(lines)):
+            continue
+        if index in seen:
+            continue
+        seen.add(index)
+        stripped = lines[index].strip()
+        if not stripped.startswith("#"):
+            continue
+        comment = stripped.lstrip("#").strip()
+        if not comment.lower().startswith(prefix):
+            continue
+        reason = comment.split(":", 1)[1].strip()
+        if reason:
+            return True
+    return False
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, tuple) and len(result) >= 1,
+    "result must be a non-empty tuple",
+)
+def _function_opt_out_lines(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[int, ...]:
+    """Return the candidate line numbers where a function's opt-out comment can sit.
+
+    For a plain function this is just the def line. For a decorated function it
+    also includes the first decorator's line, so users can place the opt-out
+    above either the def or the topmost decorator.
+    """
+    if node.decorator_list:
+        return (node.lineno, node.decorator_list[0].lineno)
+    return (node.lineno,)
+
+
+@icontract.require(
+    lambda node: isinstance(node, ast.expr),
+    "node must be an AST expression",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_mutable_literal(node: ast.expr) -> bool:
+    """Check if an AST expression is a mutable default literal."""
+    if isinstance(node, (ast.List, ast.Dict, ast.Set)):
+        return True
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        if node.func.id in {"list", "dict", "set"}:
+            return True
+    return False
+
+
+@icontract.require(
+    lambda call: isinstance(call, ast.Call),
+    "call must be an ast.Call",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _has_shell_true_kwarg(call: ast.Call) -> bool:
+    """Check whether a Call has shell=True among its keyword arguments."""
+    # Loop invariant: no keyword in keywords[0..i] is shell=True so far
+    for kw in call.keywords:
+        if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+            return True
+    return False
+
+
+@icontract.require(
+    lambda body: isinstance(body, list),
+    "body must be a list of statements",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_stub_body(body: list[ast.stmt]) -> bool:
+    """Check if a function body consists only of stub statements (after optional docstring)."""
+    statements = list(body)
+    # Skip leading docstring expression
+    if (
+        statements
+        and isinstance(statements[0], ast.Expr)
+        and isinstance(statements[0].value, ast.Constant)
+        and isinstance(statements[0].value.value, str)
+    ):
+        statements = statements[1:]
+    if not statements:
+        return True
+    if len(statements) != 1:
+        return False
+    stmt = statements[0]
+    if isinstance(stmt, ast.Pass):
+        return True
+    if (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Constant)
+        and stmt.value.value is Ellipsis
+    ):
+        return True
+    if isinstance(stmt, ast.Raise):
+        exc = stmt.exc
+        if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
+            return True
+        if (
+            isinstance(exc, ast.Call)
+            and isinstance(exc.func, ast.Name)
+            and exc.func.id == "NotImplementedError"
+        ):
+            return True
+    return False
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _has_abstractmethod_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a function is decorated with @abstractmethod (any import style)."""
+    # Loop invariant: no decorator in decorators[0..i] matches abstractmethod
+    for dec in node.decorator_list:
+        if isinstance(dec, ast.Name) and dec.id == "abstractmethod":
+            return True
+        if isinstance(dec, ast.Attribute) and dec.attr == "abstractmethod":
+            return True
+    return False
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_init_with_only_assignments(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """Check if an __init__ body is only attribute assignments + optional docstring."""
+    statements = list(node.body)
+    if (
+        statements
+        and isinstance(statements[0], ast.Expr)
+        and isinstance(statements[0].value, ast.Constant)
+        and isinstance(statements[0].value.value, str)
+    ):
+        statements = statements[1:]
+    if not statements:
+        return False
+    # Loop invariant: all statements in body[0..i] are assignments
+    for stmt in statements:
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            return False
+    return True
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _function_has_assertion(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a function body contains any assertion-equivalent.
+
+    Counts: ``assert``, ``pytest.raises(...)``, ``pytest.fail(...)``,
+    ``with pytest.raises(...)``, and ``self.assertX(...)``.
+    """
+    # Loop invariant: any qualifying child found in walk[0..i] returns True
+    for child in ast.walk(node):
+        if isinstance(child, ast.Assert):
+            return True
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):
+            attr = child.func.attr
+            if attr in {"raises", "fail"}:
+                return True
+            if attr.startswith("assert"):
+                return True
+        if isinstance(child, ast.With):
+            # Loop invariant: no item in items[0..i] has yet matched a pytest.raises ctxmgr
+            for item in child.items:
+                ctx = item.context_expr
+                if (
+                    isinstance(ctx, ast.Call)
+                    and isinstance(ctx.func, ast.Attribute)
+                    and ctx.func.attr == "raises"
+                ):
+                    return True
+    return False
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _has_override_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a function is decorated with @override (typing or typing_extensions)."""
+    # Loop invariant: no decorator in decorators[0..i] is override
+    for dec in node.decorator_list:
+        if isinstance(dec, ast.Name) and dec.id == "override":
+            return True
+        if isinstance(dec, ast.Attribute) and dec.attr == "override":
+            return True
+    return False
+
+
+@icontract.require(
+    lambda cls: isinstance(cls, ast.ClassDef),
+    "cls must be a ClassDef",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _has_non_object_base(cls: ast.ClassDef) -> bool:
+    """Check whether a class inherits from anything other than object."""
+    # Loop invariant: no base in bases[0..i] has been classified as non-object
+    for base in cls.bases:
+        if isinstance(base, ast.Name) and base.id != "object":
+            return True
+        if isinstance(base, ast.Attribute):
+            return True
+        if isinstance(base, ast.Subscript):
+            return True
+    return False
+
+
+@icontract.require(
+    lambda lam: isinstance(lam, ast.Lambda),
+    "lam must be a Lambda",
+)
+@icontract.require(
+    lambda return_type_str: isinstance(return_type_str, str),
+    "return_type_str must be a string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def _is_tautological_isinstance(lam: ast.Lambda, return_type_str: str) -> bool:
+    """Check if a lambda body is `isinstance(result, T)` where T equals the return annotation."""
+    body = lam.body
+    if not isinstance(body, ast.Call):
+        return False
+    if not (isinstance(body.func, ast.Name) and body.func.id == "isinstance"):
+        return False
+    if len(body.args) != 2:
+        return False
+    type_arg_str = ast.unparse(body.args[1])
+    return type_arg_str == return_type_str
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_mutable_default_arguments(
+    source: str,
+    tree: ast.Module,
+    config: SerenecodeConfig,
+    module_path: str,
+    file_path: str,
+) -> list[FunctionResult]:
+    """Flag mutable default arguments ([], {}, set(), list(), dict())."""
+    if not config.code_quality_rules.forbid_mutable_default_arguments:
+        return []
+    if is_exempt_module(module_path, config):
+        return []
+
+    results: list[FunctionResult] = []
+
+    # Loop invariant: results contains findings for nodes[0..i]
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        defaults: list[ast.expr] = list(node.args.defaults)
+        # Loop invariant: defaults includes all non-None kw_defaults from kw_defaults[0..j]
+        for kw_default in node.args.kw_defaults:
+            if kw_default is not None:
+                defaults.append(kw_default)
+        # Loop invariant: no default in defaults[0..k] has been flagged for this function
+        for default in defaults:
+            if not _is_mutable_literal(default):
+                continue
+            if _has_opt_out_comment(source, _function_opt_out_lines(node), "allow-mutable-default"):
+                break
+            results.append(FunctionResult(
+                function=node.name,
+                file=file_path,
+                line=node.lineno,
+                level_requested=1,
+                level_achieved=0,
+                status=CheckStatus.FAILED,
+                details=(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="violation",
+                    message=f"Function '{node.name}' has a mutable default argument",
+                    suggestion=(
+                        "Use None as the default and create the mutable value inside the function. "
+                        "If intentional, add '# allow-mutable-default: <reason>' above the def."
+                    ),
+                ),),
+            ))
+            break  # one finding per function
+
+    return results
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_print_in_core(
+    source: str,
+    tree: ast.Module,
+    config: SerenecodeConfig,
+    module_path: str,
+    file_path: str,
+) -> list[FunctionResult]:
+    """Flag print() calls in core modules."""
+    if not config.code_quality_rules.forbid_print_in_core:
+        return []
+    if not is_core_module(module_path, config):
+        return []
+
+    results: list[FunctionResult] = []
+
+    # Loop invariant: results contains findings for nodes[0..i]
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (isinstance(node.func, ast.Name) and node.func.id == "print"):
+            continue
+        if _has_opt_out_comment(source, (node.lineno,), "allow-print"):
+            continue
+        results.append(FunctionResult(
+            function="<module>",
+            file=file_path,
+            line=node.lineno,
+            level_requested=1,
+            level_achieved=0,
+            status=CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="structural",
+                finding_type="violation",
+                message=f"print() call in core module at line {node.lineno}",
+                suggestion=(
+                    "Core modules must not perform I/O. Return data to the caller or use a "
+                    "logger configured at the composition root. If intentional, add "
+                    "'# allow-print: <reason>' above the call."
+                ),
+            ),),
+        ))
+
+    return results
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_dangerous_calls(
+    source: str,
+    tree: ast.Module,
+    config: SerenecodeConfig,
+    module_path: str,
+    file_path: str,
+) -> list[FunctionResult]:
+    """Flag eval/exec, pickle.loads, os.system, subprocess.* with shell=True."""
+    if not config.code_quality_rules.forbid_dangerous_calls:
+        return []
+    if is_exempt_module(module_path, config):
+        return []
+
+    results: list[FunctionResult] = []
+
+    # Loop invariant: results contains findings for nodes[0..i]
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        finding_msg: str | None = None
+        if isinstance(node.func, ast.Name) and node.func.id in _DANGEROUS_NAME_FUNCS:
+            finding_msg = f"Call to '{node.func.id}()' at line {node.lineno}"
+        elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            mod_name = node.func.value.id
+            attr_name = node.func.attr
+            if (mod_name, attr_name) in _DANGEROUS_ATTR_PATTERNS:
+                if mod_name == "subprocess" and attr_name in _SUBPROCESS_FUNCS:
+                    if not _has_shell_true_kwarg(node):
+                        continue
+                    finding_msg = (
+                        f"Call to 'subprocess.{attr_name}(..., shell=True)' at line {node.lineno}"
+                    )
+                else:
+                    finding_msg = f"Call to '{mod_name}.{attr_name}()' at line {node.lineno}"
+
+        if finding_msg is None:
+            continue
+        if _has_opt_out_comment(source, (node.lineno,), "allow-dangerous"):
+            continue
+        results.append(FunctionResult(
+            function="<module>",
+            file=file_path,
+            line=node.lineno,
+            level_requested=1,
+            level_achieved=0,
+            status=CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="structural",
+                finding_type="violation",
+                message=finding_msg,
+                suggestion=(
+                    "Avoid eval/exec, pickle.loads on untrusted data, os.system, and subprocess "
+                    "with shell=True. Prefer ast.literal_eval, json, argument lists, or specific "
+                    "library APIs. If genuinely necessary, add '# allow-dangerous: <reason>' "
+                    "above the call."
+                ),
+            ),),
+        ))
+
+    return results
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_bare_asserts_outside_tests(
+    source: str,
+    tree: ast.Module,
+    config: SerenecodeConfig,
+    module_path: str,
+    file_path: str,
+) -> list[FunctionResult]:
+    """Flag `assert` statements in non-test source modules."""
+    if not config.code_quality_rules.forbid_bare_asserts_outside_tests:
+        return []
+    if is_exempt_module(module_path, config):
+        return []
+    if _is_test_module(module_path):
+        return []
+
+    results: list[FunctionResult] = []
+
+    # Loop invariant: results contains findings for nodes[0..i]
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assert):
+            continue
+        if _has_opt_out_comment(source, (node.lineno,), "allow-assert"):
+            continue
+        results.append(FunctionResult(
+            function="<module>",
+            file=file_path,
+            line=node.lineno,
+            level_requested=1,
+            level_achieved=0,
+            status=CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="structural",
+                finding_type="violation",
+                message=(
+                    f"`assert` at line {node.lineno} in non-test source disappears under "
+                    f"`python -O` and must not be used as a runtime check"
+                ),
+                suggestion=(
+                    "Replace with an explicit `raise` of a domain exception, or move the assertion "
+                    "into a test. If used for type narrowing, add '# allow-assert: <reason>' "
+                    "above the statement."
+                ),
+            ),),
+        ))
+
+    return results
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_stub_residue(
+    source: str,
+    tree: ast.Module,
+    config: SerenecodeConfig,
+    module_path: str,
+    file_path: str,
+) -> list[FunctionResult]:
+    """Flag functions whose body is only pass / ... / raise NotImplementedError."""
+    if not config.code_quality_rules.forbid_stub_residue:
+        return []
+    if is_exempt_module(module_path, config):
+        return []
+
+    results: list[FunctionResult] = []
+
+    # Map functions to their immediate enclosing class for Protocol detection
+    class_map: dict[int, ast.ClassDef] = {}
+    # Loop invariant: class_map contains entries for methods of classes walked so far
+    for cls in ast.walk(tree):
+        if isinstance(cls, ast.ClassDef):
+            for member in cls.body:
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    class_map[id(member)] = cls
+
+    # Loop invariant: results contains findings for nodes[0..i]
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        parent = class_map.get(id(node))
+        if parent is not None and _is_protocol_class(parent):
+            continue
+        if _has_abstractmethod_decorator(node):
+            continue
+        if node.name == "__init__" and _is_init_with_only_assignments(node):
+            continue
+        if not _is_stub_body(node.body):
+            continue
+        if _has_opt_out_comment(source, _function_opt_out_lines(node), "allow-stub"):
+            continue
+        results.append(FunctionResult(
+            function=node.name,
+            file=file_path,
+            line=node.lineno,
+            level_requested=1,
+            level_achieved=0,
+            status=CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="structural",
+                finding_type="violation",
+                message=(
+                    f"Function '{node.name}' has a stub body (only pass, ..., or "
+                    f"raise NotImplementedError)"
+                ),
+                suggestion=(
+                    "Implement the function or remove it. If it is an interface placeholder, "
+                    "make the class a Protocol or decorate with @abstractmethod. "
+                    "If intentional, add '# allow-stub: <reason>' above the def."
+                ),
+            ),),
+        ))
+
+    return results
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_todo_comments(
+    source: str,
+    tree: ast.Module,
+    config: SerenecodeConfig,
+    module_path: str,
+    file_path: str,
+) -> list[FunctionResult]:
+    """Flag TODO/FIXME/XXX/HACK markers in tracked source files."""
+    if not config.code_quality_rules.forbid_todo_comments:
+        return []
+    if is_exempt_module(module_path, config):
+        return []
+    if _is_test_module(module_path):
+        return []
+    del tree  # not needed; comment scan is purely lexical
+
+    results: list[FunctionResult] = []
+    # silent-except: tokenization is a comment-extraction pre-pass; on tokenizer failure we skip the marker scan
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, UnicodeDecodeError, UnicodeEncodeError, IndentationError):
+        return []
+
+    # Loop invariant: results contains findings for tokens[0..i]
+    for tok_type, tok_string, tok_start, _, _ in tokens:
+        if tok_type != tokenize.COMMENT:
+            continue
+        # Skip the opt-out comment itself so it doesn't self-trigger
+        if "allow-todo:" in tok_string.lower():
+            continue
+        match = _TODO_PATTERN.search(tok_string)
+        if match is None:
+            continue
+        line_no = tok_start[0]
+        if _has_opt_out_comment(source, (line_no,), "allow-todo"):
+            continue
+        marker = match.group(0).upper()
+        results.append(FunctionResult(
+            function="<comment>",
+            file=file_path,
+            line=line_no,
+            level_requested=1,
+            level_achieved=0,
+            status=CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="structural",
+                finding_type="violation",
+                message=f"{marker} marker in tracked source at line {line_no}",
+                suggestion=(
+                    f"Resolve the {marker}, file an issue and reference it, or delete the comment. "
+                    f"If intentional, add '# allow-todo: <issue link or reason>' above the marker."
+                ),
+            ),),
+        ))
+
+    return results
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_no_assertions_in_tests(
+    source: str,
+    tree: ast.Module,
+    config: SerenecodeConfig,
+    module_path: str,
+    file_path: str,
+) -> list[FunctionResult]:
+    """Flag test_* functions in test modules with no assertion-equivalent."""
+    if not config.code_quality_rules.require_test_assertions:
+        return []
+    if not _is_test_module(module_path):
+        return []
+
+    results: list[FunctionResult] = []
+
+    # Loop invariant: results contains findings for nodes[0..i]
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.name.startswith("test_"):
+            continue
+        if _function_has_assertion(node):
+            continue
+        if _has_opt_out_comment(source, _function_opt_out_lines(node), "allow-no-assert"):
+            continue
+        results.append(FunctionResult(
+            function=node.name,
+            file=file_path,
+            line=node.lineno,
+            level_requested=1,
+            level_achieved=0,
+            status=CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="structural",
+                finding_type="violation",
+                message=f"Test function '{node.name}' has no assertion",
+                suggestion=(
+                    "Add an `assert`, `pytest.raises(...)`, `pytest.fail(...)`, or "
+                    "`self.assertX(...)` call. If the test legitimately just checks that "
+                    "code does not raise, add '# allow-no-assert: <reason>' above the def."
+                ),
+            ),),
+        ))
+
+    return results
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_tautological_isinstance_postcondition(
+    source: str,
+    tree: ast.Module,
+    config: SerenecodeConfig,
+    aliases: IcontractNames,
+    module_path: str,
+    file_path: str,
+) -> list[FunctionResult]:
+    """Flag @ensure(lambda result: isinstance(result, T)) when T == return annotation.
+
+    Scope: public functions only (excludes ``_``-prefixed helpers and
+    ``is_``/``has_``-prefixed predicates). The check targets AI-shipped weak
+    postconditions on the public API. Internal predicates exist to compose
+    into other contracts and their type signature is the entire constraint;
+    asking for a "stronger" postcondition would just restate their body.
+    """
+    if not config.code_quality_rules.forbid_isinstance_tautology:
+        return []
+    if is_exempt_module(module_path, config):
+        return []
+
+    results: list[FunctionResult] = []
+
+    # Loop invariant: results contains findings for nodes[0..i]
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.returns is None:
+            continue
+        # Skip private helpers — their job is to compose into the public API's
+        # contracts, and asking for a "stronger" postcondition tends to just
+        # restate the body.
+        if node.name.startswith("_"):
+            continue
+        # Skip predicate-style functions (is_*/has_*) — they exist precisely
+        # to be reused in *other* functions' contracts, and their own
+        # postcondition is necessarily "result is what the body says it is".
+        if node.name.startswith(("is_", "has_")):
+            continue
+        return_type_str = ast.unparse(node.returns)
+        flagged = False
+        # Loop invariant: no decorator in decorator_list[0..j] has been flagged
+        for dec in node.decorator_list:
+            if flagged:
+                break
+            if not (isinstance(dec, ast.Call) and dec.args):
+                continue
+            dec_name = get_decorator_name(dec)
+            if dec_name not in aliases.ensure_names:
+                continue
+            lam = dec.args[0]
+            if not isinstance(lam, ast.Lambda):
+                continue
+            if not _is_tautological_isinstance(lam, return_type_str):
+                continue
+            if _has_opt_out_comment(source, _function_opt_out_lines(node), "allow-isinstance-tautology"):
+                flagged = True
+                continue
+            results.append(FunctionResult(
+                function=node.name,
+                file=file_path,
+                line=node.lineno,
+                level_requested=1,
+                level_achieved=0,
+                status=CheckStatus.FAILED,
+                details=(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="violation",
+                    message=(
+                        f"Function '{node.name}' has tautological postcondition "
+                        f"`isinstance(result, {return_type_str})` "
+                        f"(return annotation already guarantees this)"
+                    ),
+                    suggestion=(
+                        "Replace with a meaningful constraint on `result` (range, length, "
+                        "relationship to inputs). The return annotation already enforces type."
+                    ),
+                ),),
+            ))
+            flagged = True
+
+    return results
+
+
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an ast.Module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_unused_parameters(
+    source: str,
+    tree: ast.Module,
+    config: SerenecodeConfig,
+    module_path: str,
+    file_path: str,
+) -> list[FunctionResult]:
+    """Flag function parameters never referenced in the body (strict-only by default)."""
+    if not config.code_quality_rules.forbid_unused_parameters:
+        return []
+    if is_exempt_module(module_path, config):
+        return []
+
+    results: list[FunctionResult] = []
+
+    class_map: dict[int, ast.ClassDef] = {}
+    # Loop invariant: class_map contains entries for methods of classes walked so far
+    for cls in ast.walk(tree):
+        if isinstance(cls, ast.ClassDef):
+            for member in cls.body:
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    class_map[id(member)] = cls
+
+    # Loop invariant: results contains findings for nodes[0..i]
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if _has_override_decorator(node):
+            continue
+        parent = class_map.get(id(node))
+        if parent is not None and _has_non_object_base(parent):
+            # Conservative: assume method participates in interface conformance
+            continue
+        # Collect referenced names in body
+        referenced: set[str] = set()
+        # Loop invariant: referenced contains all Name ids walked so far
+        for stmt in node.body:
+            for body_node in ast.walk(stmt):
+                if isinstance(body_node, ast.Name):
+                    referenced.add(body_node.id)
+        params = _non_receiver_parameters(node)
+        # Loop invariant: results gained one entry per unused param in params[0..k]
+        for param in params:
+            if param is node.args.vararg or param is node.args.kwarg:
+                continue
+            if param.arg.startswith("_"):
+                continue
+            if param.arg in referenced:
+                continue
+            if _has_opt_out_comment(source, _function_opt_out_lines(node), "allow-unused-param"):
+                break
+            results.append(FunctionResult(
+                function=node.name,
+                file=file_path,
+                line=node.lineno,
+                level_requested=1,
+                level_achieved=0,
+                status=CheckStatus.FAILED,
+                details=(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="violation",
+                    message=f"Parameter '{param.arg}' of '{node.name}' is unused",
+                    suggestion=(
+                        f"Remove the parameter, rename it to '_{param.arg}' to mark it intentionally "
+                        f"unused, or add '# allow-unused-param: <reason>' above the def."
+                    ),
+                ),),
+            ))
+
+    return results
+
+
+@icontract.require(
     lambda tree: isinstance(tree, ast.Module),
     "tree must be an ast.Module",
 )
@@ -1561,8 +2801,8 @@ def check_naming_conventions(
     "source must be a string",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, CheckResult),
-    "result must be a CheckResult",
+    lambda result: result.level_requested == 1,
+    "structural check reports findings at the structural level",
 )
 def check_structural(
     source: str,
@@ -1649,6 +2889,16 @@ def check_structural(
     all_results.extend(check_docstrings(tree, config, file_path))
     all_results.extend(check_loop_invariants(source, tree, config, file_path))
     all_results.extend(check_exception_types(tree, config, module_path, file_path))
+    all_results.extend(check_silent_exception_handling(source, tree, config, file_path))
+    all_results.extend(check_mutable_default_arguments(source, tree, config, module_path, file_path))
+    all_results.extend(check_print_in_core(source, tree, config, module_path, file_path))
+    all_results.extend(check_dangerous_calls(source, tree, config, module_path, file_path))
+    all_results.extend(check_bare_asserts_outside_tests(source, tree, config, module_path, file_path))
+    all_results.extend(check_stub_residue(source, tree, config, module_path, file_path))
+    all_results.extend(check_todo_comments(source, tree, config, module_path, file_path))
+    all_results.extend(check_no_assertions_in_tests(source, tree, config, module_path, file_path))
+    all_results.extend(check_tautological_isinstance_postcondition(source, tree, config, aliases, module_path, file_path))
+    all_results.extend(check_unused_parameters(source, tree, config, module_path, file_path))
     all_results.extend(check_naming_conventions(tree, config, file_path))
 
     elapsed = time.monotonic() - start_time

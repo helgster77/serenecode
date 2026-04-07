@@ -14,18 +14,29 @@ import pytest
 from serenecode.checker.structural import (
     IcontractNames,
     _find_tautological_contracts,
+    _is_test_module,
     _is_tautological_lambda,
     _decorator_descriptions_are_literals,
+    check_bare_asserts_outside_tests,
     check_class_invariants,
     check_contracts,
+    check_dangerous_calls,
     check_docstrings,
     check_exception_types,
     check_imports,
     check_loop_invariants,
+    check_mutable_default_arguments,
     check_naming_conventions,
     check_no_any_in_core,
+    check_no_assertions_in_tests,
+    check_print_in_core,
+    check_silent_exception_handling,
     check_structural,
+    check_stub_residue,
+    check_tautological_isinstance_postcondition,
+    check_todo_comments,
     check_type_annotations,
+    check_unused_parameters,
     resolve_icontract_aliases,
 )
 from serenecode.config import default_config, minimal_config, strict_config
@@ -785,6 +796,1092 @@ class TestCheckExceptionTypes:
         tree = ast.parse(source)
         config = strict_config()
         results = check_exception_types(tree, config, "adapters/local_fs.py", "test.py")
+        assert len(results) == 0
+
+
+class TestCheckSilentExceptionHandling:
+    """Tests for silent exception handling detection."""
+
+    def test_minimal_config_skips_silent_exception_check(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                try:
+                    risky()
+                except Exception:
+                    pass
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, minimal_config(), "test.py")
+        assert len(results) == 0
+
+    def test_except_pass_is_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                try:
+                    risky()
+                except Exception:
+                    pass
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 1
+        assert "silent" in results[0].details[0].message.lower()
+
+    def test_except_ellipsis_is_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                try:
+                    risky()
+                except Exception:
+                    ...
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 1
+
+    def test_except_return_none_is_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> int | None:
+                try:
+                    return risky()
+                except Exception:
+                    return None
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 1
+
+    def test_except_return_constant_is_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> str:
+                try:
+                    return risky()
+                except Exception:
+                    return ""
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 1
+
+    def test_except_return_empty_list_is_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> list[int]:
+                try:
+                    return risky()
+                except (TypeError, ValueError):
+                    return []
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 1
+
+    def test_except_continue_in_loop_is_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def func(items: list[int]) -> None:
+                for item in items:
+                    try:
+                        process(item)
+                    except Exception:
+                        continue
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 1
+
+    def test_bare_except_is_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                try:
+                    risky()
+                except:
+                    raise
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 1
+        assert "bare" in results[0].details[0].message.lower()
+
+    def test_except_with_reraise_passes(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                try:
+                    risky()
+                except ValueError:
+                    raise
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 0
+
+    def test_except_translating_to_domain_exception_passes(self) -> None:
+        source = textwrap.dedent("""\
+            class DomainError(Exception):
+                pass
+
+            def func() -> None:
+                try:
+                    risky()
+                except ValueError as exc:
+                    raise DomainError("wrapped") from exc
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 0
+
+    def test_except_using_exception_variable_passes(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                try:
+                    risky()
+                except Exception as exc:
+                    log(exc)
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 0
+
+    def test_except_with_meaningful_body_passes(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                try:
+                    risky()
+                except Exception:
+                    cleanup()
+                    notify_user()
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 0
+
+    def test_opt_out_comment_above_try_exempts_handler(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                # silent-except: progress callback failures must not abort caller
+                try:
+                    progress("step")
+                except Exception:
+                    pass
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 0
+
+    def test_opt_out_comment_above_except_exempts_handler(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                try:
+                    progress("step")
+                # silent-except: progress callback failures must not abort caller
+                except Exception:
+                    pass
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 0
+
+    def test_opt_out_without_reason_does_not_exempt(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                # silent-except:
+                try:
+                    risky()
+                except Exception:
+                    pass
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 1
+
+    def test_unrelated_comment_does_not_exempt(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                # this is fine
+                try:
+                    risky()
+                except Exception:
+                    pass
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 1
+
+    def test_multiple_handlers_each_evaluated_independently(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                try:
+                    risky()
+                except ValueError:
+                    raise
+                except TypeError:
+                    pass
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, default_config(), "test.py")
+        assert len(results) == 1
+        assert results[0].line >= 6
+
+    def test_strict_config_also_enables_check(self) -> None:
+        source = textwrap.dedent("""\
+            def func() -> None:
+                try:
+                    risky()
+                except Exception:
+                    pass
+        """)
+        tree = ast.parse(source)
+        results = check_silent_exception_handling(source, tree, strict_config(), "test.py")
+        assert len(results) == 1
+
+
+class TestIsTestModule:
+    """Tests for the _is_test_module helper used by several checks."""
+
+    def test_path_in_tests_dir(self) -> None:
+        assert _is_test_module("tests/unit/foo.py") is True
+
+    def test_test_prefix_basename(self) -> None:
+        assert _is_test_module("test_foo.py") is True
+
+    def test_src_module_is_not_test(self) -> None:
+        assert _is_test_module("src/serenecode/core/foo.py") is False
+
+    def test_empty_path(self) -> None:
+        assert _is_test_module("") is False
+
+    def test_windows_separators(self) -> None:
+        assert _is_test_module("tests\\unit\\foo.py") is True
+
+
+class TestCheckMutableDefaultArguments:
+    """Tests for mutable-default-argument detection."""
+
+    def test_minimal_config_skips(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x=[]):
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_mutable_default_arguments(source, tree, minimal_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_list_literal_default_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x=[]):
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_mutable_default_arguments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+        assert "mutable" in results[0].details[0].message.lower()
+
+    def test_dict_literal_default_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x={}):
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_mutable_default_arguments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_set_literal_default_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x={1, 2}):
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_mutable_default_arguments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_list_constructor_call_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x=list()):
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_mutable_default_arguments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_none_default_passes(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x=None):
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_mutable_default_arguments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_tuple_default_passes(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x=(1, 2)):
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_mutable_default_arguments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_keyword_only_mutable_default_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f(*, x=[]):
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_mutable_default_arguments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_opt_out_comment_exempts(self) -> None:
+        source = textwrap.dedent("""\
+            # allow-mutable-default: sentinel pattern documented in design notes
+            def f(x=[]):
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_mutable_default_arguments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_exempt_module_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x=[]):
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_mutable_default_arguments(source, tree, default_config(), "cli.py", "cli.py")
+        assert len(results) == 0
+
+
+class TestCheckPrintInCore:
+    """Tests for print()-in-core-module detection."""
+
+    def test_minimal_config_skips(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                print('hi')
+        """)
+        tree = ast.parse(source)
+        results = check_print_in_core(source, tree, minimal_config(), "core/foo.py", "core/foo.py")
+        assert len(results) == 0
+
+    def test_print_in_core_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                print('hi')
+        """)
+        tree = ast.parse(source)
+        results = check_print_in_core(source, tree, default_config(), "core/foo.py", "core/foo.py")
+        assert len(results) == 1
+        assert "print" in results[0].details[0].message.lower()
+
+    def test_print_in_adapter_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                print('hi')
+        """)
+        tree = ast.parse(source)
+        results = check_print_in_core(source, tree, default_config(), "adapters/foo.py", "adapters/foo.py")
+        assert len(results) == 0
+
+    def test_print_in_non_core_module_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                print('hi')
+        """)
+        tree = ast.parse(source)
+        results = check_print_in_core(source, tree, default_config(), "scripts/foo.py", "scripts/foo.py")
+        assert len(results) == 0
+
+    def test_opt_out_comment_exempts(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                # allow-print: required for stdout-only CLI helper inside core
+                print('hi')
+        """)
+        tree = ast.parse(source)
+        results = check_print_in_core(source, tree, default_config(), "core/foo.py", "core/foo.py")
+        assert len(results) == 0
+
+    def test_multiple_prints_each_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                print('one')
+                print('two')
+        """)
+        tree = ast.parse(source)
+        results = check_print_in_core(source, tree, default_config(), "core/foo.py", "core/foo.py")
+        assert len(results) == 2
+
+
+class TestCheckDangerousCalls:
+    """Tests for dangerous-call detection."""
+
+    def test_minimal_config_skips(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                eval('1+1')
+        """)
+        tree = ast.parse(source)
+        results = check_dangerous_calls(source, tree, minimal_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_eval_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                eval('1+1')
+        """)
+        tree = ast.parse(source)
+        results = check_dangerous_calls(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+        assert "eval" in results[0].details[0].message.lower()
+
+    def test_exec_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                exec('x = 1')
+        """)
+        tree = ast.parse(source)
+        results = check_dangerous_calls(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_pickle_loads_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            import pickle
+            def f(data):
+                return pickle.loads(data)
+        """)
+        tree = ast.parse(source)
+        results = check_dangerous_calls(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+        assert "pickle" in results[0].details[0].message.lower()
+
+    def test_os_system_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            import os
+            def f() -> None:
+                os.system('ls')
+        """)
+        tree = ast.parse(source)
+        results = check_dangerous_calls(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_subprocess_run_with_shell_true_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            import subprocess
+            def f() -> None:
+                subprocess.run('ls', shell=True)
+        """)
+        tree = ast.parse(source)
+        results = check_dangerous_calls(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+        assert "shell=True" in results[0].details[0].message
+
+    def test_subprocess_run_without_shell_true_passes(self) -> None:
+        source = textwrap.dedent("""\
+            import subprocess
+            def f() -> None:
+                subprocess.run(['ls', '-la'])
+        """)
+        tree = ast.parse(source)
+        results = check_dangerous_calls(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_opt_out_comment_exempts(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                # allow-dangerous: ast.literal_eval insufficient for legacy formula syntax
+                eval('1+1')
+        """)
+        tree = ast.parse(source)
+        results = check_dangerous_calls(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_exempt_module_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> None:
+                eval('1+1')
+        """)
+        tree = ast.parse(source)
+        results = check_dangerous_calls(source, tree, default_config(), "cli.py", "cli.py")
+        assert len(results) == 0
+
+
+class TestCheckBareAssertsOutsideTests:
+    """Tests for bare assert detection in non-test source."""
+
+    def test_minimal_config_skips(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x: int) -> int:
+                assert x > 0
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_bare_asserts_outside_tests(source, tree, minimal_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_assert_in_src_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x: int) -> int:
+                assert x > 0
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_bare_asserts_outside_tests(source, tree, default_config(), "src/foo.py", "src/foo.py")
+        assert len(results) == 1
+        assert "assert" in results[0].details[0].message.lower()
+
+    def test_assert_in_test_module_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def test_foo() -> None:
+                assert 1 == 1
+        """)
+        tree = ast.parse(source)
+        results = check_bare_asserts_outside_tests(source, tree, default_config(), "tests/test_foo.py", "tests/test_foo.py")
+        assert len(results) == 0
+
+    def test_assert_in_test_prefix_module_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def test_foo() -> None:
+                assert 1 == 1
+        """)
+        tree = ast.parse(source)
+        results = check_bare_asserts_outside_tests(source, tree, default_config(), "test_helpers.py", "test_helpers.py")
+        assert len(results) == 0
+
+    def test_opt_out_comment_exempts(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x: int) -> int:
+                # allow-assert: type narrowing for mypy; runtime guarded by precondition
+                assert x > 0
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_bare_asserts_outside_tests(source, tree, default_config(), "src/foo.py", "src/foo.py")
+        assert len(results) == 0
+
+    def test_exempt_module_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x: int) -> int:
+                assert x > 0
+                return x
+        """)
+        tree = ast.parse(source)
+        results = check_bare_asserts_outside_tests(source, tree, default_config(), "cli.py", "cli.py")
+        assert len(results) == 0
+
+
+class TestCheckStubResidue:
+    """Tests for stub-residue detection."""
+
+    def test_minimal_config_skips(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> int:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_stub_residue(source, tree, minimal_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_pass_only_body_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> int:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_stub_residue(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_ellipsis_only_body_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> int:
+                ...
+        """)
+        tree = ast.parse(source)
+        results = check_stub_residue(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_raise_notimplementederror_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> int:
+                raise NotImplementedError()
+        """)
+        tree = ast.parse(source)
+        results = check_stub_residue(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_docstring_plus_pass_still_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def f() -> int:
+                \"\"\"Doc.\"\"\"
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_stub_residue(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_protocol_method_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            from typing import Protocol
+            class P(Protocol):
+                def f(self) -> int: ...
+        """)
+        tree = ast.parse(source)
+        results = check_stub_residue(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_abstractmethod_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            from abc import abstractmethod
+            class A:
+                @abstractmethod
+                def f(self) -> int:
+                    pass
+        """)
+        tree = ast.parse(source)
+        results = check_stub_residue(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_init_with_only_assignments_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            class C:
+                def __init__(self) -> None:
+                    self.x = 1
+                    self.y = 2
+        """)
+        tree = ast.parse(source)
+        results = check_stub_residue(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_real_implementation_passes(self) -> None:
+        source = textwrap.dedent("""\
+            def f(x: int) -> int:
+                return x + 1
+        """)
+        tree = ast.parse(source)
+        results = check_stub_residue(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_opt_out_comment_exempts(self) -> None:
+        source = textwrap.dedent("""\
+            # allow-stub: placeholder for upcoming REQ-042 implementation
+            def f() -> int:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_stub_residue(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+
+class TestCheckTodoComments:
+    """Tests for TODO/FIXME/XXX/HACK comment detection."""
+
+    def test_minimal_config_skips(self) -> None:
+        source = textwrap.dedent("""\
+            # TODO: implement this
+            def f() -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_todo_comments(source, tree, minimal_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_todo_comment_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            # TODO: implement this
+            def f() -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_todo_comments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+        assert "TODO" in results[0].details[0].message
+
+    def test_fixme_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            # FIXME: broken edge case
+            def f() -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_todo_comments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_xxx_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            # XXX: this is wrong
+            def f() -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_todo_comments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_hack_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            # HACK: temporary workaround
+            def f() -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_todo_comments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+
+    def test_test_module_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            # TODO: cover this branch
+            def test_foo() -> None:
+                assert True
+        """)
+        tree = ast.parse(source)
+        results = check_todo_comments(source, tree, default_config(), "tests/test_foo.py", "tests/test_foo.py")
+        assert len(results) == 0
+
+    def test_opt_out_comment_exempts(self) -> None:
+        source = textwrap.dedent("""\
+            # allow-todo: tracked in INFRA-12
+            # TODO: refactor when migration completes
+            def f() -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_todo_comments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_clean_code_passes(self) -> None:
+        source = textwrap.dedent("""\
+            # this is a normal comment
+            def f() -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_todo_comments(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_exempt_module_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            # TODO: refactor
+            def f() -> None:
+                pass
+        """)
+        tree = ast.parse(source)
+        results = check_todo_comments(source, tree, default_config(), "cli.py", "cli.py")
+        assert len(results) == 0
+
+
+class TestCheckNoAssertionsInTests:
+    """Tests for tests-without-assertions detection."""
+
+    def test_minimal_config_skips(self) -> None:
+        source = textwrap.dedent("""\
+            def test_nothing() -> None:
+                x = 1
+        """)
+        tree = ast.parse(source)
+        results = check_no_assertions_in_tests(source, tree, minimal_config(), "tests/test_foo.py", "tests/test_foo.py")
+        assert len(results) == 0
+
+    def test_test_with_no_assertion_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            def test_nothing() -> None:
+                x = 1
+        """)
+        tree = ast.parse(source)
+        results = check_no_assertions_in_tests(source, tree, default_config(), "tests/test_foo.py", "tests/test_foo.py")
+        assert len(results) == 1
+
+    def test_test_with_assert_passes(self) -> None:
+        source = textwrap.dedent("""\
+            def test_foo() -> None:
+                assert 1 == 1
+        """)
+        tree = ast.parse(source)
+        results = check_no_assertions_in_tests(source, tree, default_config(), "tests/test_foo.py", "tests/test_foo.py")
+        assert len(results) == 0
+
+    def test_test_with_pytest_raises_passes(self) -> None:
+        source = textwrap.dedent("""\
+            import pytest
+            def test_foo() -> None:
+                with pytest.raises(ValueError):
+                    raise ValueError("x")
+        """)
+        tree = ast.parse(source)
+        results = check_no_assertions_in_tests(source, tree, default_config(), "tests/test_foo.py", "tests/test_foo.py")
+        assert len(results) == 0
+
+    def test_test_with_pytest_fail_passes(self) -> None:
+        source = textwrap.dedent("""\
+            import pytest
+            def test_foo() -> None:
+                if False:
+                    pytest.fail("never")
+        """)
+        tree = ast.parse(source)
+        results = check_no_assertions_in_tests(source, tree, default_config(), "tests/test_foo.py", "tests/test_foo.py")
+        assert len(results) == 0
+
+    def test_unittest_assertEqual_passes(self) -> None:
+        source = textwrap.dedent("""\
+            import unittest
+            class T(unittest.TestCase):
+                def test_foo(self) -> None:
+                    self.assertEqual(1, 1)
+        """)
+        tree = ast.parse(source)
+        results = check_no_assertions_in_tests(source, tree, default_config(), "tests/test_foo.py", "tests/test_foo.py")
+        assert len(results) == 0
+
+    def test_non_test_function_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def helper() -> None:
+                x = 1
+        """)
+        tree = ast.parse(source)
+        results = check_no_assertions_in_tests(source, tree, default_config(), "tests/test_foo.py", "tests/test_foo.py")
+        assert len(results) == 0
+
+    def test_non_test_module_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def test_nothing() -> None:
+                x = 1
+        """)
+        tree = ast.parse(source)
+        results = check_no_assertions_in_tests(source, tree, default_config(), "src/foo.py", "src/foo.py")
+        assert len(results) == 0
+
+    def test_opt_out_comment_exempts(self) -> None:
+        source = textwrap.dedent("""\
+            # allow-no-assert: smoke test only checks that import succeeds
+            def test_imports_clean() -> None:
+                import os
+        """)
+        tree = ast.parse(source)
+        results = check_no_assertions_in_tests(source, tree, default_config(), "tests/test_foo.py", "tests/test_foo.py")
+        assert len(results) == 0
+
+
+class TestCheckTautologicalIsinstancePostcondition:
+    """Tests for the extended isinstance-tautology check."""
+
+    def test_minimal_config_skips(self) -> None:
+        source = textwrap.dedent("""\
+            import icontract
+            @icontract.ensure(lambda result: isinstance(result, int), "is int")
+            def f() -> int:
+                return 1
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_tautological_isinstance_postcondition(
+            source, tree, minimal_config(), aliases, "foo.py", "foo.py",
+        )
+        assert len(results) == 0
+
+    def test_isinstance_matching_return_type_flagged(self) -> None:
+        source = textwrap.dedent("""\
+            import icontract
+            @icontract.ensure(lambda result: isinstance(result, int), "is int")
+            def f() -> int:
+                return 1
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_tautological_isinstance_postcondition(
+            source, tree, default_config(), aliases, "foo.py", "foo.py",
+        )
+        assert len(results) == 1
+        assert "tautological" in results[0].details[0].message.lower()
+
+    def test_meaningful_postcondition_passes(self) -> None:
+        source = textwrap.dedent("""\
+            import icontract
+            @icontract.ensure(lambda result: result > 0, "result must be positive")
+            def f() -> int:
+                return 1
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_tautological_isinstance_postcondition(
+            source, tree, default_config(), aliases, "foo.py", "foo.py",
+        )
+        assert len(results) == 0
+
+    def test_isinstance_against_different_type_passes(self) -> None:
+        source = textwrap.dedent("""\
+            import icontract
+            @icontract.ensure(lambda result: isinstance(result, int), "narrows union to int")
+            def f() -> int | str:
+                return 1
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_tautological_isinstance_postcondition(
+            source, tree, default_config(), aliases, "foo.py", "foo.py",
+        )
+        # int does not equal "int | str", so not flagged
+        assert len(results) == 0
+
+    def test_no_return_annotation_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            import icontract
+            @icontract.ensure(lambda result: isinstance(result, int), "is int")
+            def f():
+                return 1
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_tautological_isinstance_postcondition(
+            source, tree, default_config(), aliases, "foo.py", "foo.py",
+        )
+        assert len(results) == 0
+
+    def test_opt_out_comment_exempts(self) -> None:
+        source = textwrap.dedent("""\
+            import icontract
+            # allow-isinstance-tautology: defensive check kept for runtime safety
+            @icontract.ensure(lambda result: isinstance(result, int), "is int")
+            def f() -> int:
+                return 1
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_tautological_isinstance_postcondition(
+            source, tree, default_config(), aliases, "foo.py", "foo.py",
+        )
+        assert len(results) == 0
+
+    def test_private_helper_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            import icontract
+            @icontract.ensure(lambda result: isinstance(result, bool), "is bool")
+            def _internal_helper() -> bool:
+                return True
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_tautological_isinstance_postcondition(
+            source, tree, default_config(), aliases, "foo.py", "foo.py",
+        )
+        assert len(results) == 0
+
+    def test_is_predicate_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            import icontract
+            @icontract.ensure(lambda result: isinstance(result, bool), "is bool")
+            def is_valid(value: int) -> bool:
+                return value > 0
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_tautological_isinstance_postcondition(
+            source, tree, default_config(), aliases, "foo.py", "foo.py",
+        )
+        assert len(results) == 0
+
+    def test_has_predicate_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            import icontract
+            @icontract.ensure(lambda result: isinstance(result, bool), "is bool")
+            def has_property(obj: object) -> bool:
+                return True
+        """)
+        tree = ast.parse(source)
+        aliases = _aliases_standard()
+        results = check_tautological_isinstance_postcondition(
+            source, tree, default_config(), aliases, "foo.py", "foo.py",
+        )
+        assert len(results) == 0
+
+
+class TestCheckUnusedParameters:
+    """Tests for unused-parameter detection (strict-only by default)."""
+
+    def test_default_config_skips(self) -> None:
+        source = textwrap.dedent("""\
+            def f(used: int, unused: int) -> int:
+                return used
+        """)
+        tree = ast.parse(source)
+        results = check_unused_parameters(source, tree, default_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_strict_config_flags_unused(self) -> None:
+        source = textwrap.dedent("""\
+            def f(used: int, unused: int) -> int:
+                return used
+        """)
+        tree = ast.parse(source)
+        results = check_unused_parameters(source, tree, strict_config(), "foo.py", "foo.py")
+        assert len(results) == 1
+        assert "unused" in results[0].details[0].message.lower()
+
+    def test_underscore_prefix_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def f(used: int, _ignored: int) -> int:
+                return used
+        """)
+        tree = ast.parse(source)
+        results = check_unused_parameters(source, tree, strict_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_self_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            class C:
+                def f(self) -> int:
+                    return 1
+        """)
+        tree = ast.parse(source)
+        # C has no non-object base, so the conservative skip does not apply
+        results = check_unused_parameters(source, tree, strict_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_subclass_method_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            class Base:
+                pass
+            class Derived(Base):
+                def f(self, x: int) -> int:
+                    return 1
+        """)
+        tree = ast.parse(source)
+        results = check_unused_parameters(source, tree, strict_config(), "foo.py", "foo.py")
+        # Conservative: Derived has a non-object base, methods skipped
+        assert len(results) == 0
+
+    def test_override_decorator_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            from typing import override
+            class C:
+                @override
+                def f(self, x: int) -> int:
+                    return 1
+        """)
+        tree = ast.parse(source)
+        results = check_unused_parameters(source, tree, strict_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_args_kwargs_skipped(self) -> None:
+        source = textwrap.dedent("""\
+            def f(*args, **kwargs) -> int:
+                return 1
+        """)
+        tree = ast.parse(source)
+        results = check_unused_parameters(source, tree, strict_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_all_used_passes(self) -> None:
+        source = textwrap.dedent("""\
+            def f(a: int, b: int) -> int:
+                return a + b
+        """)
+        tree = ast.parse(source)
+        results = check_unused_parameters(source, tree, strict_config(), "foo.py", "foo.py")
+        assert len(results) == 0
+
+    def test_opt_out_comment_exempts(self) -> None:
+        source = textwrap.dedent("""\
+            # allow-unused-param: shape required by the FileReader port
+            def f(used: int, unused: int) -> int:
+                return used
+        """)
+        tree = ast.parse(source)
+        results = check_unused_parameters(source, tree, strict_config(), "foo.py", "foo.py")
         assert len(results) == 0
 
 

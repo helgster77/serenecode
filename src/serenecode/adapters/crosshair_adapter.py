@@ -157,6 +157,10 @@ def _is_symbolic_friendly_target(func: Any) -> bool:
         return False
     if module_name.startswith("serenecode.adapters"):
         return False
+    if module_name.startswith("serenecode.mcp"):
+        # MCP composition root: protocol-shim wrappers around already-verified
+        # pipeline functions; symbolic execution would only verify the wrapping.
+        return False
 
     try:
         resolved_hints = typing.get_type_hints(func)

@@ -21,6 +21,7 @@ from serenecode.contracts.predicates import is_non_empty_string, is_non_negative
 @icontract.ensure(lambda result: len(result) > 0, "version string must be non-empty")
 def _get_version() -> str:
     """Read the package version from metadata, falling back to a default."""
+    # silent-except: package metadata is optional; fall back to a sentinel version
     try:
         from importlib.metadata import version
         return version("serenecode")
@@ -268,10 +269,6 @@ class CheckResult:
 @icontract.ensure(
     lambda result: result.level_achieved <= result.level_requested,
     "achieved level must not exceed requested level",
-)
-@icontract.ensure(
-    lambda result: isinstance(result, CheckResult),
-    "result must be a CheckResult",
 )
 def make_check_result(
     results: tuple[FunctionResult, ...],
