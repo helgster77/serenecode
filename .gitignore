@@ -15,6 +15,11 @@ eggs/
 venv/
 env/
 
+# Secrets / local credentials
+.env
+.env.*
+!.env.example
+
 # IDE / AI tools
 .idea/
 .vscode/
