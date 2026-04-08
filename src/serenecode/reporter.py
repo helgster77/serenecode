@@ -22,6 +22,13 @@ __all__ = [
     "format_html",
 ]
 
+# Appended to human-formatted check output so CLI users see the MCP edit-loop path.
+_MCP_EDITOR_HINT = (
+    "Editor / AI loop: for per-symbol fixes without re-running the whole tree, use the "
+    "SereneCode MCP tools in your IDE (e.g. serenecode_check_function). "
+    "Run `serenecode doctor` to verify the optional MCP install and registration hints."
+)
+
 
 @icontract.require(
     lambda check_result: check_result.level_requested >= 1,
@@ -47,7 +54,8 @@ def format_human(check_result: CheckResult) -> str:
 
     # Header
     status_marker = "PASSED" if check_result.passed else "FAILED"
-    lines.append(f"Serenecode Check — {status_marker}")
+    verdict = check_result.summary.verdict
+    lines.append(f"Serenecode Check — {status_marker} (verdict: {verdict})")
     lines.append("=" * 50)
     lines.append("")
 
@@ -62,15 +70,24 @@ def format_human(check_result: CheckResult) -> str:
         passed = [r for r in func_results if r.status == CheckStatus.PASSED]
         failed = [r for r in func_results if r.status == CheckStatus.FAILED]
         skipped = [r for r in func_results if r.status == CheckStatus.SKIPPED]
-        exempt = [r for r in func_results if r.status == CheckStatus.EXEMPT]
+        advisories = [
+            r for r in func_results
+            if r.status == CheckStatus.EXEMPT
+            and any(detail.finding_type == "dead_code" for detail in r.details)
+        ]
+        exempt = [
+            r for r in func_results
+            if r.status == CheckStatus.EXEMPT
+            and not any(detail.finding_type == "dead_code" for detail in r.details)
+        ]
 
         # Compact summary for all-pass files
-        if not failed and not skipped and not exempt:
+        if not failed and not skipped and not advisories and not exempt:
             lines.append(f"  {file_path} — {len(passed)} passed")
             continue
 
         # Compact summary for exempt-only files
-        if not failed and not skipped and not passed:
+        if not failed and not skipped and not passed and not advisories:
             lines.append(f"  {file_path} — exempt")
             continue
 
@@ -82,6 +99,8 @@ def format_human(check_result: CheckResult) -> str:
             parts.append(f"{len(failed)} failed")
         if skipped:
             parts.append(f"{len(skipped)} skipped")
+        if advisories:
+            parts.append(f"{len(advisories)} advisory")
         if exempt:
             parts.append(f"{len(exempt)} exempt")
         lines.append(f"  {file_path} — {', '.join(parts)}")
@@ -89,9 +108,20 @@ def format_human(check_result: CheckResult) -> str:
         # Only show non-passing results with details
         # Loop invariant: lines contains output for non-passing func_results[0..j]
         for func_result in func_results:
-            if func_result.status in (CheckStatus.PASSED, CheckStatus.EXEMPT):
+            is_dead_code_advisory = (
+                func_result.status == CheckStatus.EXEMPT
+                and any(detail.finding_type == "dead_code" for detail in func_result.details)
+            )
+            if func_result.status == CheckStatus.PASSED:
                 continue
-            marker = "FAIL" if func_result.status == CheckStatus.FAILED else "SKIP"
+            if func_result.status == CheckStatus.EXEMPT and not is_dead_code_advisory:
+                continue
+            if func_result.status == CheckStatus.FAILED:
+                marker = "FAIL"
+            elif func_result.status == CheckStatus.SKIPPED:
+                marker = "SKIP"
+            else:
+                marker = "NOTE"
             lines.append(f"    [{marker}] {func_result.function} (line {func_result.line})")
 
             # Loop invariant: lines contains all details for details[0..k]
@@ -115,6 +145,8 @@ def format_human(check_result: CheckResult) -> str:
     ]
     if summary.exempt_count > 0:
         summary_parts.append(f"{summary.exempt_count} exempt")
+    if summary.advisory_count > 0:
+        summary_parts.append(f"{summary.advisory_count} advisory (dead code)")
     lines.append(", ".join(summary_parts))
     lines.append(f"Duration: {summary.duration_seconds:.3f}s")
 
@@ -125,6 +157,9 @@ def format_human(check_result: CheckResult) -> str:
             "Consider spawning subagents to fix groups of related "
             "findings in parallel."
         )
+
+    lines.append("")
+    lines.append(_MCP_EDITOR_HINT)
 
     return "\n".join(lines)
 
@@ -205,6 +240,13 @@ def format_html(check_result: CheckResult) -> str:
         rows: list[str] = []
         # Loop invariant: rows contains table rows for func_results[0..j]
         for fr in func_results:
+            is_dead_code_advisory = (
+                fr.status == CheckStatus.EXEMPT
+                and any(detail.finding_type == "dead_code" for detail in fr.details)
+            )
+            if fr.status == CheckStatus.EXEMPT and not is_dead_code_advisory:
+                continue
+
             row_class = "pass-row" if fr.status in (CheckStatus.PASSED, CheckStatus.EXEMPT) else "fail-row"
             status_badge = _level_badge(fr.level_achieved)
             detail_html = ""
@@ -234,7 +276,7 @@ def format_html(check_result: CheckResult) -> str:
                 f'<td>{_escape_html(fr.function)}</td>'
                 f"<td>{fr.line}</td>"
                 f"<td>{status_badge}</td>"
-                f"<td>{fr.status.value}</td>"
+                f"<td>{'advisory' if is_dead_code_advisory else fr.status.value}</td>"
                 f"<td>{detail_html}</td>"
                 f"</tr>"
             )
@@ -297,6 +339,7 @@ def format_html(check_result: CheckResult) -> str:
 <div class="header">
   <h1>Serenecode Verification Report</h1>
   <span class="status {status_class}">{status_text}</span>
+  <span style="margin-left: 1rem; color: #656d76;">Verdict: {_escape_html(summary.verdict)}</span>
   <span style="margin-left: 1rem; color: #656d76;">Generated {timestamp}</span>
   <div class="summary">
     <div class="summary-item"><div class="number">{summary.total_functions}</div><div class="label">Total</div></div>
@@ -304,6 +347,7 @@ def format_html(check_result: CheckResult) -> str:
     <div class="summary-item"><div class="number" style="color:#82071e">{summary.failed_count}</div><div class="label">Failed</div></div>
     <div class="summary-item"><div class="number" style="color:#656d76">{summary.skipped_count}</div><div class="label">Skipped</div></div>
     <div class="summary-item"><div class="number" style="color:#8b6914">{summary.exempt_count}</div><div class="label">Exempt</div></div>
+    <div class="summary-item"><div class="number" style="color:#8b6914">{summary.advisory_count}</div><div class="label">Advisory</div></div>
     <div class="summary-item"><div class="number">{summary.duration_seconds:.2f}s</div><div class="label">Duration</div></div>
   </div>
 </div>

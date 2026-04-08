@@ -11,6 +11,7 @@ import pytest
 from serenecode.mcp.resources import (
     resource_config,
     resource_exempt_modules,
+    resource_integrations,
     resource_last_run,
     resource_reqs,
 )
@@ -67,6 +68,8 @@ class TestResources:
         (tmp_path / "SPEC.md").write_text(textwrap.dedent("""\
             # Spec
 
+            **Source:** none — test fixture.
+
             ### REQ-001: One
             Desc.
         """), encoding="utf-8")
@@ -75,6 +78,28 @@ class TestResources:
         data = json.loads(text)
         assert data["count"] == 1
         assert data["req_ids"] == ["REQ-001"]
+
+    def test_integrations_with_spec_present(self, tmp_path: Path) -> None:
+        (tmp_path / "SPEC.md").write_text(textwrap.dedent("""\
+            # Spec
+
+            **Source:** none — test fixture.
+
+            ### REQ-001: One
+            Desc.
+
+            ### INT-001: One integration
+            Kind: call
+            Source: service.run
+            Target: gateway.send
+            Supports: REQ-001
+        """), encoding="utf-8")
+        build_server(project_root=str(tmp_path))
+        text = resource_integrations()
+        data = json.loads(text)
+        assert data["count"] == 1
+        assert data["integration_ids"] == ["INT-001"]
+        assert data["integrations"][0]["kind"] == "call"
 
     def test_config_resource_no_serenecode_md_uses_default(self, tmp_path: Path) -> None:
         """Branch (line 41): no SERENECODE.md → fall back to default_config()."""

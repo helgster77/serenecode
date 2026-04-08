@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
@@ -11,17 +13,29 @@ from serenecode.config import strict_config
 from serenecode.core.pipeline import run_pipeline
 from serenecode.source_discovery import build_source_files
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_EXAMPLES_DIR = _REPO_ROOT / "examples"
+_BUNDLED_SERENECODE_EXAMPLE_SRC = next(
+    (
+        p / "src"
+        for p in sorted(_EXAMPLES_DIR.iterdir())
+        if p.is_dir() and p.name.endswith("-serenecode") and (p / "src").is_dir()
+    ),
+    None,
+)
+
 
 @pytest.mark.slow
-def test_dosage_serenecode_example_passes_strict_level_6() -> None:
-    """The shipped Serenecode example should satisfy the strict pipeline.
+def test_bundled_example_project_passes_strict_level_6() -> None:
+    """The bundled reference example should satisfy the strict pipeline.
 
-    Coverage analysis (L3) is skipped because the dosage example's
+    Coverage analysis (L3) is skipped because that example's
     auto-generated dunder methods (frozen dataclass __setattr__ etc.)
     are discovered but not meaningfully testable. L3 coverage is
     validated end-to-end in the e2e test suite instead.
     """
-    root = "examples/dosage-serenecode/src"
+    assert _BUNDLED_SERENECODE_EXAMPLE_SRC is not None, "expected *-serenecode under examples/"
+    root = str(_BUNDLED_SERENECODE_EXAMPLE_SRC)
     reader = LocalFileReader()
     files = reader.list_python_files(root)
     source_files = build_source_files(files, reader, root)
@@ -47,7 +61,7 @@ def test_serenecode_repo_passes_strict_level_6() -> None:
     """The main Serenecode package should satisfy the strict pipeline too.
 
     Coverage analysis (L3) is skipped for the self-check because running
-    the full pytest suite per module is too slow for CI. The dosage example
+    the full pytest suite per module is too slow for CI. The bundled example
     test above validates coverage analysis works end-to-end.
     """
     root = "src"

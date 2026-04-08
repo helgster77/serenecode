@@ -61,6 +61,7 @@ class TestExitCode:
         assert ExitCode.SYMBOLIC == 5
         assert ExitCode.COMPOSITIONAL == 6
         assert ExitCode.INTERNAL == 10
+        assert ExitCode.ADVISORY == 11
 
     def test_is_int(self) -> None:
         assert isinstance(ExitCode.PASSED, int)
@@ -253,6 +254,8 @@ class TestCheckSummary:
             "failed": 1,
             "skipped": 1,
             "exempt": 0,
+            "advisory_count": 0,
+            "verdict": "complete",
         }
 
 
@@ -327,7 +330,7 @@ class TestCheckResult:
         )
         json_str = result.to_json()
         parsed = json.loads(json_str)
-        assert parsed["version"] == "0.2.0"
+        assert parsed["version"] == result.version
         assert parsed["summary"]["total_functions"] == 1
         assert len(parsed["results"]) == 1
 

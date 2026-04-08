@@ -42,6 +42,7 @@ class CheckResponse:
     passed: bool
     level_requested: int
     level_achieved: int
+    verdict: str
     duration_seconds: float
     summary: dict[str, int]
     findings: list[FindingDTO]
@@ -58,14 +59,26 @@ class CheckResponse:
 def to_check_response(check_result: CheckResult) -> CheckResponse:
     """Project a CheckResult into the wire-shaped CheckResponse.
 
-    Drops PASSED and EXEMPT entries from `findings` so agents see only
-    actionable items by default. The summary preserves the full counts.
+    Drops PASSED entries from `findings`. EXEMPT entries stay hidden by
+    default except for dead-code advisories, which remain visible so
+    agents can ask the user whether to remove or allowlist them.
     """
     findings: list[FindingDTO] = []
     for r in check_result.results:
-        if r.status not in (CheckStatus.FAILED, CheckStatus.SKIPPED):
+        include_result = r.status in (CheckStatus.FAILED, CheckStatus.SKIPPED)
+        if r.status == CheckStatus.EXEMPT:
+            include_result = any(
+                detail.finding_type == "dead_code"
+                for detail in r.details
+            )
+        if not include_result:
             continue
         for d in r.details:
+            if (
+                r.status == CheckStatus.EXEMPT
+                and d.finding_type != "dead_code"
+            ):
+                continue
             findings.append(FindingDTO(
                 file=r.file,
                 line=r.line,
@@ -82,12 +95,14 @@ def to_check_response(check_result: CheckResult) -> CheckResponse:
         passed=check_result.passed,
         level_requested=check_result.level_requested,
         level_achieved=check_result.level_achieved,
+        verdict=check_result.summary.verdict,
         duration_seconds=check_result.summary.duration_seconds,
         summary={
             "passed": check_result.summary.passed_count,
             "failed": check_result.summary.failed_count,
             "skipped": check_result.summary.skipped_count,
             "exempt": check_result.summary.exempt_count,
+            "advisory_count": check_result.summary.advisory_count,
         },
         findings=findings,
     )

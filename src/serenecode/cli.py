@@ -8,6 +8,7 @@ must have type annotations and pass mypy.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from typing import Callable
@@ -24,16 +25,96 @@ from serenecode.contracts.predicates import (
     is_valid_template_name,
     is_valid_verification_level,
 )
+from serenecode.core.exceptions import ConfigurationError
 from serenecode.core.pipeline import run_pipeline
 from serenecode.init import initialize_project
 from serenecode.models import CheckResult, ExitCode
+from serenecode.ports.dead_code_analyzer import DeadCodeAnalyzer
 from serenecode.reporter import format_html, format_human, format_json
-from serenecode.source_discovery import build_source_files, discover_test_file_stems, find_serenecode_md
+from serenecode.source_discovery import (
+    build_source_files,
+    determine_context_root,
+    discover_narrative_spec_paths,
+    discover_test_file_stems,
+    find_serenecode_md,
+    find_spec_md,
+)
 
 _TRUST_REQUIRED_MESSAGE = (
     "Levels 3-6 import and execute project modules. "
     "Only run on trusted code with allow_code_execution=True / --allow-code-execution."
 )
+
+_SPEC_TRACEABILITY_HINT = (
+    "If requirements live in another file (e.g. *_SPEC.md, PRD.md), convert it per "
+    "\"Preparing a SereneCode-Ready Spec\" in SERENECODE.md and write SPEC.md with "
+    "REQ/INT identifiers and a **Source:** line. Traceability applies only to SPEC.md."
+)
+
+
+@icontract.require(
+    lambda module_search_root: is_non_empty_string(module_search_root),
+    "module_search_root must be a non-empty string",
+)
+@icontract.require(lambda reader: reader is not None, "reader must be provided")
+@icontract.require(
+    lambda spec_explicit_path: spec_explicit_path is None or is_non_empty_string(
+        spec_explicit_path,
+    ),
+    "spec_explicit_path must be None or a non-empty string",
+)
+@icontract.ensure(lambda result: result is None, "hint helpers return None")
+def _echo_spec_traceability_hints(
+    module_search_root: str,
+    reader: LocalFileReader,
+    *,
+    spec_explicit_path: str | None,
+) -> None:
+    """Print guidance when SPEC.md is missing or unreadable."""
+    click.echo(_SPEC_TRACEABILITY_HINT, err=True)
+    if spec_explicit_path is not None:
+        return
+    root = determine_context_root(module_search_root)
+    candidates = discover_narrative_spec_paths(root)
+    if candidates:
+        click.echo("Source-like files in project root:", err=True)
+        for candidate in candidates:
+            click.echo(f"  {candidate}", err=True)
+
+
+@icontract.require(lambda reader: reader is not None, "reader must be provided")
+@icontract.ensure(lambda result: result is None, "doctor status printer returns None")
+def _print_spec_status_for_doctor(reader: LocalFileReader) -> None:
+    """Summarize SPEC.md vs narrative files for ``serenecode doctor``."""
+    click.echo("Spec status (project root):")
+    root = determine_context_root(".")
+    spec_path = find_spec_md(".", reader)
+    if spec_path:
+        click.echo(f"  SPEC.md (traceability): {os.path.abspath(spec_path)}")
+    else:
+        click.echo("  SPEC.md (traceability): not found")
+    narrative = discover_narrative_spec_paths(root)
+    if narrative:
+        click.echo("  Narrative / source-like files at root:")
+        for p in narrative:
+            click.echo(f"    {p}")
+    else:
+        click.echo("  Narrative / source-like files at root: none detected")
+    click.echo("")
+
+
+@icontract.require(lambda name: isinstance(name, str) and len(name) > 0, "name must be non-empty")
+@icontract.require(lambda fallback: isinstance(fallback, int) and fallback >= 1, "fallback must be >= 1")
+@icontract.ensure(lambda result: isinstance(result, int) and result >= 1, "result must be a positive int")
+def _env_int_or(name: str, fallback: int) -> int:
+    """Use integer from environment when set, otherwise ``fallback`` (e.g. CLI value)."""
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return fallback
+    try:
+        return max(1, int(str(raw).strip()))
+    except ValueError:
+        return fallback
 
 
 @click.group()
@@ -55,9 +136,10 @@ def init(path: str) -> None:
     # Question 1: Spec
     click.echo("Will you be building this project from a spec?")
     click.echo("")
-    click.echo("  [1] I already have a spec (SPEC.md)")
-    click.echo("      Serenecode will help you turn it into a traceable")
-    click.echo("      implementation plan and verify full coverage.")
+    click.echo("  [1] I already have requirements in a document (any name)")
+    click.echo("      Narrative PRDs and *_SPEC.md are inputs only. You must still")
+    click.echo("      produce SPEC.md with REQ/INT identifiers — that is the sole")
+    click.echo("      traceability spec for SereneCode.")
     click.echo("")
     click.echo("  [2] I'll write the spec with my coding assistant (recommended)")
     click.echo("      Your assistant will help you write SPEC.md with")
@@ -133,11 +215,13 @@ def init(path: str) -> None:
     click.echo("")
     click.echo("Ready. Start a coding session — your assistant will read")
     click.echo("SERENECODE.md and follow the spec-driven workflow automatically.")
+    click.echo("Tip: run `serenecode doctor` to confirm the MCP optional install and")
+    click.echo("      registration commands if you use an AI client with MCP.")
     if spec_mode == "existing":
         click.echo("")
-        click.echo("Place your spec in the project directory before starting.")
-        click.echo("Your assistant will convert it to SereneCode format, validate")
-        click.echo("it, create an implementation plan, and build from it.")
+        click.echo("Place narrative requirements in the project (or link them from SPEC.md).")
+        click.echo("Your assistant will rewrite them into SPEC.md with REQ/INT, validate,")
+        click.echo("plan, and build — traceability always targets SPEC.md, not *_SPEC.md alone.")
 
     if setup_mcp:
         _print_mcp_setup_snippet(click.echo)
@@ -157,9 +241,9 @@ def init(path: str) -> None:
 def spec(spec_file: str, output_format: str) -> None:
     """Validate a SPEC.md file for SereneCode readiness.
 
-    Checks that the spec has well-formed REQ-xxx identifiers,
-    no duplicates, no gaps, and descriptions on all requirements.
-    Run this before starting implementation.
+    Checks that the spec has well-formed REQ-xxx and INT-xxx identifiers,
+    no duplicates, no gaps, descriptions on all headings, and valid
+    integration-point structure. Run this before starting implementation.
     """
     reader = LocalFileReader()
     try:
@@ -181,6 +265,34 @@ def spec(spec_file: str, output_format: str) -> None:
         sys.exit(ExitCode.PASSED)
     else:
         sys.exit(ExitCode.STRUCTURAL)
+
+
+@main.command()
+@icontract.ensure(lambda result: result is None, "CLI commands return None")
+def doctor() -> None:
+    """Show MCP and optional-dependency setup hints (install + IDE registration)."""
+    click.echo("")
+    click.echo("Serenecode doctor")
+    click.echo("-----------------")
+    click.echo("")
+    if _mcp_extra_installed():
+        click.echo("OK: MCP Python package is available (`mcp` import succeeds).")
+    else:
+        click.echo("NOT FOUND: MCP extra is not installed — AI tools cannot load the server.")
+        click.echo("  Install one of:")
+        click.echo("    uv add 'serenecode[mcp]'")
+        click.echo("    pip install 'serenecode[mcp]'")
+        click.echo("    # from a Serenecode git clone: uv sync --extra mcp")
+    click.echo("")
+    click.echo("Register the stdio server once in your IDE (examples):")
+    click.echo("  claude mcp add serenecode -- uv run serenecode mcp --allow-code-execution")
+    click.echo("  # Cursor / VS Code: Settings → MCP → add the same command.")
+    click.echo("")
+    click.echo("Workflow: prefer MCP tools (especially serenecode_check_function) while")
+    click.echo("editing; use `serenecode check` in CI or for full-tree batch runs.")
+    click.echo("")
+    reader = LocalFileReader()
+    _print_spec_status_for_doctor(reader)
 
 
 @main.command()
@@ -213,9 +325,11 @@ def mcp(allow_code_execution: bool, project_root: str | None) -> None:
 
         claude mcp add serenecode -- uv run serenecode mcp
 
-    Add `--allow-code-execution` to enable Level 3-6 tools (coverage,
-    properties, symbolic, compositional). Without it the server runs
-    in read-only mode and Levels 3-6 calls return a structured error.
+    Tool paths and ``--project-root`` are not sandboxed: the client can
+    point verification at any directory the user can read. With
+    ``--allow-code-execution``, Levels 3-6 run project code like a local
+    ``pytest``/import (see docs/SECURITY.md). Without that flag the server
+    stays read-only for those levels.
     """
     try:
         from serenecode.mcp.server import run_stdio_server
@@ -249,12 +363,30 @@ def mcp(allow_code_execution: bool, project_root: str | None) -> None:
 @click.option("--per-path-timeout", type=int, default=10, show_default=True, help="Timeout in seconds per execution path for symbolic verification (Level 5)")
 @click.option("--module-timeout", type=int, default=300, show_default=True, help="Timeout in seconds per module for symbolic verification (Level 5)")
 @click.option("--coverage-timeout", type=int, default=600, show_default=True, help="Timeout in seconds for the L3 coverage subprocess (whole pytest run, cached per project)")
-@click.option("--workers", type=int, default=4, show_default=True, help="Number of parallel workers for symbolic verification (Level 5)")
+@click.option("--workers", type=int, default=4, show_default=True, help="Number of parallel workers for symbolic verification (Level 5); SERENECODE_MAX_WORKERS overrides when set")
 @click.option("--spec", "spec_path", default=None, help="Path to SPEC.md for traceability checking")
+@click.option(
+    "--project-root",
+    "project_root",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=str),
+    default=None,
+    help=(
+        "Repository root for module paths, SERENECODE.md lookup, and spec discovery. "
+        "Defaults to PATH. Use when PATH is a subfolder but the project root is elsewhere."
+    ),
+)
+@click.option(
+    "--fail-on-advisory",
+    is_flag=True,
+    help="Exit 11 if dead-code advisories remain (even when verification passed).",
+)
 @click.option(
     "--allow-code-execution",
     is_flag=True,
-    help="Allow Levels 3-6 to import and execute project modules",
+    help=(
+        "Allow Levels 3-6 to import and execute project code in-process (same trust as "
+        "running pytest or `python -m` on the project). Not a sandbox — see docs/SECURITY.md."
+    ),
 )
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.require(
@@ -285,6 +417,14 @@ def mcp(allow_code_execution: bool, project_root: str | None) -> None:
     lambda workers: is_positive_int(workers),
     "workers must be at least 1",
 )
+@icontract.require(
+    lambda project_root: project_root is None or isinstance(project_root, str),
+    "project_root must be None or a string",
+)
+@icontract.require(
+    lambda fail_on_advisory: isinstance(fail_on_advisory, bool),
+    "fail_on_advisory must be a bool",
+)
 @icontract.ensure(lambda result: result is None, "CLI commands return None")
 def check(
     path: str,
@@ -298,14 +438,21 @@ def check(
     coverage_timeout: int,
     workers: int,
     spec_path: str | None,
+    project_root: str | None,
+    fail_on_advisory: bool,
     allow_code_execution: bool,
 ) -> None:
     """Run verification checks on Python source files."""
     wall_start = time.monotonic()
     reader = LocalFileReader()
 
+    workers = min(_env_int_or("SERENECODE_MAX_WORKERS", workers), 32)
+    coverage_timeout = _env_int_or("SERENECODE_COVERAGE_TIMEOUT", coverage_timeout)
+
+    config_search_root = project_root if project_root is not None else path
+
     # Load config first (needed to resolve default level)
-    serenecode_md_path = find_serenecode_md(path, reader)
+    serenecode_md_path = find_serenecode_md(config_search_root, reader)
     if serenecode_md_path:
         config_content = reader.read_file(serenecode_md_path)
         config = parse_serenecode_md(config_content)
@@ -343,33 +490,45 @@ def check(
         click.echo("No Python files found.")
         sys.exit(ExitCode.PASSED)
 
+    module_search_root = project_root if project_root is not None else path
+
     # Build source file objects
     try:
-        source_files = build_source_files(files, reader, path)
+        source_files = build_source_files(files, reader, module_search_root)
     except Exception as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(ExitCode.INTERNAL)
 
     # Discover test files for L1 test-existence check
-    test_stems = discover_test_file_stems(path, reader)
+    test_stems = discover_test_file_stems(module_search_root, reader)
 
     # Read spec content for traceability checking
-    spec_content: str | None = None
-    test_sources: tuple[tuple[str, str], ...] = ()
-    if spec_path is not None:
-        try:
-            spec_content = reader.read_file(spec_path)
-        except Exception as exc:
-            click.echo(f"Error reading spec: {exc}", err=True)
-            sys.exit(ExitCode.INTERNAL)
-        # Collect test sources for Verifies: tag scanning
-        test_sources = _collect_test_sources(path, reader)
+    try:
+        spec_content, test_sources = _load_spec_inputs(module_search_root, spec_path, reader)
+    except ConfigurationError as exc:
+        click.echo(f"Error reading spec: {exc}", err=True)
+        _echo_spec_traceability_hints(
+            module_search_root, reader, spec_explicit_path=spec_path,
+        )
+        sys.exit(ExitCode.INTERNAL)
+
+    if spec_content is None:
+        root = determine_context_root(module_search_root)
+        if discover_narrative_spec_paths(root):
+            click.echo(
+                "No SPEC.md found for traceability (searched upward from the search root).",
+                err=True,
+            )
+            _echo_spec_traceability_hints(
+                module_search_root, reader, spec_explicit_path=spec_path,
+            )
 
     # Wire up adapters for higher levels
     type_checker = None
     coverage_analyzer = None
     property_tester = None
     symbolic_checker = None
+    dead_code_analyzer: DeadCodeAnalyzer | None = None
 
     if level >= 2:
         try:
@@ -407,6 +566,12 @@ def check(
         except ImportError:
             click.echo("Warning: CrossHair not available for Level 5 checks.", err=True)
 
+    try:
+        from serenecode.adapters.vulture_adapter import VultureDeadCodeAnalyzer
+        dead_code_analyzer = VultureDeadCodeAnalyzer()
+    except ImportError:
+        click.echo("Warning: vulture not available for dead-code analysis.", err=True)
+
     # Run pipeline with progress callback
     def _progress(msg: str) -> None:
         click.echo(msg, err=True)
@@ -420,6 +585,7 @@ def check(
         coverage_analyzer=coverage_analyzer,
         property_tester=property_tester,
         symbolic_checker=symbolic_checker,
+        dead_code_analyzer=dead_code_analyzer,
         progress=_progress,
         max_workers=workers,
         known_test_stems=test_stems,
@@ -441,12 +607,19 @@ def check(
         click.echo(f"Total wall time: {seconds:.1f}s", err=True)
 
     # Exit with appropriate code
-    if final_result.passed:
-        sys.exit(ExitCode.PASSED)
-    else:
-        # Find the lowest failing level from the results
+    if not final_result.passed:
         exit_code = _determine_exit_code(final_result)
         sys.exit(exit_code)
+
+    if fail_on_advisory and final_result.summary.advisory_count > 0:
+        click.echo(
+            f"Exiting: {final_result.summary.advisory_count} dead-code advisory(ies) "
+            "(--fail-on-advisory).",
+            err=True,
+        )
+        sys.exit(ExitCode.ADVISORY)
+
+    sys.exit(ExitCode.PASSED)
 
 
 @main.command()
@@ -494,9 +667,17 @@ def status(path: str, output_format: str) -> None:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(ExitCode.INTERNAL)
     test_stems = discover_test_file_stems(path, reader)
+    try:
+        spec_content, test_sources = _load_spec_inputs(path, None, reader)
+    except Exception as exc:
+        click.echo(f"Error reading spec: {exc}", err=True)
+        sys.exit(ExitCode.INTERNAL)
     result = run_pipeline(
         source_files, level=1, start_level=1, config=config,
         known_test_stems=test_stems,
+        dead_code_analyzer=_maybe_make_dead_code_analyzer(),
+        spec_content=spec_content,
+        test_sources=test_sources,
     )
 
     if output_format == "json":
@@ -574,6 +755,7 @@ def report(
     coverage_analyzer = None
     property_tester = None
     symbolic_checker = None
+    dead_code_analyzer = _maybe_make_dead_code_analyzer()
 
     if level >= 2:
         try:
@@ -604,6 +786,11 @@ def report(
             pass
 
     test_stems = discover_test_file_stems(path, reader)
+    try:
+        spec_content, test_sources = _load_spec_inputs(path, None, reader)
+    except Exception as exc:
+        click.echo(f"Error reading spec: {exc}", err=True)
+        sys.exit(ExitCode.INTERNAL)
     final_result = run_pipeline(
         source_files,
         level=level,
@@ -613,7 +800,10 @@ def report(
         coverage_analyzer=coverage_analyzer,
         property_tester=property_tester,
         symbolic_checker=symbolic_checker,
+        dead_code_analyzer=dead_code_analyzer,
         known_test_stems=test_stems,
+        spec_content=spec_content,
+        test_sources=test_sources,
     )
 
     # Format output
@@ -730,6 +920,45 @@ def _collect_test_sources(
         except Exception:
             continue
     return tuple(sources)
+
+
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(
+    lambda spec_path: spec_path is None or is_non_empty_string(spec_path),
+    "spec_path must be None or a non-empty string",
+)
+@icontract.require(lambda reader: reader is not None, "reader must be provided")
+@icontract.ensure(
+    lambda result: isinstance(result, tuple) and len(result) == 2,
+    "result must be a (spec_content, test_sources) pair",
+)
+def _load_spec_inputs(
+    path: str,
+    spec_path: str | None,
+    reader: LocalFileReader,
+) -> tuple[str | None, tuple[tuple[str, str], ...]]:
+    """Load SPEC.md content and test sources for baseline traceability checks."""
+    resolved_spec = spec_path if spec_path is not None else find_spec_md(path, reader)
+    if resolved_spec is None:
+        return None, ()
+
+    spec_content = reader.read_file(resolved_spec)
+    test_sources = _collect_test_sources(path, reader)
+    return spec_content, test_sources
+
+
+@icontract.ensure(
+    lambda result: result is None or hasattr(result, "analyze_paths"),
+    "result must be None or a dead-code analyzer",
+)
+def _maybe_make_dead_code_analyzer() -> DeadCodeAnalyzer | None:
+    """Construct the dead-code analyzer when its backend is available."""
+    try:
+        from serenecode.adapters.vulture_adapter import VultureDeadCodeAnalyzer
+        return VultureDeadCodeAnalyzer()
+    except ImportError:
+        from serenecode.adapters.unavailable_dead_code_adapter import UnavailableDeadCodeAnalyzer
+        return UnavailableDeadCodeAnalyzer("vulture is not installed")
 
 
 @icontract.require(lambda check_result: check_result is not None, "result must be provided")

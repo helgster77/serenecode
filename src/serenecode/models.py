@@ -63,6 +63,7 @@ class ExitCode(IntEnum):
     SYMBOLIC = 5
     COMPOSITIONAL = 6
     INTERNAL = 10
+    ADVISORY = 11  # --fail-on-advisory: passed checks but dead-code advisories remain
 
 
 @icontract.invariant(
@@ -168,6 +169,18 @@ class FunctionResult:
     "exempt_count must be non-negative",
 )
 @icontract.invariant(
+    lambda self: is_non_negative_int(self.advisory_count),
+    "advisory_count must be non-negative",
+)
+@icontract.invariant(
+    lambda self: self.advisory_count <= self.exempt_count,
+    "advisory_count cannot exceed exempt_count",
+)
+@icontract.invariant(
+    lambda self: self.verdict in {"complete", "failed", "incomplete"},
+    "verdict must be complete, failed, or incomplete",
+)
+@icontract.invariant(
     lambda self: self.total_functions == self.passed_count + self.failed_count + self.skipped_count + self.exempt_count,
     "counts must sum to total",
 )
@@ -184,6 +197,8 @@ class CheckSummary:
     failed_count: int
     skipped_count: int
     exempt_count: int = 0
+    advisory_count: int = 0
+    verdict: str = "complete"
     duration_seconds: float = 0.0
 
     @icontract.ensure(
@@ -198,6 +213,8 @@ class CheckSummary:
             "failed": self.failed_count,
             "skipped": self.skipped_count,
             "exempt": self.exempt_count,
+            "advisory_count": self.advisory_count,
+            "verdict": self.verdict,
         }
 
 
@@ -293,6 +310,7 @@ def make_check_result(
     failed_count = 0
     skipped_count = 0
     exempt_count = 0
+    advisory_count = 0
     has_non_exempt = False
     min_achieved = level_requested
 
@@ -301,6 +319,8 @@ def make_check_result(
     for r in results:
         if r.status == CheckStatus.EXEMPT:
             exempt_count += 1
+            if any(detail.finding_type == "dead_code" for detail in r.details):
+                advisory_count += 1
             continue
         has_non_exempt = True
         if r.level_achieved < min_achieved:
@@ -324,20 +344,29 @@ def make_check_result(
         min_achieved if level_achieved is None else level_achieved
     )
 
+    # Exempt results are visible but do not block a passing result.
+    passed = (
+        failed_count == 0
+        and skipped_count == 0
+        and overall_level_achieved == level_requested
+    )
+
+    if failed_count > 0:
+        verdict = "failed"
+    elif passed:
+        verdict = "complete"
+    else:
+        verdict = "incomplete"
+
     summary = CheckSummary(
         total_functions=len(results),
         passed_count=passed_count,
         failed_count=failed_count,
         skipped_count=skipped_count,
         exempt_count=exempt_count,
+        advisory_count=advisory_count,
+        verdict=verdict,
         duration_seconds=duration_seconds,
-    )
-
-    # Exempt results are visible but do not block a passing result.
-    passed = (
-        failed_count == 0
-        and skipped_count == 0
-        and overall_level_achieved == level_requested
     )
 
     return CheckResult(

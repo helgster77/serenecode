@@ -329,6 +329,7 @@ class TestSpecCommand:
     def test_valid_spec_passes(self, tmp_path: Path) -> None:
         spec_file = tmp_path / "SPEC.md"
         spec_file.write_text(
+            "**Source:** none — e2e fixture.\n\n"
             "### REQ-001: Auth\nUsers must authenticate.\n\n"
             "### REQ-002: Sessions\nSessions expire.\n",
             encoding="utf-8",
@@ -353,6 +354,7 @@ class TestSpecCommand:
     def test_duplicate_req_detected(self, tmp_path: Path) -> None:
         spec_file = tmp_path / "SPEC.md"
         spec_file.write_text(
+            "**Source:** none — e2e fixture.\n\n"
             "### REQ-001: First\nDesc.\n\n### REQ-001: Dup\nDesc.\n",
             encoding="utf-8",
         )
@@ -366,6 +368,7 @@ class TestSpecCommand:
     def test_gap_in_sequence_detected(self, tmp_path: Path) -> None:
         spec_file = tmp_path / "SPEC.md"
         spec_file.write_text(
+            "**Source:** none — e2e fixture.\n\n"
             "### REQ-001: First\nDesc.\n\n### REQ-003: Third\nDesc.\n",
             encoding="utf-8",
         )

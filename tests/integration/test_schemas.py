@@ -106,6 +106,40 @@ class TestToCheckResponse:
         assert response.findings == []
         assert response.summary["exempt"] == 1
 
+    def test_dead_code_advisory_exempt_is_included(self) -> None:
+        passed = FunctionResult(
+            function="live",
+            file="app.py",
+            line=1,
+            level_requested=1,
+            level_achieved=1,
+            status=CheckStatus.PASSED,
+            details=(),
+        )
+        advisory = FunctionResult(
+            function="stale",
+            file="app.py",
+            line=7,
+            level_requested=1,
+            level_achieved=1,
+            status=CheckStatus.EXEMPT,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="dead_code",
+                finding_type="dead_code",
+                message="unused function 'stale'",
+                suggestion="Ask the user whether this likely dead code should be removed.",
+            ),),
+        )
+        result = make_check_result((passed, advisory), level_requested=1, duration_seconds=0.0)
+        response = to_check_response(result)
+        assert response.passed is True
+        assert response.verdict == "complete"
+        assert response.summary["advisory_count"] == 1
+        assert len(response.findings) == 1
+        assert response.findings[0].status == "exempt"
+        assert response.findings[0].finding_type == "dead_code"
+
     def test_response_to_dict_is_json_friendly(self) -> None:
         import json
         finding = FindingDTO(
@@ -124,8 +158,9 @@ class TestToCheckResponse:
             passed=False,
             level_requested=1,
             level_achieved=0,
+            verdict="failed",
             duration_seconds=0.1,
-            summary={"passed": 0, "failed": 1, "skipped": 0, "exempt": 0},
+            summary={"passed": 0, "failed": 1, "skipped": 0, "exempt": 0, "advisory_count": 0},
             findings=[finding],
         )
         d = response_to_dict(response)

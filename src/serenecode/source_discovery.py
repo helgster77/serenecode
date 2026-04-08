@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import keyword
 import os
+from pathlib import Path
 
 import icontract
 
@@ -19,11 +20,21 @@ from serenecode.ports.file_system import FileReader
 
 __all__ = [
     "build_source_files",
+    "discover_narrative_spec_paths",
     "discover_test_file_stems",
     "find_serenecode_md",
+    "find_spec_md",
+    "is_test_file_path",
     "normalize_search_root",
     "determine_context_root",
 ]
+
+_NARRATIVE_ROOT_FILENAMES = frozenset({
+    "PRD.md",
+    "prd.md",
+    "requirements.md",
+    "REQUIREMENTS.md",
+})
 
 _ARCHITECTURE_DIR_NAMES = frozenset({
     "adapters",
@@ -92,6 +103,7 @@ def build_source_files(
             source=source,
             importable_module=_derive_module_reference(file_path, normalized_root),
             import_search_paths=_derive_import_search_paths(file_path, normalized_root),
+            context_root=normalized_root,
         ))
 
     return tuple(source_files)
@@ -160,14 +172,104 @@ def discover_test_file_stems(
 )
 def find_serenecode_md(path: str, reader: FileReader) -> str | None:
     """Find SERENECODE.md by searching up from the given path."""
+    return _find_named_file_upwards(path, "SERENECODE.md", reader)
+
+
+@icontract.require(
+    lambda path: is_non_empty_string(path),
+    "path must be a non-empty string",
+)
+@icontract.require(
+    lambda reader: reader is not None,
+    "reader must be provided",
+)
+@icontract.ensure(
+    lambda result: result is None or result.endswith("SPEC.md"),
+    "result must be a SPEC.md path when present",
+)
+def find_spec_md(path: str, reader: FileReader) -> str | None:
+    """Find SPEC.md by searching up from the given path."""
+    return _find_named_file_upwards(path, "SPEC.md", reader)
+
+
+@icontract.require(
+    lambda project_root: is_non_empty_string(project_root),
+    "project_root must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, tuple),
+    "result must be a tuple of paths",
+)
+def discover_narrative_spec_paths(project_root: str) -> tuple[str, ...]:
+    """Return sorted absolute paths to likely narrative spec files at the project root.
+
+    Detects ``*_SPEC.md`` (other than ``SPEC.md``) and common PRD / requirements
+    filenames. Does not recurse into subdirectories. Used for CLI hints and
+    ``serenecode doctor`` — not for loading traceability content (that is always
+    ``SPEC.md`` with REQ/INT identifiers).
+    """
+    root = Path(project_root)
+    if not root.is_dir():
+        return ()
+
+    found: list[str] = []
+    try:
+        # Loop invariant: found is sorted for entries processed so far from iterdir
+        for p in sorted(root.iterdir()):
+            if not p.is_file():
+                continue
+            name = p.name
+            if name == "SPEC.md":
+                continue
+            if name.endswith("_SPEC.md") or name in _NARRATIVE_ROOT_FILENAMES:
+                found.append(str(p.resolve()))
+    except OSError:
+        return ()
+
+    return tuple(found)
+
+
+@icontract.require(
+    lambda file_path: is_non_empty_string(file_path),
+    "file_path must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a bool",
+)
+def is_test_file_path(file_path: str) -> bool:
+    """Return True when a path points to a test-only Python file."""
+    normalized = os.path.normpath(file_path)
+    basename = os.path.basename(normalized)
+    path_parts = normalized.split(os.sep)
+    return (
+        "tests" in path_parts
+        or basename.startswith("test_")
+        or basename == "conftest.py"
+    )
+
+
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda filename: is_non_empty_string(filename), "filename must be non-empty")
+@icontract.require(lambda reader: reader is not None, "reader must be provided")
+@icontract.ensure(
+    lambda result: result is None or is_non_empty_string(result),
+    "result must be None or a non-empty path string",
+)
+def _find_named_file_upwards(
+    path: str,
+    filename: str,
+    reader: FileReader,
+) -> str | None:
+    """Search ancestor directories for a named file."""
     current = normalize_search_root(path)
 
     max_depth = 50
     remaining = max_depth
-    # Loop invariant: no ancestor directory checked so far contains SERENECODE.md
+    # Loop invariant: no checked ancestor directory contains filename
     # Variant: remaining decreases towards 0, guaranteeing termination
     while remaining > 0:
-        candidate = os.path.join(current, "SERENECODE.md")
+        candidate = os.path.join(current, filename)
         if reader.file_exists(candidate):
             return candidate
         parent = os.path.dirname(current)

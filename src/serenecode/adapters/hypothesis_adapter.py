@@ -14,6 +14,8 @@ import ast
 import collections.abc
 import enum
 import inspect
+import os
+import pathlib
 import re
 import traceback
 import types
@@ -40,6 +42,59 @@ _TRUST_REQUIRED_MESSAGE = (
     "Level 3 property testing imports and executes project modules. "
     "Re-run with allow_code_execution=True only for trusted code."
 )
+_PATH_PARAMETER_NAMES = frozenset({
+    "base_dir",
+    "cwd",
+    "directory",
+    "dir",
+    "file_name",
+    "file_path",
+    "filename",
+    "filepath",
+    "figures_dir",
+    "module_path",
+    "output_dir",
+    "path",
+    "paths",
+    "project_root",
+    "results_dir",
+    "root_dir",
+    "spec_path",
+    "working_dir",
+    "working_directory",
+    "workspace",
+    "workspace_dir",
+    "workspace_root",
+})
+_PATH_PARAMETER_SUFFIXES = (
+    "_cwd",
+    "_dir",
+    "_directory",
+    "_file",
+    "_filename",
+    "_path",
+    "_paths",
+    "_root",
+    "_workspace",
+)
+_PATHLIKE_ANNOTATION_NAMES = frozenset({
+    "Path",
+    "PathLike",
+    "PosixPath",
+    "PurePath",
+    "PurePosixPath",
+    "PureWindowsPath",
+    "WindowsPath",
+    "os.PathLike",
+    "pathlib.Path",
+    "pathlib.PathLike",
+    "pathlib.PosixPath",
+    "pathlib.PurePath",
+    "pathlib.PurePosixPath",
+    "pathlib.PureWindowsPath",
+    "pathlib.WindowsPath",
+})
+_TEXTUAL_PATH_ANNOTATION_NAMES = frozenset({"bytes", "object", "str"})
 
 
 @icontract.require(
@@ -284,6 +339,18 @@ def _strategy_for_class(
     return kwargs_strategy.map(lambda kwargs: annotation(**kwargs))
 
 
+@icontract.require(lambda module_name: isinstance(module_name, str), "module_name must be a string")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
+def _is_example_models_module(module_name: str) -> bool:
+    """Return True if Hypothesis should use the built-in ``*.core.models`` strategies.
+
+    Besides the standalone layout ``core.models``, the same strategies apply to
+    package-qualified paths such as ``myproj.core.models`` so Level 4 does not
+    depend on importing models under an exact top-level module name.
+    """
+    return module_name == "core.models" or module_name.endswith(".core.models")
+
+
 @icontract.require(
     lambda seen_classes: isinstance(seen_classes, frozenset),
     "seen_classes must be a frozenset",
@@ -315,7 +382,7 @@ def _strategy_for_known_annotation(
     if module_name == "serenecode.models":
         return _strategy_for_model_type(annotation, type_name)
 
-    if module_name == "core.models":
+    if _is_example_models_module(module_name):
         return _strategy_for_example_model_type(annotation, type_name)
 
     if module_name == "serenecode.checker.structural" and type_name == "IcontractNames":
@@ -343,7 +410,7 @@ def _strategy_for_example_model_type(
     annotation: type | object,
     type_name: str,
 ) -> SearchStrategy | None:
-    """Return efficient strategies for the dosage example model types."""
+    """Return efficient strategies for Patient/Drug-style models in ``*.core.models``."""
     if type_name == "Patient" and inspect.isclass(annotation):
         return st.builds(
             annotation,
@@ -1211,20 +1278,143 @@ def _has_icontract_decorators(func: Callable[..., object]) -> bool:
 
 
 @icontract.require(lambda func: callable(func), "func must be callable")
-@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
-def _is_property_friendly_function(func: Callable[..., object]) -> bool:
-    """Check whether a function is a good fit for property-based fuzzing."""
+@icontract.ensure(
+    lambda result: result is None or is_non_empty_string(result),
+    "result must be a non-empty string or None",
+)
+def _property_exclusion_reason(func: Callable[..., object]) -> str | None:
+    """Return the first reason this function should not be property-fuzzed."""
     module_name = getattr(func, "__module__", "")
     if module_name in {"serenecode", "serenecode.cli", "serenecode.init"}:
-        return False
+        return "composition-root code"
     if module_name.startswith("serenecode.adapters"):
-        return False
+        return "adapter code"
     if module_name.startswith("serenecode.mcp"):
         # MCP composition root: tools delegate to existing pipeline functions
         # and run_stdio_server takes over stdin/stdout, so property-fuzzing
         # them produces no signal and breaks the test runner's stdio.
+        return "MCP composition-root code"
+
+    try:
+        resolved_hints = typing.get_type_hints(func)
+    except Exception:
+        resolved_hints = {}
+
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return "uninspectable signature"
+
+    # Loop invariant: every checked parameter so far is safe for direct property fuzzing.
+    for name, parameter in signature.parameters.items():
+        if name in ("self", "cls"):
+            continue
+
+        annotation = resolved_hints.get(name, parameter.annotation)
+        if _is_pathlike_annotation(annotation):
+            return f"caller-supplied path-like parameter '{name}'"
+        if _looks_like_path_parameter_name(name) and _annotation_may_represent_path_text(annotation):
+            return f"caller-supplied path-like parameter '{name}'"
+
+    return None
+
+
+@icontract.require(lambda name: is_non_empty_string(name), "name must be a non-empty string")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _looks_like_path_parameter_name(name: str) -> bool:
+    """Heuristically detect parameter names that usually carry filesystem paths."""
+    normalized = name.lower()
+    return (
+        normalized in _PATH_PARAMETER_NAMES
+        or any(normalized.endswith(suffix) for suffix in _PATH_PARAMETER_SUFFIXES)
+    )
+
+
+@icontract.require(
+    lambda annotation: annotation is inspect.Parameter.empty or isinstance(annotation, object),
+    "annotation must be a Python annotation object",
+)
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _is_pathlike_annotation(annotation: object) -> bool:
+    """Check whether an annotation clearly denotes a path/pathlike value."""
+    # Variant: recursive calls peel off a forward ref or nested annotation arg.
+    if annotation is inspect.Parameter.empty:
         return False
-    return True
+    if isinstance(annotation, typing.ForwardRef):
+        return _is_pathlike_annotation(annotation.__forward_arg__)
+    if isinstance(annotation, str):
+        dotted_names = set(re.findall(r"[A-Za-z_][A-Za-z0-9_.]*", annotation))
+        return any(name in _PATHLIKE_ANNOTATION_NAMES for name in dotted_names)
+
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+    if origin in (typing.Union, types.UnionType):
+        return any(_is_pathlike_annotation(arg) for arg in args)
+    if origin is not None:
+        if _is_pathlike_annotation(origin):
+            return True
+        return any(_is_pathlike_annotation(arg) for arg in args if arg is not Ellipsis)
+
+    if inspect.isclass(annotation):
+        if annotation in {
+            pathlib.Path,
+            pathlib.PurePath,
+            pathlib.PosixPath,
+            pathlib.WindowsPath,
+            pathlib.PurePosixPath,
+            pathlib.PureWindowsPath,
+        }:
+            return True
+        try:
+            return issubclass(annotation, (os.PathLike, pathlib.PurePath))
+        except TypeError:
+            return False
+
+    return False
+
+
+@icontract.require(
+    lambda annotation: annotation is inspect.Parameter.empty or isinstance(annotation, object),
+    "annotation must be a Python annotation object",
+)
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _annotation_may_represent_path_text(annotation: object) -> bool:
+    """Check whether an annotation can carry text/path values from Hypothesis."""
+    # Variant: recursive calls peel off a forward ref or nested annotation arg.
+    if annotation in {inspect.Parameter.empty, object, str, bytes}:
+        return True
+    if isinstance(annotation, typing.ForwardRef):
+        return _annotation_may_represent_path_text(annotation.__forward_arg__)
+    if isinstance(annotation, str):
+        dotted_names = set(re.findall(r"[A-Za-z_][A-Za-z0-9_.]*", annotation))
+        return (
+            any(name in _TEXTUAL_PATH_ANNOTATION_NAMES for name in dotted_names)
+            or any(name in _PATHLIKE_ANNOTATION_NAMES for name in dotted_names)
+        )
+    if _is_pathlike_annotation(annotation):
+        return True
+
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+    if origin in (typing.Union, types.UnionType):
+        return any(_annotation_may_represent_path_text(arg) for arg in args)
+    if origin in (list, set, frozenset):
+        return len(args) == 1 and _annotation_may_represent_path_text(args[0])
+    if origin is tuple:
+        if len(args) == 2 and args[1] is Ellipsis:
+            return _annotation_may_represent_path_text(args[0])
+        return any(_annotation_may_represent_path_text(arg) for arg in args if arg is not Ellipsis)
+    if origin is dict:
+        return len(args) == 2 and any(_annotation_may_represent_path_text(arg) for arg in args)
+
+    return False
+
+
+@icontract.require(lambda func: callable(func), "func must be callable")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _is_property_friendly_function(func: Callable[..., object]) -> bool:
+    """Check whether a function is a good fit for property-based fuzzing."""
+    return _property_exclusion_reason(func) is None
 
 
 @icontract.require(
@@ -1339,7 +1529,7 @@ def _is_result_model_object(value: object) -> bool:
 def _get_contracted_functions(
     module_path: str,
     search_paths: tuple[str, ...] = (),
-) -> tuple[list[tuple[str, Callable[..., object]]], list[str]]:
+) -> tuple[list[tuple[str, Callable[..., object]]], list[tuple[str, str]]]:
     """Import a module and find all functions with icontract decorators.
 
     Args:
@@ -1356,7 +1546,7 @@ def _get_contracted_functions(
         ) from exc
 
     functions: list[tuple[str, Callable[..., object]]] = []
-    excluded: list[str] = []
+    excluded: list[tuple[str, str]] = []
 
     # Loop invariant: functions + excluded accounts for all contracted public functions in dir(module)[0..i]
     for name in dir(module):
@@ -1368,10 +1558,11 @@ def _get_contracted_functions(
                 continue
             if not _has_icontract_decorators(obj):
                 continue
-            if _is_property_friendly_function(obj):
+            exclusion_reason = _property_exclusion_reason(obj)
+            if exclusion_reason is None:
                 functions.append((name, obj))
             else:
-                excluded.append(name)
+                excluded.append((name, exclusion_reason))
 
     return (functions, excluded)
 
@@ -1446,13 +1637,13 @@ class HypothesisPropertyTester:
 
         # Report excluded functions so they are visible in the output
         # Loop invariant: findings contains exclusion records for excluded[0..i]
-        for excluded_name in excluded:
+        for excluded_name, exclusion_reason in excluded:
             findings.append(PropertyFinding(
                 function_name=excluded_name,
                 module_path=module_path,
                 passed=True,
                 finding_type="excluded",
-                message=f"Function '{excluded_name}' excluded from property testing (adapter/composition-root code)",
+                message=f"Function '{excluded_name}' excluded from property testing ({exclusion_reason})",
             ))
 
         # Loop invariant: findings contains test results for functions[0..i]
@@ -1531,7 +1722,11 @@ class HypothesisPropertyTester:
                     finding_type="skipped",
                     message=(
                         f"Cannot generate valid inputs for '{func_name}' — "
-                        "preconditions too restrictive for derived strategies"
+                        "preconditions too restrictive for derived strategies. "
+                        "Built-in sampling for domain models applies to types in "
+                        "`serenecode.models`, `core.models`, or `*.core.models` "
+                        "(for example `pkg.core.models`); other module layouts may "
+                        "need narrower contracts or a custom Hypothesis strategy."
                     ),
                 )
             else:

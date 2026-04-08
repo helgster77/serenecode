@@ -31,6 +31,7 @@ except ImportError as exc:  # pragma: no cover - import-time gate
 from serenecode.mcp.resources import (
     resource_config,
     resource_exempt_modules,
+    resource_integrations,
     resource_last_run,
     resource_reqs,
 )
@@ -39,6 +40,9 @@ from serenecode.mcp.tools import (
     tool_check,
     tool_check_file,
     tool_check_function,
+    tool_dead_code,
+    tool_integration_status,
+    tool_list_integrations,
     tool_list_reqs,
     tool_orphans,
     tool_req_status,
@@ -51,13 +55,22 @@ from serenecode.mcp.tools import (
 
 _SERVER_NAME = "serenecode"
 _INSTRUCTIONS = (
-    "Serenecode verification tools. Call serenecode_check_function on every "
-    "function you write or edit to verify contracts, types, coverage, and "
-    "architectural conventions. Use serenecode_suggest_contracts to derive "
-    "icontract decorators from a function signature, serenecode_validate_spec "
-    "and serenecode_req_status for spec traceability, and serenecode_uncovered "
-    "to find missing test coverage. Levels 3-6 require the server to be "
-    "started with --allow-code-execution."
+    "PREFERRED WORKFLOW: While editing, use serenecode_check_function (or "
+    "serenecode_check_file) on the code you just changed — not a full-project "
+    "serenecode_check on every turn. Reserve serenecode_check for CI, release "
+    "gates, or intentional whole-tree runs. "
+    "Call serenecode_check_function on every function you write or edit to "
+    "verify contracts, types, coverage, and architectural conventions. Use "
+    "serenecode_suggest_contracts to derive icontract decorators from a function "
+    "signature, serenecode_validate_spec plus serenecode_req_status / "
+    "serenecode_integration_status for spec traceability, serenecode_dead_code "
+    "for likely unused code review, and serenecode_uncovered to find missing "
+    "test coverage. "
+    "Levels 3-6 require --allow-code-execution at startup; that flag allows "
+    "importing and running project code (same trust as pytest) — not a sandbox. "
+    "Project paths passed to tools are resolved on the host filesystem and are "
+    "not confined to a single workspace unless your client enforces that. "
+    "See docs/SECURITY.md in the Serenecode repository for the full trust model."
 )
 
 
@@ -100,7 +113,9 @@ def build_server(
     server.tool(
         name="serenecode_check",
         description=(
-            "Run the verification pipeline on an entire project root. "
+            "Run the verification pipeline on an entire project root (CI / batch). "
+            "Prefer serenecode_check_function or serenecode_check_file during "
+            "interactive editing — full-tree checks are slower and noisier. "
             "Returns findings, summary counts, and overall pass/fail. "
             "Levels 3-6 require --allow-code-execution at server startup."
         ),
@@ -109,15 +124,16 @@ def build_server(
         name="serenecode_check_file",
         description=(
             "Run the verification pipeline scoped to a single source file. "
-            "Faster than serenecode_check; returns findings only for the file."
+            "Prefer this over serenecode_check during editing; faster than a "
+            "full-project run."
         ),
     )(cast(Any, tool_check_file))
     server.tool(
         name="serenecode_check_function",
         description=(
-            "Run the verification pipeline scoped to a single function in a "
-            "single file. Use this in the inner edit loop to validate just "
-            "the function you're working on."
+            "PRIMARY TOOL FOR EDITING: run the pipeline on one function in one file. "
+            "Use after each edit instead of serenecode_check (full tree). "
+            "Validates contracts, types, coverage, and conventions for that symbol only."
         ),
     )(cast(Any, tool_check_function))
     server.tool(
@@ -158,13 +174,26 @@ def build_server(
         name="serenecode_validate_spec",
         description=(
             "Validate a SPEC.md for SereneCode readiness: REQ-xxx ids present, "
-            "no duplicates, no gaps, descriptions on all requirements."
+            "**Source:** line, no duplicates, no gaps, descriptions on all requirements. "
+            "If the file is missing or unreadable, spec_present is false and "
+            "suggested_action explains converting a narrative spec to SPEC.md."
         ),
     )(cast(Any, tool_validate_spec))
     server.tool(
         name="serenecode_list_reqs",
-        description="List all REQ-xxx identifiers found in a SPEC.md file.",
+        description=(
+            "List all REQ-xxx identifiers in a SPEC.md. When the file is missing, "
+            "spec_present is false and suggested_action explains next steps."
+        ),
     )(cast(Any, tool_list_reqs))
+    server.tool(
+        name="serenecode_list_integrations",
+        description=(
+            "List all declared INT-xxx integration identifiers in a SPEC.md. "
+            "When the file is missing, spec_present is false and suggested_action "
+            "explains next steps."
+        ),
+    )(cast(Any, tool_list_integrations))
     server.tool(
         name="serenecode_req_status",
         description=(
@@ -174,12 +203,27 @@ def build_server(
         ),
     )(cast(Any, tool_req_status))
     server.tool(
+        name="serenecode_integration_status",
+        description=(
+            "Report implementation and verification status for one INT: "
+            "integration metadata, implementing symbols, verifying tests, "
+            "and the derived status."
+        ),
+    )(cast(Any, tool_integration_status))
+    server.tool(
         name="serenecode_orphans",
         description=(
             "List REQs in SPEC.md that have no `Implements:` reference "
             "(unimplemented) or no `Verifies:` reference (untested)."
         ),
     )(cast(Any, tool_orphans))
+    server.tool(
+        name="serenecode_dead_code",
+        description=(
+            "Return likely dead-code findings for a path, with guidance to ask "
+            "the user before removing or allowlisting code."
+        ),
+    )(cast(Any, tool_dead_code))
 
     # Resources — read-only context
     server.resource(
@@ -205,6 +249,11 @@ def build_server(
         description="Parsed REQ-xxx list from the project's SPEC.md if present.",
         mime_type="application/json",
     )(cast(Any, resource_reqs))
+    server.resource(
+        "serenecode://integrations",
+        description="Parsed INT-xxx integration metadata from the project's SPEC.md if present.",
+        mime_type="application/json",
+    )(cast(Any, resource_integrations))
 
     return server
 

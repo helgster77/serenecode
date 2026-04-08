@@ -49,7 +49,7 @@ class TestInitBranches:
         # spec=1 (existing), level=2, mcp=n
         result = runner.invoke(main, ["init", str(tmp_path)], input="1\n2\nn\n")
         assert result.exit_code == 0
-        assert "Place your spec" in result.output
+        assert "narrative requirements" in result.output.lower()
 
     def test_init_confirm_callback_prompt(self, tmp_path: Path) -> None:
         """Branch (line 114): inner confirm callback is invoked when SERENECODE.md exists."""
@@ -82,6 +82,7 @@ class TestSpecBranches:
         """Branch (line 176): JSON format selected."""
         spec_file = tmp_path / "SPEC.md"
         spec_file.write_text(
+            "**Source:** none — e2e fixture.\n\n"
             "### REQ-001: First\nDescription.\n",
             encoding="utf-8",
         )
@@ -203,7 +204,11 @@ class TestCheckBranches:
             encoding="utf-8",
         )
         spec = tmp_path / "SPEC.md"
-        spec.write_text("### REQ-001: First\nDescription.\n", encoding="utf-8")
+        spec.write_text(
+            "**Source:** none — e2e fixture.\n\n"
+            "### REQ-001: First\nDescription.\n",
+            encoding="utf-8",
+        )
         runner = CliRunner()
         result = runner.invoke(
             main,

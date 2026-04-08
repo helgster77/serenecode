@@ -4,11 +4,18 @@
 
 <h3 align="center">A Framework for AI-Driven Development of Verifiable Systems</h3>
 
-SereneCode is a spec-to-verified-implementation framework for AI-generated Python. It ensures that every requirement in your spec is implemented, tested, and formally verified — closing the gap between what you asked for and what the AI built. The workflow starts from a spec with traceable requirements (REQ-xxx), enforces that the AI writes verifiable code with contracts and tests, then verifies at multiple levels — from structural checks and test coverage through property-based testing to symbolic execution with an SMT solver. You choose the verification depth during interactive setup: lightweight for internal tools, balanced for production systems, strict for safety-critical code.
+SereneCode turns the question from "did the model ship code?" to "does it match the spec, the types, and the contracts we agreed on?" It is a Python toolkit and workflow for teams using AI coding assistants: a structured spec (`REQ-xxx`, `INT-xxx`), a project-level `SERENECODE.md` that steers how code is written, and one verification pipeline you can drive **from the MCP server (recommended while editing)** or from the **CLI** (CI, scripts, and full-tree batch runs).
 
-SereneCode also ships a built-in **MCP server** so verification runs *inside* your AI assistant's edit loop, not just at the end. Once registered with Claude Code, Cursor, Cline, or Continue, the agent calls verification tools after every function it writes — getting structured findings, contract suggestions, and counterexamples back as JSON, fixing them mid-turn, and only reporting the work complete when the result is clean. AI agents write code fast but can miss requirements and skip edge cases; SereneCode closes that gap with spec traceability, test-existence enforcement, formal verification, and an MCP-driven inner loop the agent can drive on itself.
+**Recommended workflow**
 
-> **This framework was bootstrapped with AI under its own rules.** SereneCode's SERENECODE.md was written before the first line of code, and the codebase has been developed under those conventions from the start — including the MCP server, which the same AI agents now use to verify their own work mid-edit. The current tree passes its own `serenecode check src --level 6 --allow-code-execution` end-to-end via the bare CLI (718 functions checked, 557 passed, 161 exempt; ~6 minutes wall time), an internal strict-config Level 6 self-check in the test suite (`pytest tests/integration/test_example_projects.py::test_serenecode_repo_passes_strict_level_6`, which exercises L4-L6 against `strict_config` over the full source tree), `mypy src examples/dosage-serenecode/src`, the shipped dosage example's own `serenecode check src --level 6 --allow-code-execution`, and the full `pytest` suite (1,393 passing tests, 16 skipped). The verification output is transparent about scope: exempt modules (adapters, CLI, ports, MCP server, `__init__.py`) and functions excluded from deep verification (non-primitive parameter types) are reported as "exempt" rather than silently omitted.
+1. **MCP (AI / IDE)** — Register `serenecode mcp` once in Cursor, Claude Code, Cline, Continue, or any MCP client. While coding, call **`serenecode_check_function`** (or `serenecode_check_file`) on the symbol you just edited—not a full-project check every time. This is the fastest feedback loop; it matches how the pipeline is meant to be used with assistants.
+2. **CLI** — Use `serenecode check` for pipelines, pre-merge gates, and automation. After any CLI run, the human-readable report ends with a short reminder pointing at MCP for per-symbol follow-up; run **`serenecode doctor`** to verify the optional `mcp` install and see copy-paste registration commands.
+
+**What you get:** problems surface as **reported findings**, not as silent gaps—missing traceability, weak or missing contracts, untested paths, type errors, and (where you enable deeper levels) property-test failures, bounded symbolic counterexamples, and cross-module issues. You choose depth to match risk: seconds for structure and types, more time for coverage, Hypothesis, CrossHair-backed search within analysis bounds, and compositional checks. This does not replace review or domain expertise; it **reduces surprise** by making scope explicit and by re-running the same checks your repo already encodes.
+
+**MCP:** register the server once (Claude Code, Cursor, Cline, Continue, or any MCP client) and the agent can pull structured JSON—findings, suggestions, counterexamples—while the cursor is still on the line, instead of discovering issues only after merge.
+
+> **This framework was bootstrapped with AI under its own rules.** SereneCode's SERENECODE.md was written before the first line of code, and the codebase has been developed under those conventions from the start — including the MCP server, which the same AI agents now use to verify their own work mid-edit. The current tree passes its own `serenecode check src --level 6 --allow-code-execution` end-to-end via the bare CLI (counts vary with the tree; expect hundreds of functions with a mix of passed, exempt, and advisory dead-code notes; wall time on the order of minutes for a full L1–L6 run), an internal strict-config Level 6 self-check in the test suite (`pytest tests/integration/test_example_projects.py::test_serenecode_repo_passes_strict_level_6`, which exercises L4–L6 against `strict_config` over the full source tree), `mypy src examples/dosage-serenecode/src`, the shipped dosage example's own `serenecode check src --level 6 --allow-code-execution`, and the full `pytest` suite (on the order of 1,400+ passing tests; a small number are skipped by design). The verification output is transparent about scope: exempt modules (adapters, CLI, ports, MCP server, `__init__.py`) and functions excluded from deep verification (non-primitive parameter types) are reported as "exempt" rather than silently omitted; dead-code findings are **advisories** and appear in the summary unless you use `--fail-on-advisory` to fail CI when any remain.
 
 ---
 
@@ -22,7 +29,7 @@ The problem is that formal verification has always been expensive — too slow, 
 
 After enough hours pair-programming with coding agents, the same handful of mistakes show up over and over. They're not random bugs — they're systematic patterns that follow from how a language model writes code: optimize for the happy path, infer intent from limited context, finish the visible task, leave implicit assumptions implicit. SereneCode treats each one as a verification target rather than a code-review target.
 
-- **Skipping requirements without realizing it.** Given a spec with twelve requirements, the agent writes code that handles eight of them confidently and quietly omits the four it didn't see a clean place for. There's no error, no TODO — just missing behavior. SereneCode's spec traceability (REQ-xxx tags, `Implements:` / `Verifies:` references, the `serenecode_orphans` and `serenecode_req_status` tools) makes it impossible for a requirement to be silently dropped: every REQ in SPEC.md must be both implemented and tested or it shows up as an orphan.
+- **Skipping requirements or wiring integration points incorrectly.** Given a spec with twelve requirements, the agent writes code that handles eight of them confidently and quietly omits the four it didn't see a clean place for, or it writes the happy-path behavior but connects the wrong components together. SereneCode's spec traceability (`REQ-xxx` and `INT-xxx` tags, `Implements:` / `Verifies:` references, and the MCP status tools) makes it impossible for a requirement or declared integration to be silently dropped: every declared item in `SPEC.md` must be both implemented and tested or it shows up as missing coverage, and deeper verification checks whether tagged integrations are actually present.
 
 - **Happy-path tests only.** Asked to "add tests," the agent writes a handful of cases that walk the obvious path through the function. Edge cases (empty input, off-by-one boundaries, the exact threshold value, the negative number, the unicode string) are routinely missed because they require imagining what could go wrong. L3 coverage catches uncovered branches; L4 Hypothesis property testing generates inputs the agent never thought of and runs them against the contracts.
 
@@ -50,7 +57,7 @@ SereneCode is designed for **building new verifiable systems from scratch with A
 
 ### Choosing the Right Level
 
-The cost of verification should be proportional to the cost of a bug. Each level generates a different SERENECODE.md with different requirements for the AI, so the choice shapes how code is *written*, not just how it's checked. You make this choice during `serenecode init` — it cannot be changed after implementation starts.
+The cost of verification should be proportional to the cost of a bug. Each level generates a different SERENECODE.md with different requirements for the AI, so the choice shapes how code is *written*, not just how it's checked. You make this choice during `serenecode init` — treat it as the project default; you can revise SERENECODE.md later if the team agrees (the init script warns against casual drift once coding is underway).
 
 | | **Minimal** (Level 2) | **Default** (Level 4) | **Strict** (Level 6) |
 |---|---|---|---|
@@ -61,6 +68,8 @@ The cost of verification should be proportional to the cost of a bug. Each level
 | **The tradeoff** | Low ceremony, but contracts are only checked at the boundaries you wrote them | Moderate overhead; architecture rules keep core logic pure and testable | Significant overhead — every loop gets an invariant comment, every helper gets a contract. Justified when the cost of an undiscovered bug is measured in patient harm, financial loss, or regulatory failure |
 
 Pick the level that matches the stakes. Safety-critical code should start at Strict.
+
+For package layout (Hypothesis strategies vs `*.core.models`), compositional `INT` `Kind: call` semantics (`call` vs `isinstance`, comma-separated targets), and other level-specific expectations, see [docs/VERIFICATION_LEVELS.md](docs/VERIFICATION_LEVELS.md).
 
 ---
 
@@ -95,13 +104,17 @@ The Serenecode dosage example currently passes `serenecode check src/ --level 6 
 
 ## How It Works
 
+For **day-to-day AI-assisted coding**, treat **The MCP Server** (§4 below) as the primary path: scoped tools first, full-project checks when you need them. Sections **2–3** describe the same pipeline via the **CLI**, which is ideal for **CI and one-shot `serenecode check` runs**.
+
 ### 1. Interactive Setup — `serenecode init`
 
-Run `serenecode init` and answer two questions:
+Run `serenecode init` and answer the prompts:
 
-**Spec question:** Do you already have a spec, or will you write one with your coding assistant? Both options set up spec traceability with REQ-xxx requirement identifiers — the difference is the workflow your assistant follows.
+**Spec:** Do you already have a spec, or will you write one with your coding assistant? Both options set up spec traceability with REQ-xxx requirement identifiers — the difference is the workflow your assistant follows.
 
-**Verification level:** Minimal (L2), Default (L4), or Strict (L6). This determines what conventions your SERENECODE.md will require and cannot be changed after implementation starts.
+**Verification level:** Minimal (L2), Default (L4), or Strict (L6). This determines what conventions your SERENECODE.md will require. (The init text describes this as fixed once implementation has started; you can still edit files manually.)
+
+**MCP server:** Whether to print a one-time MCP registration snippet for your AI tool (recommended).
 
 ```bash
 serenecode init
@@ -113,14 +126,14 @@ This creates SERENECODE.md (project conventions including spec traceability) and
 
 A lightweight AST-based checker that validates code follows SERENECODE.md conventions in seconds. Missing a postcondition? No class invariant? No test file for a module? Caught before you waste time on heavy verification.
 
-L1 also catches AI-failure-mode patterns that compile and look correct but represent real bugs: stub residue (`pass`/`...`/`raise NotImplementedError` left as a function body), mutable default arguments, bare `assert` in non-test source, `print()` in core, dangerous calls (`eval`, `exec`, `pickle.loads`, `os.system`, `subprocess` with `shell=True`), `TODO`/`FIXME`/`XXX`/`HACK` markers in tracked files, tests with no assertions, silent exception handlers, and tautological postconditions. Each rule has a per-rule opt-out comment for legitimate exceptions; see SERENECODE.md "Code Quality Standards" for the full list.
+L1 also catches AI-failure-mode patterns that compile and look correct but represent real bugs: stub residue (`pass`/`...`/`raise NotImplementedError` left as a function body), mutable default arguments, bare `assert` in non-test source, `print()` in core, dangerous calls (`eval`, `exec`, `pickle.loads`, `os.system`, `subprocess` with `shell=True`), `TODO`/`FIXME`/`XXX`/`HACK` markers in tracked files, tests with no assertions, silent exception handlers, tautological postconditions, and likely dead code. Dead-code findings are advisory review items: the agent should ask the user whether to remove or allowlist the code before changing it. Each rule has a per-rule opt-out comment for legitimate exceptions; see SERENECODE.md "Code Quality Standards" for the full list.
 
 ```bash
-serenecode check src/ --structural          # structural conventions
-serenecode check src/ --spec SPEC.md        # + spec traceability
+serenecode check src/ --structural          # structural conventions + dead-code review
+serenecode check src/ --spec SPEC.md        # override auto-discovered SPEC.md
 ```
 
-The `--spec` flag verifies that every REQ in the spec has an `Implements: REQ-xxx` tag in the code and a `Verifies: REQ-xxx` tag in the tests. No requirement goes unimplemented or untested.
+When a project-root `SPEC.md` is present, normal verification runs auto-detect it. Spec traceability verifies that every declared REQ and INT in the spec has matching `Implements:` and `Verifies:` references in the codebase. No declared requirement or integration point goes unimplemented or untested without being surfaced.
 
 ### 3. The Verifier — Deep Verification
 
@@ -133,7 +146,9 @@ A six-level verification pipeline that escalates from fast checks to full symbol
 | **L3** | Test coverage analysis | Seconds–minutes | coverage.py |
 | **L4** | Property-based testing | Seconds–minutes | Hypothesis |
 | **L5** | Symbolic search (bounded) | Minutes | CrossHair / Z3 |
-| **L6** | Cross-module verification | Seconds | Compositional analysis |
+| **L6** | Cross-module verification | Seconds–minutes | Compositional analysis |
+
+The compositional step alone is often quick, but a full `serenecode check … --level 6` run still executes L1–L5 first and can take minutes on a large tree.
 
 ```bash
 serenecode check src/ --level 6 --allow-code-execution  # verify it
@@ -172,10 +187,15 @@ The same `serenecode mcp` stdio server works in Claude Code, Cursor, Cline, Cont
 | `serenecode_suggest_test` | Test scaffold for an uncovered function |
 | `serenecode_validate_spec` | Validate a SPEC.md is well-formed |
 | `serenecode_list_reqs` | List REQ-xxx identifiers in a SPEC.md |
+| `serenecode_list_integrations` | List INT-xxx identifiers in a SPEC.md |
 | `serenecode_req_status` | Implementation/verification status of one REQ |
+| `serenecode_integration_status` | Implementation/verification status of one INT |
 | `serenecode_orphans` | REQs with no implementation or no test |
+| `serenecode_dead_code` | Likely dead-code findings that require user review |
 
-**Read-only resources** the agent can fetch without "calling" anything: `serenecode://config` (active SerenecodeConfig as JSON), `serenecode://findings/last-run` (most recent CheckResponse from this server session), `serenecode://exempt-modules` (the exempt path patterns for the active config), `serenecode://reqs` (parsed REQ-xxx list from the project's SPEC.md).
+Tool results mirror the CLI pipeline: structured payloads include **`passed`**, levels, **`verdict`**, and a **summary** with counts (including **`advisory_count`** for dead-code-style exempt rows). Paths and `project_root` are resolved on the host — they are not sandboxed to one workspace; see [docs/SECURITY.md](docs/SECURITY.md).
+
+**Read-only resources** the agent can fetch without "calling" anything: `serenecode://config` (active SerenecodeConfig as JSON), `serenecode://findings/last-run` (most recent CheckResponse from this server session), `serenecode://exempt-modules` (the exempt path patterns for the active config), `serenecode://reqs` (parsed REQ-xxx list from the project's SPEC.md), and `serenecode://integrations` (parsed INT-xxx metadata from the project's SPEC.md).
 
 The server-level `--allow-code-execution` flag mirrors the CLI: without it, Levels 3-6 tools return a structured error rather than importing project code. `serenecode init` writes a copy-pasteable MCP setup snippet into the generated CLAUDE.md so newly initialized projects ship with the registration command and recommended workflow. See SERENECODE.md "MCP Integration" for the full descriptions and the agent-side workflow.
 
@@ -194,13 +214,13 @@ serenecode init                           → spec mode + verification level
 claude mcp add serenecode -- uv run \     → register MCP server with the AI
        serenecode mcp --allow-code-execution  tool (Claude Code, Cursor, ...)
 serenecode spec SPEC.md                   → validate spec is ready
-                                            (REQ-xxx format, no gaps)
+                                            (REQ-xxx / INT-xxx format, no gaps)
 
 ─── inner loop (per function, driven by the agent through MCP) ──────────────
 AI reads SERENECODE.md + SPEC.md          → conventions and what to build
 AI calls serenecode_suggest_contracts     → derive @require/@ensure for the
                                             function it's about to write
-AI writes the function                    → with Implements: REQ-xxx tag
+AI writes the function                    → with Implements: REQ-xxx / INT-xxx tags
 AI calls serenecode_check_function        → L1-L4 scoped to that function
 AI reads structured findings              → missing contracts, mutable
                                             defaults, weak postconditions,
@@ -211,19 +231,21 @@ AI fixes them and calls verify_fixed      → confirms each finding is gone
 
 ─── outer loop (per feature, batch verification) ─────────────────────────────
 serenecode check src/ --spec SPEC.md      → did the AI follow conventions?
-                  --structural              all REQs covered?
+                  --structural              all REQs/INTs covered? dead code?
 serenecode check src/ --level 5 \         → deep verification: coverage,
                   --allow-code-execution \   property testing, symbolic search
                   --spec SPEC.md
 AI calls serenecode_orphans /             → which REQs are unimplemented or
-       serenecode_req_status                untested?
+       serenecode_req_status /              untested?
+       serenecode_integration_status /      which INTs are missing or broken?
+       serenecode_dead_code                 which symbols need user review?
 AI fixes the gaps                         → adds implementations, tests,
-                                            stronger contracts
-Repeat until verified                     → all REQs implemented + tested,
+                                            stronger contracts, reviewed cleanup
+Repeat until verified                     → all REQs/INTs implemented + tested,
                                             no counterexamples within bounds
 ```
 
-The inner loop is what the MCP server enables. Before MCP, the agent had to finish writing, exit its turn, wait for `serenecode check` to run, parse the output, and iterate. With MCP, every function the agent writes gets validated *before* it moves to the next one — `serenecode_check_function` returns structured JSON in milliseconds, the agent fixes any findings inline, and only reports the overall task complete when the result is clean. This collapses an iteration loop that used to span multiple turns into a sequence of tool calls inside a single turn.
+The inner loop is what the MCP server enables. Before MCP, the agent had to finish writing, exit its turn, wait for `serenecode check` to run, parse the output, and iterate. With MCP, every function the agent writes gets validated *before* it moves to the next one — `serenecode_check_function` returns structured JSON without a separate full-repo CLI round-trip (wall time is often seconds per call and grows with level and project size), the agent fixes any findings inline, and only reports the overall task complete when the result is clean. This collapses an iteration loop that used to span multiple turns into a sequence of tool calls inside a single turn.
 
 The outer loop still matters: cross-module compositional analysis, full coverage runs, and spec-traceability sweeps over the whole codebase aren't function-scoped, so they live at the batch level. The CLI handles those, and the same pipeline runs identically in CI.
 
@@ -254,11 +276,11 @@ SereneCode isn't just a tool that *tells* you to write verified code. It *is* ve
 
 The SERENECODE.md convention file was the first artifact created — before any Python was written. The framework has been developed under those conventions with AI as a first-class contributor, and the repository continuously checks itself with:
 
-- `pytest` across the full suite (currently 1,393 passing tests, 16 skipped)
+- `pytest` across the full suite (on the order of 1,400+ passing tests; a small number skipped by design)
 - `mypy --strict` across `src/` and `examples/dosage-serenecode/src/`
 - SereneCode's own structural, type, property, symbolic, and compositional passes
 
-On the current tree, the bare CLI invocation `serenecode check src --level 6 --allow-code-execution` runs the full L1-L6 pipeline end-to-end against the framework's own source — 718 functions checked, 557 passed, 161 exempt, 0 failures, ~6 minutes wall time. A separate integration test, `test_serenecode_repo_passes_strict_level_6`, runs the same source tree through `run_pipeline` with `strict_config()` and `start_level=4`, which strips every path-based exemption and forces every adapter, CLI handler, MCP tool, and `__init__.py` through L4-L6. SereneCode also passes that strict-config self-check end-to-end: 0 L1 findings across all 466 strict-checked functions, 0 L3 coverage gaps across the strict-checked subset (~3.5 minutes), and 0 L4-L6 findings. The exempt items in the default-config run include adapter modules (which handle I/O and are integration-tested), port interfaces (Protocols that define abstract contracts), CLI entry points, the MCP server package, and functions whose parameter types are too complex for automated strategy generation or symbolic execution. Exempt items are visible in the output — they are not silently omitted.
+On the current tree, `serenecode check src --level 6 --allow-code-execution` runs the full L1–L6 pipeline against the framework's own source; exact counts of passed / exempt / advisory rows change as the tree grows (wall time often several minutes for a deep run). A separate integration test, `test_serenecode_repo_passes_strict_level_6`, runs the same `src/` tree through `run_pipeline` with `strict_config()` and `start_level=4`, which strips path-based exemptions and forces adapters, CLI, MCP, and similar code through L4–L6. The exempt items in a **default-config** run still include adapter modules, port `Protocol`s, CLI/MCP composition roots, and functions whose parameter types are poor fits for Hypothesis/CrossHair. Exempt and advisory rows stay visible in the output — they are not silently omitted.
 
 At Level 5, CrossHair and Z3 search for counterexamples across the codebase's symbolic-friendly contracted top-level functions. Functions with non-primitive parameters (custom dataclasses, Protocol implementations, Callable types) are reported as exempt because the solver cannot generate inputs for them. Level 6 adds structural compositional analysis: dependency direction, circular dependency detection, interface compliance, contract presence at module boundaries, aliased cross-module call resolution, and architectural invariants. Interface compliance follows explicit `Protocol` inheritance and checks substitutability, including extra required parameters and incompatible return annotations. Together, they provide both deep per-function verification and system-level structural guarantees — but the structural checks at L6 verify contract *presence*, not logical *sufficiency* across call chains.
 
@@ -267,11 +289,8 @@ At Level 5, CrossHair and Z3 search for counterexamples across the codebase's sy
 ## Quick Start
 
 ```bash
-# Install from PyPI (add the [mcp] extra to enable the MCP server).
-# Note: the MCP server ships in the next release; until it's published
-# to PyPI, install from the source checkout instead:
-#   git clone https://github.com/helgster77/serenecode && cd serenecode
-#   uv sync --extra mcp           # or: pip install -e '.[mcp]'
+# Install from PyPI with the [mcp] extra so `serenecode mcp` is available,
+# or from a source checkout: uv sync --extra mcp  /  pip install -e '.[mcp]'
 pip install 'serenecode[mcp]'
 
 # Initialize — interactive setup (spec mode + verification level)
@@ -294,7 +313,7 @@ serenecode check src/ --spec SPEC.md --structural
 serenecode check src/ --level 5 --allow-code-execution --spec SPEC.md
 ```
 
-JSON output (via `--format json`) includes top-level `passed`, `level_requested`, and `level_achieved` fields alongside the summary and per-function results.
+JSON output (via `--format json`) includes top-level `passed`, `level_requested`, and `level_achieved`, a `summary` object with counts (`passed`, `failed`, `skipped`, `exempt`, `advisory_count`, `verdict`), a `timestamp`, and per-function `results`. **`verdict`** is `complete`, `failed`, or `incomplete` (for example, skips or not reaching the requested level). Human-readable output includes the same verdict in the header line.
 
 When you verify a nested package or a single module, Serenecode preserves the package root and module-path context used by mypy, Hypothesis, CrossHair, and the architectural checks. That lets package-local absolute imports, relative imports, and scoped core-module rules behave the same way they do in project-wide runs.
 
@@ -302,23 +321,29 @@ When you verify a nested package or a single module, Serenecode preserves the pa
 
 ```bash
 serenecode init [<path>]                                                # interactive setup
+serenecode doctor                                                       # MCP optional install + registration hints; SPEC.md vs narrative files
 serenecode spec <SPEC.md>                                               # validate spec readiness
                 [--format human|json]
 serenecode check [<path>] [--level 1-6] [--allow-code-execution]        # run verification
                           [--spec SPEC.md]                              #   spec traceability
+                          [--project-root DIR]                          #   repo root for imports + config
                           [--format human|json]                         #   output format
                           [--structural] [--verify]                     #   L1 only / L3-6 only
+                          [--fail-on-advisory]                         #   exit 11 if dead-code advisories remain
                           [--per-condition-timeout N]                   #   L5 CrossHair budgets
                           [--per-path-timeout N] [--module-timeout N]   #   (defaults: 30/10/300s)
-                          [--workers N]                                 #   L5 parallel workers
+                          [--coverage-timeout N]                        #   L3 pytest/coverage subprocess (default 600s)
+                          [--workers N]                                 #   L5 parallel workers (cap 32)
 serenecode status [<path>] [--format human|json]                        # verification status
 serenecode report [<path>] [--format human|json|html]                   # generate reports
                            [--output FILE] [--allow-code-execution]     #   write to file
 serenecode mcp [--allow-code-execution]                                 # boot the MCP server
-               [--project-root DIR]                                     #   over stdio
+               [--project-root DIR]                                     #   default root; stdio transport
 ```
 
-**Exit codes:** 0 = passed, 1 = structural, 2 = types, 3 = coverage, 4 = properties, 5 = symbolic, 6 = compositional, 10 = internal error or deep verification refused without explicit trust.
+**Environment (optional):** `SERENECODE_MAX_WORKERS` overrides `--workers`; `SERENECODE_COVERAGE_TIMEOUT` overrides `--coverage-timeout`. **`SERENECODE_DEBUG=1`** logs subprocess environment **key names** (not values) when tools spawn mypy, pytest, CrossHair, etc. Details: [docs/SECURITY.md](docs/SECURITY.md).
+
+**Exit codes:** 0 = passed (and no `--fail-on-advisory` violation), 1–6 = first failing verification level (structural … compositional), 10 = internal error or deep verification refused without `--allow-code-execution`, **11 = dead-code advisories remain with `--fail-on-advisory`** (checks otherwise passed).
 
 ---
 
@@ -334,7 +359,7 @@ SereneCode is honest about what it can and can't do:
 
 **Runtime checks can be disabled.** icontract decorators are checked on every call by default, but can be disabled via environment variables for performance in production. This is a feature, not a bug — but it means runtime guarantees depend on configuration.
 
-**Not everything can be deeply verified.** Functions with complex domain-type parameters (custom dataclasses, Callable, Protocol implementations) are automatically excluded from L4/L5 because the tools cannot generate valid inputs for them — they show up as "exempt" in the output. See "Choosing the Right Level" above for guidance on which verification depth fits your system.
+**Not everything can be deeply verified at L4 or L5.** Hypothesis (L4) and CrossHair (L5) skip or mark **exempt** targets when inputs cannot be synthesized, when signatures are a poor fit for the backend, or when modules are treated as adapters or composition roots — not only because of “complex types.” Those rows appear as exempt, skipped, or failed preconditions in the output rather than as silent omissions. For L4 layout and strategy behavior, see [docs/VERIFICATION_LEVELS.md](docs/VERIFICATION_LEVELS.md). See "Choosing the Right Level" above for guidance on which verification depth fits your system.
 
 **Levels 3-6 execute your code.** Coverage analysis, property-based testing, and symbolic verification import project modules and run their top-level code as part of analysis. Module loading uses `compile()` + `exec()` on target source files and their transitive dependencies. There is no sandboxing or syscall filtering — a malicious `.py` file in the target directory gets full access to the host. Use `--allow-code-execution` or `allow_code_execution=True` only for code you trust. Subprocess-based backends (CrossHair, pytest/coverage) receive module paths and search paths from the source discovery layer; symlink-based directory traversal is blocked (`followlinks=False`), but the trust boundary ultimately relies on the `--allow-code-execution` gate.
 
@@ -356,7 +381,8 @@ CLI / Library API / MCP     ← composition roots (interactive init, spec valida
     │
     ├──▸ Pipeline           ← orchestrates L1 → L2 → L3 → L4 → L5 → L6
     │       ├──▸ Structural Checker    (ast)
-    │       ├──▸ Spec Traceability     (REQ-xxx → Implements/Verifies)
+    │       ├──▸ Spec Traceability     (REQ-xxx / INT-xxx → Implements/Verifies)
+    │       ├──▸ Dead-Code Review      (likely unused code → ask before removal)
     │       ├──▸ Test Existence        (test_<module>.py discovery)
     │       ├──▸ Type Checker          (mypy)
     │       ├──▸ Coverage Analyzer     (coverage.py)
@@ -370,6 +396,10 @@ CLI / Library API / MCP     ← composition roots (interactive init, spec valida
 ```
 
 Core logic is pure. All I/O goes through Protocol-defined ports. The verification engine itself is verifiable.
+
+## Security and trust
+
+Serenecode runs on **your machine** and, with `--allow-code-execution` (CLI or MCP), **imports and executes** project code—similar trust to running `pytest` or `python -m` on that tree. It is **not** a sandbox. Subprocesses receive a filtered environment to limit credential leakage; see [docs/SECURITY.md](docs/SECURITY.md) for the threat model, MCP behavior, `SERENECODE_DEBUG`, and CI exit code **11** with `--fail-on-advisory`.
 
 ## Disclaimer
 
