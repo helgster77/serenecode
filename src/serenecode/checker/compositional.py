@@ -2126,6 +2126,338 @@ def check_system_invariants(
     return results
 
 
+@icontract.require(
+    lambda modules: isinstance(modules, list),
+    "modules must be a list",
+)
+@icontract.require(
+    lambda sources: isinstance(sources, (list, tuple)),
+    "sources must be a list or tuple",
+)
+@icontract.require(
+    lambda spec_content: spec_content is None or isinstance(spec_content, str),
+    "spec_content must be None or a string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def check_declared_integrations(
+    modules: list[ModuleInfo],
+    sources: list[tuple[str, str, str]] | tuple[tuple[str, str, str], ...],
+    spec_content: str | None,
+) -> list[FunctionResult]:
+    """Verify that declared INT items are semantically satisfied.
+
+    This supplements Level 1 traceability with a deeper Level 6 check:
+    tagged integration points must correspond to actual interactions or
+    interface relationships in the implementation.
+    """
+    if spec_content is None or not spec_content.strip():
+        return []
+
+    from serenecode.checker.spec_traceability import (
+        extract_implementations,
+        extract_integration_points,
+    )
+
+    integration_points = extract_integration_points(spec_content)
+    if not integration_points:
+        return []
+
+    source_map = {file_path: source for source, file_path, _module_path in sources}
+    implementation_refs: dict[str, list[tuple[str, str, int]]] = {}
+    # Loop invariant: implementation_refs contains INT references from sources[0..i]
+    for source, file_path, _module_path in sources:
+        for symbol_name, identifier, line_no in extract_implementations(source):
+            if identifier.startswith("INT-"):
+                implementation_refs.setdefault(identifier, []).append((
+                    file_path,
+                    symbol_name,
+                    line_no,
+                ))
+
+    class_map = {
+        (mod.file_path, cls.name): cls
+        for mod in modules
+        for cls in mod.classes
+    }
+    protocol_map = {
+        proto.name: proto
+        for mod in modules
+        for proto in mod.protocols
+    }
+
+    results: list[FunctionResult] = []
+    # Loop invariant: results contains semantic findings for integration_points[0..i]
+    for point in integration_points:
+        refs = implementation_refs.get(point.identifier, [])
+        if not refs:
+            continue
+
+        if point.kind == "call":
+            if _call_integration_is_satisfied(point, refs, source_map):
+                continue
+            first_ref = refs[0]
+            results.append(FunctionResult(
+                function=point.identifier,
+                file=first_ref[0],
+                line=first_ref[2],
+                level_requested=6,
+                level_achieved=5,
+                status=CheckStatus.FAILED,
+                details=(Detail(
+                    level=VerificationLevel.COMPOSITIONAL,
+                    tool="compositional",
+                    finding_type="integration_semantics",
+                    message=(
+                        f"{point.identifier} declares a call integration from "
+                        f"'{point.source}' to '{point.target}', but no matching "
+                        "call, constructor call, or isinstance check for those "
+                        "targets was detected in the tagged implementation body."
+                    ),
+                    suggestion=(
+                        f"Ensure the implementation for {point.source} references "
+                        f"{point.target} as required (for example by calling it, or "
+                        "by isinstance(..., Type) against the declared target). "
+                        "Comma-separated targets must all be present (AND). "
+                        f"Keep 'Implements: {point.identifier}' on the responsible symbol."
+                    ),
+                ),),
+            ))
+            continue
+
+        issue = _implements_integration_issue(point, refs, class_map, protocol_map)
+        if issue is None:
+            continue
+        first_ref = refs[0]
+        results.append(FunctionResult(
+            function=point.identifier,
+            file=first_ref[0],
+            line=first_ref[2],
+            level_requested=6,
+            level_achieved=5,
+            status=CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.COMPOSITIONAL,
+                tool="compositional",
+                finding_type="integration_semantics",
+                message=(
+                    f"{point.identifier} declares that '{point.source}' implements "
+                    f"'{point.target}', but the tagged implementation does not "
+                    f"satisfy that relationship: {issue}"
+                ),
+                suggestion=(
+                    f"Make the implementing class inherit from or remain substitutable "
+                    f"for {point.target}, and tag the class docstring with "
+                    f"'Implements: {point.identifier}'."
+                ),
+            ),),
+        ))
+
+    return results
+
+
+@icontract.require(lambda point: point is not None, "point must be provided")
+@icontract.require(lambda refs: isinstance(refs, list), "refs must be a list")
+@icontract.require(lambda source_map: isinstance(source_map, dict), "source_map must be a dict")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
+def _call_integration_is_satisfied(
+    point: object,
+    refs: list[tuple[str, str, int]],
+    source_map: dict[str, str],
+) -> bool:
+    """Return True if any tagged implementation satisfies the declared integration."""
+    source_names = {segment for segment in str(getattr(point, "source")).split(".") if segment}
+    target_name = str(getattr(point, "target"))
+    targets = _parse_integration_target_list(target_name)
+    if not targets:
+        targets = (target_name.strip(),) if target_name.strip() else tuple()
+    if not targets:
+        return False
+    candidate_refs = [ref for ref in refs if ref[1] in source_names]
+    refs_to_check = candidate_refs if candidate_refs else refs
+
+    # Loop invariant: no checked ref in refs_to_check[0..i] satisfied the call integration
+    for file_path, symbol_name, line_no in refs_to_check:
+        source = source_map.get(file_path)
+        if source is None:
+            continue
+        node = _find_symbol_node(source, symbol_name, line_no)
+        if node is None:
+            continue
+        if _node_satisfies_call_integration(node, targets):
+            return True
+    return False
+
+
+@icontract.require(lambda point: point is not None, "point must be provided")
+@icontract.require(lambda refs: isinstance(refs, list), "refs must be a list")
+@icontract.require(lambda class_map: isinstance(class_map, dict), "class_map must be a dict")
+@icontract.require(lambda protocol_map: isinstance(protocol_map, dict), "protocol_map must be a dict")
+@icontract.ensure(lambda result: result is None or isinstance(result, str), "result must be str or None")
+def _implements_integration_issue(
+    point: object,
+    refs: list[tuple[str, str, int]],
+    class_map: dict[tuple[str, str], ClassInfo],
+    protocol_map: dict[str, ProtocolInfo],
+) -> str | None:
+    """Return None if an implements integration is satisfied, else a short issue."""
+    source_names = {segment for segment in str(getattr(point, "source")).split(".") if segment}
+    target_name = str(getattr(point, "target")).split(".")[-1]
+    candidate_refs = [ref for ref in refs if ref[1] in source_names]
+    refs_to_check = candidate_refs if candidate_refs else refs
+    protocol = protocol_map.get(target_name)
+    first_issue: str | None = None
+
+    # Loop invariant: first_issue describes the first mismatch seen in refs_to_check[0..i]
+    for file_path, symbol_name, _line_no in refs_to_check:
+        class_info = class_map.get((file_path, symbol_name))
+        if class_info is None:
+            if first_issue is None:
+                first_issue = "the tag is not attached to an implementing class"
+            continue
+
+        explicit_inheritance = any(
+            base == target_name or base.endswith(f".{target_name}")
+            for base in class_info.bases
+        )
+        if protocol is None:
+            if explicit_inheritance:
+                return None
+            if first_issue is None:
+                first_issue = f"class '{class_info.name}' does not inherit from '{target_name}'"
+            continue
+
+        signature_issue = _protocol_signature_issue(class_info, protocol)
+        if signature_issue is None:
+            return None
+        if first_issue is None:
+            first_issue = signature_issue
+
+    return first_issue or f"no class matching source '{getattr(point, 'source')}' was found"
+
+
+@icontract.require(lambda class_info: class_info is not None, "class_info must be provided")
+@icontract.require(lambda protocol: protocol is not None, "protocol must be provided")
+@icontract.ensure(lambda result: result is None or isinstance(result, str), "result must be str or None")
+def _protocol_signature_issue(
+    class_info: ClassInfo,
+    protocol: ProtocolInfo,
+) -> str | None:
+    """Return None if a class structurally matches a protocol, else a short issue."""
+    signature_map = {signature.name: signature for signature in class_info.method_signatures}
+
+    # Loop invariant: no mismatch was found in protocol.methods[0..i]
+    for method in protocol.methods:
+        class_signature = signature_map.get(method.name)
+        if class_signature is None:
+            return f"class '{class_info.name}' is missing method '{method.name}'"
+        issues = _check_signature_compatibility(class_signature, method)
+        if issues:
+            return issues[0]
+
+    return None
+
+
+@icontract.require(lambda source: isinstance(source, str), "source must be a string")
+@icontract.require(lambda symbol_name: isinstance(symbol_name, str) and len(symbol_name) > 0, "symbol_name must be non-empty")
+@icontract.require(lambda line_no: isinstance(line_no, int) and line_no >= 1, "line_no must be >= 1")
+@icontract.ensure(lambda result: result is None or isinstance(result, ast.AST), "result must be None or an AST node")
+def _find_symbol_node(
+    source: str,
+    symbol_name: str,
+    line_no: int,
+) -> ast.AST | None:
+    """Find a class/function/method AST node by name and line number."""
+    # silent-except: semantic integration is best-effort over user source; parse failures are reported elsewhere
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, TypeError, ValueError):
+        return None
+
+    # Loop invariant: no matching node has been found in the visited subtree so far
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if node.name == symbol_name and node.lineno == line_no:
+            return node
+    return None
+
+
+@icontract.require(lambda raw: isinstance(raw, str), "raw must be a string")
+@icontract.ensure(lambda result: isinstance(result, tuple), "result must be a tuple")
+def _parse_integration_target_list(raw: str) -> tuple[str, ...]:
+    """Parse comma-separated INT Target values; every entry must be satisfied (AND)."""
+    parts = [part.strip() for part in raw.split(",")]
+    return tuple(part for part in parts if part)
+
+
+@icontract.require(lambda type_expr: isinstance(type_expr, ast.AST), "type_expr must be an AST node")
+@icontract.require(lambda target_name: isinstance(target_name, str) and len(target_name) > 0, "target_name must be non-empty")
+@icontract.require(lambda simple_target: isinstance(simple_target, str) and len(simple_target) > 0, "simple_target must be non-empty")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
+def _type_expr_matches_integration_target(
+    type_expr: ast.expr,
+    target_name: str,
+    simple_target: str,
+) -> bool:
+    """Return True if a runtime type expression refers to the integration target."""
+    # Variant: tuple nesting depth of type_expr decreases
+    if isinstance(type_expr, ast.Tuple):
+        return any(
+            _type_expr_matches_integration_target(elt, target_name, simple_target)
+            for elt in type_expr.elts
+        )
+    dotted = _get_call_target_name(type_expr)
+    if not dotted:
+        return False
+    return (
+        dotted == target_name
+        or dotted == simple_target
+        or dotted.endswith(f".{simple_target}")
+    )
+
+
+@icontract.require(lambda node: isinstance(node, ast.AST), "node must be an AST node")
+@icontract.require(lambda targets: isinstance(targets, tuple), "targets must be a tuple")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
+def _node_satisfies_call_integration(node: ast.AST, targets: tuple[str, ...]) -> bool:
+    """Check whether a body satisfies all declared targets (calls and/or isinstance)."""
+    if not targets:
+        return False
+    return all(_node_satisfies_single_integration_target(node, t) for t in targets)
+
+
+@icontract.require(lambda node: isinstance(node, ast.AST), "node must be an AST node")
+@icontract.require(lambda target_name: isinstance(target_name, str) and len(target_name) > 0, "target_name must be non-empty")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
+def _node_satisfies_single_integration_target(node: ast.AST, target_name: str) -> bool:
+    """Check whether a subtree shows a call to the target or isinstance(..., target)."""
+    simple_target = target_name.split(".")[-1]
+
+    # Loop invariant: no evidence for target_name found in node's subtree yet
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        if isinstance(child.func, ast.Name) and child.func.id == "isinstance":
+            if len(child.args) >= 2 and _type_expr_matches_integration_target(
+                child.args[1],
+                target_name,
+                simple_target,
+            ):
+                return True
+            continue
+        call_target = _get_call_target_name(child.func)
+        if (
+            call_target == target_name
+            or call_target == simple_target
+            or call_target.endswith(f".{simple_target}")
+        ):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
@@ -2135,6 +2467,10 @@ def check_system_invariants(
     lambda sources: isinstance(sources, (list, tuple)),
     "sources must be a list or tuple",
 )
+@icontract.require(
+    lambda spec_content: spec_content is None or isinstance(spec_content, str),
+    "spec_content must be None or a string",
+)
 @icontract.ensure(
     lambda result: result.level_requested == 6,
     "compositional check reports findings at the compositional level",
@@ -2142,8 +2478,9 @@ def check_system_invariants(
 def check_compositional(
     sources: list[tuple[str, str, str]] | tuple[tuple[str, str, str], ...],
     config: SerenecodeConfig,
+    spec_content: str | None = None,
 ) -> CheckResult:
-    """Run the full Level 5 compositional check on a set of source files.
+    """Run the full Level 6 compositional check on a set of source files.
 
     This is the main entry point for compositional verification. It
     parses all modules, then runs all compositional checks: dependency
@@ -2154,6 +2491,8 @@ def check_compositional(
     Args:
         sources: Sequence of (source_code, file_path, module_path) tuples.
         config: Active Serenecode configuration.
+        spec_content: Optional SPEC.md content used for declared-integration
+            semantic checks.
 
     Returns:
         A CheckResult containing all compositional findings.
@@ -2196,6 +2535,7 @@ def check_compositional(
     all_results.extend(check_assume_guarantee(modules, config))
     all_results.extend(check_data_flow(modules, config))
     all_results.extend(check_system_invariants(modules, config))
+    all_results.extend(check_declared_integrations(modules, sources, spec_content))
 
     elapsed = time.monotonic() - start_time
     return make_check_result(

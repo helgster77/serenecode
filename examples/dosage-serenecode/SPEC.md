@@ -2,6 +2,8 @@
 
 **Purpose:** A small Python module that calculates safe drug dosages for patients.
 
+**Source:** ../DOSAGE_CALC_SPEC.md
+
 ---
 
 ## Domain Model

@@ -166,7 +166,18 @@ Strict mode has NO exempt modules. Every module, including CLI and adapters, mus
 
 ## Spec Traceability
 
-This project uses requirement identifiers (REQ-xxx) to maintain traceability between the specification, implementation, and tests. Every requirement in SPEC.md must be implemented and tested.
+If requirements live in another file (PRD, README, `*_SPEC.md`, etc.), that file is the \
+narrative source — **not** the traceability spec. You must still write or update \
+**SPEC.md** with `REQ-xxx` / `INT-xxx` identifiers. `serenecode check --spec` applies **only** \
+to SPEC.md. Use a `**Source:** …` line at the top of SPEC.md pointing to the narrative \
+path(s), or `**Source:** none — this SPEC.md is authoritative`.
+
+This project uses two identifier types in `SPEC.md`:
+
+- `REQ-xxx` for behavioral requirements
+- `INT-xxx` for explicit integration points between components
+
+Every declared requirement and integration point must be implemented and tested.
 
 ### Preparing a SereneCode-Ready Spec
 
@@ -183,17 +194,28 @@ Detailed explanation of what the system must do. Include acceptance criteria, in
 
 4. Number requirements sequentially with no gaps (REQ-001, REQ-002, ...). Use 3-digit zero-padded numbers (or 4-digit for larger specs).
 5. If the source document contains non-functional requirements, constraints, or background context that is not directly testable, include it in SPEC.md as regular prose outside of REQ headings. Only testable behaviors get REQ identifiers.
-6. Validate the spec before proceeding:
+6. For critical interactions that AI coding agents could easily wire up incorrectly, add explicit integration points in this format:
+
+```markdown
+### INT-001: Short description of the integration point
+Kind: call
+Source: CheckoutService.checkout
+Target: PaymentGateway.charge
+Supports: REQ-003, REQ-004
+```
+
+Supported kinds are `call` and `implements`.
+7. Validate the spec before proceeding:
 
 ```bash
 serenecode spec SPEC.md
 ```
 
-This checks that all REQ identifiers are well-formed, sequential with no gaps, free of duplicates, and have descriptions. Do not proceed to implementation planning until `serenecode spec` passes.
+This checks that REQ and INT identifiers are well-formed, sequential with no gaps, free of duplicates, have descriptions, and that every `INT-xxx` entry has the required fields. Do not proceed to implementation planning until `serenecode spec` passes.
 
 ### Implementation Planning
 
-After the spec is validated, create an implementation plan before writing code. The plan must map every REQ-xxx to:
+After the spec is validated, create an implementation plan before writing code. The plan must map every REQ-xxx and every critical `INT-xxx` to:
 
 - The specific function or class that will implement it.
 - The module it belongs in (e.g. `src/core/dosage.py`).
@@ -226,6 +248,17 @@ def validate_and_create_session(email: str, password: str) -> Session:
     ...
 ```
 
+The same `Implements:` tag is also used for integration points:
+
+```python
+def checkout(cart: Cart) -> Receipt:
+    """Submit payment and persist the order.
+
+    Implements: REQ-003, INT-001
+    """
+    ...
+```
+
 ### Test Tagging
 
 Tests that verify a requirement include a `Verifies:` tag in their docstring:
@@ -239,7 +272,20 @@ def test_authenticate_user_with_valid_credentials():
     ...
 ```
 
+Tests may also verify integration points:
+
+```python
+def test_checkout_charges_gateway_before_persisting_order() -> None:
+    """Verify the checkout integration.
+
+    Verifies: INT-001
+    """
+    ...
+```
+
 ### Verification
+
+SereneCode automatically uses a project-root `SPEC.md` during normal verification runs when one is present. Use `--spec SPEC.md` if the spec lives in a non-standard location.
 
 Run spec traceability verification alongside structural checks:
 
@@ -250,6 +296,19 @@ serenecode check src/ --spec SPEC.md
 This checks:
 1. Every REQ in the spec has at least one `Implements:` tag in the code.
 2. Every REQ in the spec has at least one `Verifies:` tag in the tests.
-3. No orphan references (code/tests referencing non-existent REQs).
+3. Every INT in the spec has at least one `Implements:` tag in the code.
+4. Every INT in the spec has at least one `Verifies:` tag in the tests.
+5. No orphan references (code/tests referencing non-existent REQs or INTs).
+6. At deeper levels, declared integrations are checked semantically — tags alone are not enough if the integration is not actually present.
+
+### Dead Code Review
+
+SereneCode also reports likely dead code as part of baseline verification. These findings are advisory review items, not automatic deletion commands.
+
+When dead code is reported:
+
+- Ask the user whether the code should be removed.
+- If it must remain, suppress it explicitly with `# allow-unused: reason`.
+- Do not delete suspected dead code without user confirmation.
 
 Do not consider implementation complete until traceability verification passes.

@@ -20,6 +20,9 @@ from serenecode.checker.compositional import (
     _is_public_function_name,
     _module_name_matches_reference,
     _module_package_name,
+    _node_satisfies_call_integration,
+    _node_satisfies_single_integration_target,
+    _parse_integration_target_list,
     _parse_method_signature,
     _resolve_from_import_module,
     parse_module_info,
@@ -40,6 +43,51 @@ def _first_import_from(src: str) -> ast.ImportFrom:
         if isinstance(node, ast.ImportFrom):
             return node
     raise AssertionError("no ImportFrom in source")
+
+
+# ---------------------------------------------------------------------------
+# Declared integration targets (Level 6)
+# ---------------------------------------------------------------------------
+
+
+class TestParseIntegrationTargetList:
+    def test_splits_comma_separated_targets(self) -> None:
+        assert _parse_integration_target_list("a.B, c.D") == ("a.B", "c.D")
+
+    def test_strips_whitespace(self) -> None:
+        assert _parse_integration_target_list(" foo.bar , baz ") == ("foo.bar", "baz")
+
+
+class TestNodeSatisfiesCallIntegration:
+    def test_isinstance_matches_simple_name(self) -> None:
+        node = _first_function("""
+            def f(x):
+                if isinstance(x, Patient):
+                    return 1
+                return 0
+        """)
+        assert _node_satisfies_single_integration_target(node, "Patient")
+
+    def test_isinstance_matches_dotted_type(self) -> None:
+        node = _first_function("""
+            def f(x):
+                return isinstance(x, app.models.Patient)
+        """)
+        assert _node_satisfies_single_integration_target(node, "app.models.Patient")
+        assert _node_satisfies_single_integration_target(node, "Patient")
+
+    def test_comma_targets_require_all(self) -> None:
+        node_ok = _first_function("""
+            def f(x, y):
+                return isinstance(x, A) and isinstance(y, B)
+        """)
+        assert _node_satisfies_call_integration(node_ok, ("A", "B"))
+
+        node_bad = _first_function("""
+            def f(x):
+                return isinstance(x, A)
+        """)
+        assert not _node_satisfies_call_integration(node_bad, ("A", "B"))
 
 
 # ---------------------------------------------------------------------------

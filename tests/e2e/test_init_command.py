@@ -40,6 +40,33 @@ class TestInitCommand:
         claude_content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
         assert "## Serenecode" in claude_content
 
+    def test_init_creates_spec_placeholders(self, tmp_path: Path) -> None:
+        reader = LocalFileReader()
+        writer = LocalFileWriter()
+        result = initialize_project(
+            directory=str(tmp_path),
+            template="default",
+            file_reader=reader,
+            file_writer=writer,
+        )
+        assert result.spec_md_placeholder_created is True
+        assert result.spec_source_placeholder_created is True
+        spec_text = (tmp_path / "SPEC.md").read_text(encoding="utf-8")
+        assert "**Source:**" in spec_text
+        assert (tmp_path / "SPEC.source.md").exists()
+
+    def test_init_skips_spec_placeholder_when_spec_exists(self, tmp_path: Path) -> None:
+        (tmp_path / "SPEC.md").write_text("# Existing SPEC\n", encoding="utf-8")
+        reader = LocalFileReader()
+        writer = LocalFileWriter()
+        result = initialize_project(
+            directory=str(tmp_path),
+            template="default",
+            file_reader=reader,
+            file_writer=writer,
+        )
+        assert result.spec_md_placeholder_created is False
+
     def test_init_with_existing_claude_md_updates(self, tmp_path: Path) -> None:
         (tmp_path / "CLAUDE.md").write_text("# Existing\n\nSome content.\n", encoding="utf-8")
         reader = LocalFileReader()

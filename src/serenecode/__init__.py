@@ -8,6 +8,8 @@ to core logic via the pipeline.
 
 from __future__ import annotations
 
+import os
+
 import icontract
 
 from serenecode.adapters.local_fs import LocalFileReader, LocalFileWriter
@@ -22,7 +24,13 @@ from serenecode.core.exceptions import UnsafeCodeExecutionError
 from serenecode.core.pipeline import run_pipeline
 from serenecode.init import InitResult, initialize_project
 from serenecode.models import CheckResult
-from serenecode.source_discovery import build_source_files, discover_test_file_stems, find_serenecode_md
+from serenecode.ports.dead_code_analyzer import DeadCodeAnalyzer
+from serenecode.source_discovery import (
+    build_source_files,
+    discover_test_file_stems,
+    find_serenecode_md,
+    find_spec_md,
+)
 
 __all__ = [
     "init",
@@ -254,6 +262,7 @@ def _run_check(
     coverage_analyzer = None
     property_tester = None
     symbolic_checker = None
+    dead_code_analyzer: DeadCodeAnalyzer | None = None
 
     if level >= 2:
         try:
@@ -283,7 +292,15 @@ def _run_check(
         except ImportError:
             pass
 
+    try:
+        from serenecode.adapters.vulture_adapter import VultureDeadCodeAnalyzer
+        dead_code_analyzer = VultureDeadCodeAnalyzer()
+    except ImportError:
+        from serenecode.adapters.unavailable_dead_code_adapter import UnavailableDeadCodeAnalyzer
+        dead_code_analyzer = UnavailableDeadCodeAnalyzer("vulture is not installed")
+
     test_stems = discover_test_file_stems(path, reader)
+    spec_content, test_sources = _load_spec_inputs(path, reader)
     return run_pipeline(
         source_files=source_files,
         level=level,
@@ -293,5 +310,44 @@ def _run_check(
         coverage_analyzer=coverage_analyzer,
         property_tester=property_tester,
         symbolic_checker=symbolic_checker,
+        dead_code_analyzer=dead_code_analyzer,
         known_test_stems=test_stems,
+        spec_content=spec_content,
+        test_sources=test_sources,
     )
+
+
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(lambda reader: reader is not None, "reader must be provided")
+@icontract.ensure(
+    lambda result: isinstance(result, tuple) and len(result) == 2,
+    "result must be a (spec_content, test_sources) pair",
+)
+def _load_spec_inputs(
+    path: str,
+    reader: LocalFileReader,
+) -> tuple[str | None, tuple[tuple[str, str], ...]]:
+    """Load auto-discovered SPEC.md content and associated test sources."""
+    spec_path = find_spec_md(path, reader)
+    if spec_path is None:
+        return None, ()
+
+    spec_content = reader.read_file(spec_path)
+    project_root = os.path.dirname(spec_path)
+    tests_dir = os.path.join(project_root, "tests")
+    if not os.path.isdir(tests_dir):
+        return spec_content, ()
+
+    try:
+        test_files = reader.list_python_files(tests_dir)
+    except Exception:
+        return spec_content, ()
+
+    test_sources: list[tuple[str, str]] = []
+    # Loop invariant: test_sources contains collected (path, source) pairs from test_files[0..i]
+    for test_file in test_files:
+        try:
+            test_sources.append((test_file, reader.read_file(test_file)))
+        except Exception:
+            continue
+    return spec_content, tuple(test_sources)

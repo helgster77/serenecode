@@ -16,11 +16,14 @@ from dataclasses import asdict
 import icontract
 
 from serenecode.adapters.local_fs import LocalFileReader
-from serenecode.checker.spec_traceability import extract_spec_requirements
+from serenecode.checker.spec_traceability import (
+    extract_declared_requirement_ids,
+    extract_integration_points,
+)
 from serenecode.config import default_config, parse_serenecode_md
 from serenecode.mcp.tools import _resolve_root, get_state
 from serenecode.mcp.schemas import response_to_dict
-from serenecode.source_discovery import find_serenecode_md
+from serenecode.source_discovery import find_serenecode_md, find_spec_md
 
 
 @icontract.ensure(
@@ -106,13 +109,43 @@ def resource_reqs() -> str:
     """
     project_root = _resolve_root(None)
     reader = LocalFileReader()
-    candidate = f"{project_root}/SPEC.md"
-    if not reader.file_exists(candidate):
+    candidate = find_spec_md(project_root, reader)
+    if candidate is None:
         return json.dumps({"status": "no_spec_found", "project_root": project_root})
     content = reader.read_file(candidate)
-    req_ids = sorted(extract_spec_requirements(content))
+    req_ids = sorted(extract_declared_requirement_ids(content))
     return json.dumps({
         "spec_file": candidate,
         "req_ids": req_ids,
         "count": len(req_ids),
+    }, indent=2)
+
+
+@icontract.ensure(
+    lambda result: isinstance(result, str) and len(result) > 0,
+    "result must be a non-empty JSON string",
+)
+def resource_integrations() -> str:
+    """Return parsed integration-point metadata from the project's SPEC.md."""
+    project_root = _resolve_root(None)
+    reader = LocalFileReader()
+    candidate = find_spec_md(project_root, reader)
+    if candidate is None:
+        return json.dumps({"status": "no_spec_found", "project_root": project_root})
+    content = reader.read_file(candidate)
+    integrations = extract_integration_points(content)
+    return json.dumps({
+        "spec_file": candidate,
+        "integration_ids": [point.identifier for point in integrations],
+        "integrations": [
+            {
+                "integration_id": point.identifier,
+                "kind": point.kind,
+                "source": point.source,
+                "target": point.target,
+                "supports": list(point.supports),
+            }
+            for point in integrations
+        ],
+        "count": len(integrations),
     }, indent=2)

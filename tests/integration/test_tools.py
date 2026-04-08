@@ -20,6 +20,9 @@ from serenecode.mcp.tools import (
     tool_check,
     tool_check_file,
     tool_check_function,
+    tool_dead_code,
+    tool_integration_status,
+    tool_list_integrations,
     tool_list_reqs,
     tool_orphans,
     tool_req_status,
@@ -87,6 +90,31 @@ class TestToolCheck:
         tool_check(path=str(tmp_path), level=1)
         state = get_state()
         assert state.last_check is not None
+
+    def test_dead_code_is_advisory(self, tmp_path: Path) -> None:
+        (tmp_path / "module.py").write_text(textwrap.dedent("""\
+            \"\"\"Module.\"\"\"
+
+            import icontract
+
+            @icontract.require(lambda x: x > 0, "x must be positive")
+            @icontract.ensure(lambda x, result: result == x * 2, "result is double")
+            def double(x: int) -> int:
+                \"\"\"Return double of x.\"\"\"
+                return x * 2
+        """), encoding="utf-8")
+        result = tool_check(path=str(tmp_path), level=1)
+        findings = cast("list[dict[str, Any]]", result["findings"])
+        assert result["passed"] is True
+        assert result["summary"]["failed"] == 0  # type: ignore[index]
+        assert result["summary"]["exempt"] >= 1  # type: ignore[index]
+        assert any(
+            finding["finding_type"] == "dead_code"
+            and finding["status"] == "exempt"
+            and isinstance(finding["suggestion"], str)
+            and "ask the user" in finding["suggestion"].lower()
+            for finding in findings
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +301,8 @@ class TestSpecTools:
         spec.write_text(textwrap.dedent("""\
             # Project SPEC
 
+            **Source:** none — test fixture.
+
             ### REQ-001: First requirement
             Description for one.
 
@@ -281,6 +311,24 @@ class TestSpecTools:
 
             ### REQ-003: Third requirement
             Description for three.
+        """), encoding="utf-8")
+        return spec
+
+    def _write_integration_spec(self, tmp_path: Path) -> Path:
+        spec = tmp_path / "SPEC.md"
+        spec.write_text(textwrap.dedent("""\
+            # Project SPEC
+
+            **Source:** none — test fixture.
+
+            ### REQ-001: Checkout succeeds
+            Description for checkout.
+
+            ### INT-001: Checkout calls payment gateway
+            Kind: call
+            Source: checkout
+            Target: charge
+            Supports: REQ-001
         """), encoding="utf-8")
         return spec
 
@@ -294,6 +342,27 @@ class TestSpecTools:
         spec = self._write_spec(tmp_path)
         result = tool_validate_spec(spec_file=str(spec))
         assert result["passed"] is True
+        assert result["spec_present"] is True
+
+    def test_validate_spec_missing_file_returns_suggested_action(self, tmp_path: Path) -> None:
+        missing = tmp_path / "SPEC.md"
+        result = tool_validate_spec(spec_file=str(missing))
+        assert result["passed"] is False
+        assert result["spec_present"] is False
+        assert "suggested_action" in result
+
+    def test_list_reqs_missing_file_returns_suggested_action(self, tmp_path: Path) -> None:
+        missing = tmp_path / "SPEC.md"
+        result = tool_list_reqs(spec_file=str(missing))
+        assert result["count"] == 0
+        assert result["spec_present"] is False
+        assert "suggested_action" in result
+
+    def test_list_integrations_returns_all_ids(self, tmp_path: Path) -> None:
+        spec = self._write_integration_spec(tmp_path)
+        result = tool_list_integrations(spec_file=str(spec))
+        assert result["count"] == 1
+        assert result["integration_ids"] == ["INT-001"]
 
     def test_orphans_lists_unimplemented_and_untested(self, tmp_path: Path) -> None:
         spec = self._write_spec(tmp_path)
@@ -436,6 +505,69 @@ class TestSpecTools:
         by_id = {r["req_id"]: r for r in reqs}
         assert "REQ-999" in by_id
         assert by_id["REQ-999"]["exists_in_spec"] is False
+
+    def test_integration_status_complete_with_integration_id(self, tmp_path: Path) -> None:
+        spec = self._write_integration_spec(tmp_path)
+        impl = tmp_path / "impl.py"
+        impl.write_text(textwrap.dedent('''\
+            """Module."""
+
+            def checkout() -> None:
+                """Checkout flow.
+
+                Implements: INT-001, REQ-001
+                """
+                charge()
+
+            def charge() -> None:
+                """Gateway hook."""
+        '''), encoding="utf-8")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_checkout.py").write_text(textwrap.dedent('''\
+            """Tests."""
+
+            def test_checkout() -> None:
+                """Exercise checkout integration.
+
+                Verifies: INT-001, REQ-001
+                """
+                assert True
+        '''), encoding="utf-8")
+        result = tool_integration_status(spec_file=str(spec), integration_id="INT-001")
+        integrations = cast("list[dict[str, Any]]", result["integrations"])
+        assert len(integrations) == 1
+        assert integrations[0]["integration_id"] == "INT-001"
+        assert integrations[0]["status"] == "complete"
+        assert integrations[0]["kind"] == "call"
+        assert integrations[0]["supports"] == ["REQ-001"]
+
+
+class TestDeadCodeTool:
+    """Tests for serenecode_dead_code."""
+
+    def test_dead_code_returns_guidance(self, tmp_path: Path) -> None:
+        (tmp_path / "module.py").write_text(textwrap.dedent("""\
+            def stale() -> int:
+                return 1
+        """), encoding="utf-8")
+        result = tool_dead_code(path=str(tmp_path))
+        findings = cast("list[dict[str, Any]]", result["findings"])
+        assert result["status"] == "ok"
+        assert len(findings) >= 1
+        assert findings[0]["symbol_name"] == "stale"
+        assert "ask the user" in findings[0]["guidance"].lower()
+
+    def test_dead_code_ignores_test_files_by_default(self, tmp_path: Path) -> None:
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_helper.py").write_text(textwrap.dedent("""\
+            def unused_test_helper() -> int:
+                return 1
+        """), encoding="utf-8")
+        result = tool_dead_code(path=str(tmp_path))
+        assert result["status"] == "no_python_files"
+        assert result["findings"] == []
 
 
 class TestToolHelpers:

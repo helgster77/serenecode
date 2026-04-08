@@ -29,6 +29,16 @@ _SAFE_ENV_KEYS = frozenset({
     "VIRTUAL_ENV",
     "CONDA_PREFIX",
     "CONDA_DEFAULT_ENV",
+    # Corporate proxies and TLS (subprocess tools often need these)
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "SSL_CERT_FILE",
+    "CURL_CA_BUNDLE",
+    "REQUESTS_CA_BUNDLE",
+    "PYTHONWARNINGS",
+    "TZ",
 })
 
 
@@ -60,4 +70,11 @@ def safe_subprocess_env(
             env[key] = val
     if extra_paths is not None:
         env.update(extra_paths)
+    if os.environ.get("SERENECODE_DEBUG"):
+        import sys
+        keys = sorted(env.keys())
+        print(
+            f"[serenecode] subprocess environment keys ({len(keys)}): {keys}",
+            file=sys.stderr,
+        )
     return env

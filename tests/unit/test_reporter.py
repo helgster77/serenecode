@@ -53,6 +53,7 @@ class TestFormatHuman:
         result = _make_sample_result()
         output = format_human(result)
         assert "FAILED" in output
+        assert "verdict: failed" in output
 
     def test_contains_function_names(self) -> None:
         result = _make_sample_result()
@@ -66,6 +67,12 @@ class TestFormatHuman:
         assert "2 checked" in output
         assert "1 passed" in output
         assert "1 failed" in output
+
+    def test_includes_mcp_editor_hint(self) -> None:
+        result = _make_sample_result()
+        output = format_human(result)
+        assert "serenecode_check_function" in output
+        assert "serenecode doctor" in output
 
     def test_contains_pass_fail_markers(self) -> None:
         result = _make_sample_result()
@@ -88,6 +95,27 @@ class TestFormatHuman:
         output = format_human(result)
         assert "src/math.py" in output
 
+    def test_dead_code_advisory_is_visible(self) -> None:
+        advisory = FunctionResult(
+            function="stale",
+            file="src/math.py",
+            line=20,
+            level_requested=1,
+            level_achieved=1,
+            status=CheckStatus.EXEMPT,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="dead_code",
+                finding_type="dead_code",
+                message="unused function 'stale'",
+                suggestion="Ask the user whether this code should be removed.",
+            ),),
+        )
+        result = make_check_result((advisory,), level_requested=1, duration_seconds=0.01)
+        output = format_human(result)
+        assert "NOTE" in output
+        assert "unused function 'stale'" in output
+
 
 class TestFormatJson:
     """Tests for JSON formatting."""
@@ -103,7 +131,7 @@ class TestFormatJson:
         output = format_json(result)
         parsed = json.loads(output)
         assert "version" in parsed
-        assert parsed["version"] == "0.2.0"
+        assert parsed["version"] == result.version
 
     def test_has_timestamp(self) -> None:
         result = _make_sample_result()
@@ -205,7 +233,26 @@ class TestFormatHtml:
     def test_contains_version(self) -> None:
         result = _make_sample_result()
         output = format_html(result)
-        assert "0.2.0" in output
+        assert result.version in output
+
+    def test_contains_dead_code_advisory_label(self) -> None:
+        advisory = FunctionResult(
+            function="stale",
+            file="src/math.py",
+            line=20,
+            level_requested=1,
+            level_achieved=1,
+            status=CheckStatus.EXEMPT,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="dead_code",
+                finding_type="dead_code",
+                message="unused function 'stale'",
+            ),),
+        )
+        result = make_check_result((advisory,), level_requested=1, duration_seconds=0.01)
+        output = format_html(result)
+        assert "advisory" in output
 
     def test_escapes_html_special_chars(self) -> None:
         detail = Detail(

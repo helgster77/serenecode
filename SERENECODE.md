@@ -444,10 +444,10 @@ Every meaningful code change in this project MUST come with verification. Writin
 ### Repository-Level Targets
 
 - The checked-in project configuration should stay clean under `uv run serenecode check src --level 5 --allow-code-execution`.
-- The shipped SereneCode dosage example should stay clean under `uv run serenecode check examples/dosage-serenecode/src --level 5 --allow-code-execution`.
+- The bundled SereneCode-format example in `examples/` should stay clean under the verification commands documented alongside that example (typically `serenecode check src/ --level 5 --allow-code-execution` from the example project root).
 - The repository should continue to pass `uv run mypy src`, and shipped examples should stay clean under their documented mypy invocation when applicable.
 - The repository should continue to pass `uv run pytest -q`.
-- The shipped SereneCode dosage example should continue to pass `uv run pytest -q` from `examples/dosage-serenecode/`.
+- That bundled example should continue to pass its documented `pytest` invocation from its project root under `examples/`.
 - If a change affects verification semantics, discovery, loading, reporting, or example claims, verify those paths explicitly rather than assuming the full suite is enough.
 - Levels 3-5 import and execute project modules. Use those levels only on trusted code, and pass `--allow-code-execution` or `allow_code_execution=True` explicitly.
 
@@ -602,6 +602,52 @@ Steps 1-3 may be done together, but steps 4-8 MUST NOT be skipped or deferred.
 
 ---
 
+## Spec Traceability
+
+If the project has requirements in another file (PRD, README section, `*_SPEC.md`, \
+free-form notes, etc.), treat that document as the **narrative source**. You must \
+still produce or maintain **SPEC.md** at the project root with `REQ-xxx` and optional \
+`INT-xxx` identifiers. **`serenecode check --spec`, MCP spec tools, and Implements:/Verifies: \
+traceability apply only to SPEC.md** — not to the narrative file. Add a \
+`**Source:** …` line near the top of SPEC.md naming the narrative path(s), or \
+`**Source:** none — this SPEC.md is authoritative` when everything lives in SPEC.md \
+already. Keep the narrative source and SPEC.md aligned when both exist.
+
+SereneCode supports two SPEC.md identifier types:
+
+- `REQ-xxx` for behavioral requirements
+- `INT-xxx` for explicit integration points between components
+
+When this repository uses a `SPEC.md`, contributors must keep both kinds of \
+items traceable:
+
+- implementation docstrings use `Implements: REQ-xxx` and `Implements: INT-xxx`
+- test docstrings use `Verifies: REQ-xxx` and `Verifies: INT-xxx`
+
+Use `INT-xxx` for critical interactions that AI coding agents often wire up \
+incorrectly, such as cross-component calls and interface implementations. \
+Each `INT-xxx` entry must declare `Kind`, `Source`, and `Target`, and may \
+optionally declare `Supports: REQ-xxx, ...`.
+
+Normal verification runs auto-detect a project-root `SPEC.md` when present. \
+Use `--spec SPEC.md` when the spec lives in a non-standard location.
+
+At baseline, SereneCode checks that every declared REQ and INT is implemented \
+and tested, and that there are no orphan references. At deeper verification \
+levels, declared integrations are also checked semantically: tags alone are \
+not enough if the actual interaction is missing or incompatible.
+
+### Dead Code Review
+
+Likely dead code is a review item, not an auto-delete command. When SereneCode \
+reports likely unused code:
+
+- ask the user whether the code should be removed
+- if it must remain, suppress it with `# allow-unused: reason`
+- do not delete suspected dead code without user confirmation
+
+---
+
 ## Version Control Standards
 
 - Commits must be atomic — one logical change per commit.
@@ -656,8 +702,11 @@ The server registers the following tools:
 - `serenecode_suggest_test` — test scaffold for an uncovered function
 - `serenecode_validate_spec` — validate a SPEC.md
 - `serenecode_list_reqs` — list REQs in a SPEC.md
+- `serenecode_list_integrations` — list INTs in a SPEC.md
 - `serenecode_req_status` — implementation/verification status of one REQ
+- `serenecode_integration_status` — implementation/verification status of one INT
 - `serenecode_orphans` — REQs with no implementation or no test
+- `serenecode_dead_code` — likely dead-code findings that require user review
 
 And the following read-only resources:
 
@@ -665,5 +714,6 @@ And the following read-only resources:
 - `serenecode://findings/last-run` — most recent CheckResponse from this server session
 - `serenecode://exempt-modules` — exempt and core path patterns
 - `serenecode://reqs` — parsed REQ list from the project's SPEC.md
+- `serenecode://integrations` — parsed INT metadata from the project's SPEC.md
 
 The agent should call `serenecode_check_function` after every function it writes or edits and only report the work complete when the result has zero failed findings. See the project's CLAUDE.md (generated by `serenecode init`) for the recommended workflow snippet.

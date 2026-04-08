@@ -55,11 +55,11 @@ class TestIsValidVerificationLevel:
 class TestIsValidExitCode:
     """Tests for is_valid_exit_code predicate."""
 
-    @pytest.mark.parametrize("code", [0, 1, 2, 3, 4, 5, 6, 10])
+    @pytest.mark.parametrize("code", [0, 1, 2, 3, 4, 5, 6, 10, 11])
     def test_accepts_valid_exit_codes(self, code: int) -> None:
         assert is_valid_exit_code(code) is True
 
-    @pytest.mark.parametrize("code", [-1, 7, 8, 9, 11, 100])
+    @pytest.mark.parametrize("code", [-1, 7, 8, 9, 100])
     def test_rejects_invalid_exit_codes(self, code: int) -> None:
         assert is_valid_exit_code(code) is False
 

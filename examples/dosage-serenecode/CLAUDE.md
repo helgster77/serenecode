@@ -42,10 +42,12 @@ Run `pytest -q` before considering any task complete. Do not commit code without
 
 ### Spec-Driven Workflow
 
-This project has an existing spec document. Follow the Spec Traceability section in SERENECODE.md for the full workflow. The key steps are:
+This project has an existing requirements document (any name). Follow the Spec Traceability section in SERENECODE.md for the full workflow. The key steps are:
 
-1. Read the existing spec and SERENECODE.md before writing any code.
-2. If the spec is not already in SereneCode format (REQ-xxx headings), convert it into SPEC.md following the "Preparing a SereneCode-Ready Spec" instructions in SERENECODE.md. Validate with `serenecode spec SPEC.md`.
-3. Create an implementation plan mapping each REQ to functions, modules, and contracts. Get user approval before writing code.
-4. Implement and tag with `Implements: REQ-xxx`. Test and tag with `Verifies: REQ-xxx`.
+1. Read the narrative spec, SERENECODE.md, and SPEC.md before writing any code.
+2. If SPEC.md is missing or not in SereneCode format (REQ-xxx headings and, for critical interactions, INT-xxx entries), rewrite the narrative document into SPEC.md following the "Preparing a SereneCode-Ready Spec" instructions in SERENECODE.md. A PRD or `*_SPEC.md` alone does not satisfy traceability — only SPEC.md does. Validate with `serenecode spec SPEC.md`.
+3. Create an implementation plan mapping each REQ and each critical INT to functions, modules, and contracts. Get user approval before writing code.
+4. Implement and tag with `Implements: REQ-xxx` / `Implements: INT-xxx`. Test and tag with `Verifies: REQ-xxx` / `Verifies: INT-xxx`.
 5. Run `serenecode check src/ --spec SPEC.md` to verify full traceability.
+
+Pre-existing `*_SPEC.md` or PRD files are narrative inputs only. Traceability and `serenecode check --spec` apply exclusively to SPEC.md (REQ/INT identifiers).

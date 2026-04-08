@@ -600,7 +600,7 @@ class TestStrategyForClass:
 
 
 class TestStrategyForExampleModelType:
-    """Branches lines 347-348, 356-357, 367, 377, 389: dosage example model strategies."""
+    """Branches lines 347-348, 356-357, 367, 377, 389: *.core.models model strategies."""
 
     def test_patient_strategy(self) -> None:
         from dataclasses import dataclass
@@ -641,6 +641,24 @@ class TestStrategyForExampleModelType:
     def test_non_class_returns_none(self) -> None:
         result = _strategy_for_example_model_type("not a class", "Patient")
         assert result is None
+
+
+class TestExampleModelsModuleRouting:
+    """Regression: package-qualified *.core.models must use example strategies."""
+
+    def test_dotted_core_models_uses_example_strategy(self) -> None:
+        from dataclasses import dataclass
+
+        @dataclass
+        class Patient:
+            weight_kg: float
+            age_years: float
+            creatinine_clearance: float
+            current_medications: list[str]
+
+        Patient.__module__ = "app.core.models"
+        result = _get_strategy_for_annotation_with_seen(Patient, frozenset())
+        assert result is not None
 
 
 # ---------------------------------------------------------------------------

@@ -17,9 +17,14 @@ from dataclasses import dataclass
 import icontract
 
 from serenecode.config import SerenecodeConfig
-from serenecode.contracts.predicates import is_non_empty_string, is_positive_int, is_valid_verification_level
+from serenecode.contracts.predicates import (
+    is_non_empty_string,
+    is_positive_int,
+    is_valid_verification_level,
+)
 from serenecode.core.exceptions import ToolNotInstalledError
 from serenecode.ports.coverage_analyzer import CoverageAnalyzer
+from serenecode.ports.dead_code_analyzer import DeadCodeAnalyzer
 from serenecode.ports.property_tester import PropertyTester
 from serenecode.ports.symbolic_checker import SymbolicChecker, SymbolicFinding
 from serenecode.ports.type_checker import TypeChecker
@@ -33,6 +38,20 @@ from serenecode.models import (
 )
 
 StructuralChecker = Callable[[str, SerenecodeConfig, str, str], CheckResult]
+
+
+@icontract.require(lambda file_path: is_non_empty_string(file_path), "file_path must be non-empty")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
+def _is_test_file_path(file_path: str) -> bool:
+    """Return True when a path points to a test-only Python file."""
+    normalized = file_path.replace("\\", "/")
+    basename = normalized.rsplit("/", maxsplit=1)[-1]
+    path_parts = normalized.split("/")
+    return (
+        "tests" in path_parts
+        or basename.startswith("test_")
+        or basename == "conftest.py"
+    )
 
 
 @icontract.invariant(
@@ -51,6 +70,27 @@ class SourceFile:
     source: str
     importable_module: str | None = None  # e.g. "tests.fixtures.valid.simple_function"
     import_search_paths: tuple[str, ...] = ()
+    context_root: str | None = None  # normalized root used for module-path derivation
+
+
+@icontract.require(lambda sf: sf is not None, "sf must be provided")
+@icontract.ensure(
+    lambda sf, result: isinstance(result, str) and len(result) > 0,
+    "message must be a non-empty string",
+)
+def _not_importable_detail_message(sf: SourceFile) -> str:
+    """Explain why L3–L5 cannot run when no dotted module name was derived."""
+    base = f"Module '{sf.file_path}' is not importable as a Python package"
+    if sf.context_root:
+        return (
+            f"{base}. Inferred project root was {sf.context_root!r}. "
+            "Expected path segments that are valid Python identifiers under src/ or the "
+            "repository root; pass --project-root if the checker was run from a subfolder."
+        )
+    return (
+        f"{base}. Expected path segments that are valid Python identifiers under src/ or "
+        "the repository root; pass --project-root if the checker was run from a subfolder."
+    )
 
 
 @icontract.require(
@@ -83,6 +123,7 @@ def run_pipeline(
     coverage_analyzer: CoverageAnalyzer | None = None,
     property_tester: PropertyTester | None = None,
     symbolic_checker: SymbolicChecker | None = None,
+    dead_code_analyzer: DeadCodeAnalyzer | None = None,
     early_termination: bool = True,
     progress: Callable[[str], None] | None = None,
     max_workers: int = 4,
@@ -105,6 +146,10 @@ def run_pipeline(
         coverage_analyzer: CoverageAnalyzer protocol implementation for Level 3.
         property_tester: PropertyTester protocol implementation for Level 4.
         symbolic_checker: SymbolicChecker protocol implementation for Level 5.
+        dead_code_analyzer: Dead-code analyzer implementation for baseline
+            static unused-code findings. When None, this step is disabled;
+            user-facing composition roots should pass either a real analyzer
+            or an unavailable adapter so the skip remains visible.
         early_termination: Stop at first failing level if True.
         progress: Optional callback for progress messages.
         max_workers: Max concurrent modules for Level 5 symbolic verification.
@@ -160,6 +205,11 @@ def run_pipeline(
                 spec_content, source_files, test_sources,
             )
             level_1_results.extend(spec_result.results)
+        if dead_code_analyzer is not None:
+            _emit("  Dead code analysis...")
+            level_1_results.extend(
+                _run_dead_code_analysis(source_files, dead_code_analyzer),
+            )
         all_results.extend(level_1_results)
 
         if early_termination and _has_failures(level_1_results):
@@ -284,7 +334,7 @@ def run_pipeline(
     # Level 6: Compositional verification
     if start_level <= 6 <= level:
         _emit("Level 6: Compositional verification...")
-        level_6_results = _run_level_6(source_files, config)
+        level_6_results = _run_level_6(source_files, config, spec_content)
         all_results.extend(level_6_results)
         if _level_achieved(level_6_results, has_source_files):
             achieved_level = 6
@@ -472,6 +522,95 @@ def _run_level_1(
         )
         results.extend(check_result.results)
     return results
+
+
+@icontract.require(
+    lambda source_files: isinstance(source_files, tuple),
+    "source_files must be a tuple",
+)
+@icontract.require(
+    lambda dead_code_analyzer: dead_code_analyzer is not None,
+    "dead_code_analyzer must be provided",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
+def _run_dead_code_analysis(
+    source_files: tuple[SourceFile, ...],
+    dead_code_analyzer: DeadCodeAnalyzer,
+) -> list[FunctionResult]:
+    """Run static dead-code analysis on the current source set."""
+    paths = tuple(
+        source_file.file_path
+        for source_file in source_files
+        if not _is_test_file_path(source_file.file_path)
+    )
+    if not paths:
+        return []
+
+    # silent-except: dead-code backend failures must be surfaced as SKIPPED results, not crash the pipeline
+    try:
+        findings = dead_code_analyzer.analyze_paths(paths)
+    except Exception as exc:
+        return [_make_dead_code_skipped_result(
+            f"Dead-code analysis unavailable: {exc}",
+        )]
+
+    results: list[FunctionResult] = []
+    # Loop invariant: results contains dead-code findings for findings[0..i]
+    for finding in findings:
+        results.append(FunctionResult(
+            function=finding.symbol_name,
+            file=finding.file_path,
+            line=finding.line,
+            level_requested=1,
+            level_achieved=1,
+            status=CheckStatus.EXEMPT,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="dead_code",
+                finding_type="dead_code",
+                message=finding.message,
+                suggestion=(
+                    "Ask the user whether this likely dead code should be removed "
+                    "or allowlisted with '# allow-unused: reason'."
+                ),
+                counterexample={
+                    "symbol_type": finding.symbol_type,
+                    "confidence": finding.confidence,
+                },
+            ),),
+        ))
+
+    return results
+
+
+@icontract.require(
+    lambda message: is_non_empty_string(message),
+    "message must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: result.status == CheckStatus.SKIPPED,
+    "result must be a skipped dead-code result",
+)
+def _make_dead_code_skipped_result(message: str) -> FunctionResult:
+    """Create a visible skipped result for dead-code analysis unavailability."""
+    return FunctionResult(
+        function="<dead_code>",
+        file="dead_code",
+        line=1,
+        level_requested=1,
+        level_achieved=0,
+        status=CheckStatus.SKIPPED,
+        details=(Detail(
+            level=VerificationLevel.STRUCTURAL,
+            tool="dead_code",
+            finding_type="unavailable",
+            message=message,
+            suggestion="Install or fix the dead-code backend, or rerun once it is available.",
+        ),),
+    )
 
 
 # Modules with no testable logic are exempt from test-file requirements.
@@ -698,7 +837,7 @@ def _run_level_3_coverage(
                     level=VerificationLevel.COVERAGE,
                     tool="coverage",
                     finding_type="not_importable",
-                    message=f"Module '{sf.file_path}' is not importable as a Python package",
+                    message=_not_importable_detail_message(sf),
                 ),),
             ))
             continue
@@ -765,7 +904,7 @@ def _run_level_4(
                     level=VerificationLevel.PROPERTIES,
                     tool="hypothesis",
                     finding_type="not_importable",
-                    message=f"Module '{sf.file_path}' is not importable as a Python package",
+                    message=_not_importable_detail_message(sf),
                 ),),
             ))
             continue
@@ -858,7 +997,7 @@ def _run_level_5(
                     level=VerificationLevel.SYMBOLIC,
                     tool="crosshair",
                     finding_type="not_importable",
-                    message=f"Module '{sf.file_path}' is not importable as a Python package",
+                    message=_not_importable_detail_message(sf),
                 ),),
             ))
 
@@ -929,6 +1068,7 @@ def _run_level_5(
 def _run_level_6(
     source_files: tuple[SourceFile, ...],
     config: SerenecodeConfig,
+    spec_content: str | None = None,
 ) -> list[FunctionResult]:
     """Run Level 6 compositional verification across all source files.
 
@@ -946,5 +1086,5 @@ def _run_level_6(
     for sf in source_files:
         sources.append((sf.source, sf.file_path, sf.module_path))
 
-    result = check_compositional(sources, config)
+    result = check_compositional(sources, config, spec_content=spec_content)
     return list(result.results)

@@ -16,6 +16,7 @@ from serenecode.adapters.hypothesis_adapter import (
     _build_strategies_from_signature,
     _get_contracted_functions,
     _has_icontract_decorators,
+    _property_exclusion_reason,
 )
 
 
@@ -134,6 +135,42 @@ def count_result(x: CheckResult) -> int:
         assert findings[0].passed is True
         assert findings[0].finding_type == "verified"
 
+    def test_path_like_string_parameter_is_excluded_before_execution(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        module_file = tmp_path / "workspace_builder.py"
+        module_file.write_text(
+            '''\
+from pathlib import Path
+
+import icontract
+
+
+@icontract.require(lambda working_dir: len(working_dir) > 0, "working_dir must not be empty")
+@icontract.ensure(lambda result: result.endswith(".agentic_ds.log"), "result should point to the log file")
+def setup_workspace(working_dir: str) -> str:
+    """Create a workspace log file."""
+    sentinel = Path("EXECUTED") / ".agentic_ds.log"
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text(working_dir, encoding="utf-8")
+    return str(sentinel)
+''',
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(tmp_path)
+        tester = HypothesisPropertyTester(allow_code_execution=True)
+        findings = tester.test_module("workspace_builder", max_examples=5, search_paths=(str(tmp_path),))
+
+        assert len(findings) == 1
+        assert findings[0].function_name == "setup_workspace"
+        assert findings[0].passed is True
+        assert findings[0].finding_type == "excluded"
+        assert "path-like parameter 'working_dir'" in findings[0].message
+        assert not (tmp_path / "EXECUTED").exists()
+
 
 class TestStrategyDerivation:
     """Tests for Hypothesis strategy derivation from type annotations."""
@@ -211,6 +248,18 @@ class TestStrategyDerivation:
         assert strategies is not None
         assert "self" not in strategies
         assert "x" in strategies
+
+    def test_path_annotation_is_reported_as_property_exclusion_reason(self) -> None:
+        import icontract
+
+        @icontract.require(lambda output_path: True, "accept any path")
+        @icontract.ensure(lambda result: result >= 0, "result must be non-negative")
+        def count_lines(output_path: Path) -> int:
+            return 0
+
+        reason = _property_exclusion_reason(count_lines)
+
+        assert reason == "caller-supplied path-like parameter 'output_path'"
 
 
 class TestContractedFunctionDiscovery:

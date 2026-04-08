@@ -22,22 +22,52 @@ from serenecode.ports.file_system import FileReader, FileWriter
 # SERENECODE.md template content (embedded as string constants)
 # ---------------------------------------------------------------------------
 
+_SPEC_MD_PLACEHOLDER = """\
+# SPEC.md — SereneCode traceability spec
+
+**Source:** SPEC.source.md
+
+> `serenecode check --spec` and REQ/INT tags apply only to this file. \
+Set **Source:** to your narrative spec path(s), or merge requirements into SPEC.source.md.
+
+---
+
+### REQ-001: First testable requirement (replace)
+Describe behavior, acceptance criteria, and edge cases.
+"""
+
+_SPEC_SOURCE_PLACEHOLDER = """\
+# SPEC.source.md — narrative or upstream requirements (optional)
+
+Free-form notes, or content merged from a PRD / `*_SPEC.md`. Keep SPEC.md **Source:** \
+pointing here when this file is authoritative for narrative context. Convert behaviors \
+into `### REQ-xxx` / `### INT-xxx` sections in SPEC.md per SERENECODE.md.
+"""
+
 _SPEC_WORKFLOW_EXISTING = """\
 
 ### Spec-Driven Workflow
 
-This project has an existing spec document. Follow the Spec Traceability \
-section in SERENECODE.md for the full workflow. The key steps are:
+This project has an existing requirements document (any name). Follow the Spec \
+Traceability section in SERENECODE.md for the full workflow. The key steps are:
 
-1. Read the existing spec and SERENECODE.md before writing any code.
-2. If the spec is not already in SereneCode format (REQ-xxx headings), \
-convert it into SPEC.md following the "Preparing a SereneCode-Ready Spec" \
-instructions in SERENECODE.md. Validate with `serenecode spec SPEC.md`.
-3. Create an implementation plan mapping each REQ to functions, modules, \
-and contracts. Get user approval before writing code.
-4. Implement and tag with `Implements: REQ-xxx`. Test and tag with \
-`Verifies: REQ-xxx`.
+1. Read the narrative spec, SERENECODE.md, and SPEC.md before writing any code.
+2. If SPEC.md is missing or not in SereneCode format (REQ-xxx headings and, \
+for critical interactions, INT-xxx entries), rewrite the narrative document \
+into SPEC.md following the "Preparing a SereneCode-Ready Spec" instructions \
+in SERENECODE.md. A PRD or `*_SPEC.md` alone does not satisfy traceability — \
+only SPEC.md does. Validate with `serenecode spec SPEC.md`.
+3. Create an implementation plan mapping each REQ and each critical INT to \
+functions, modules, and contracts. Get user approval before writing code.
+4. Implement and tag with `Implements: REQ-xxx` / `Implements: INT-xxx`. \
+Test and tag with `Verifies: REQ-xxx` / `Verifies: INT-xxx`.
 5. Run `serenecode check src/ --spec SPEC.md` to verify full traceability.
+"""
+
+_TRACEABILITY_REMINDER = """\
+
+Pre-existing `*_SPEC.md` or PRD files are narrative inputs only. Traceability \
+and `serenecode check --spec` apply exclusively to SPEC.md (REQ/INT identifiers).
 """
 
 _SPEC_WORKFLOW_GENERATE = """\
@@ -49,12 +79,13 @@ Traceability section in SERENECODE.md for the full workflow. The key steps are:
 
 1. Read SERENECODE.md before writing any code.
 2. Write SPEC.md with the user following the format in SERENECODE.md. \
-Each requirement must be a testable behavior with a REQ-xxx identifier. \
+Each requirement must be a testable behavior with a REQ-xxx identifier, and \
+critical interactions may be added as INT-xxx integration points. \
 Validate with `serenecode spec SPEC.md`.
-3. Create an implementation plan mapping each REQ to functions, modules, \
-and contracts. Get user approval before writing code.
-4. Implement and tag with `Implements: REQ-xxx`. Test and tag with \
-`Verifies: REQ-xxx`.
+3. Create an implementation plan mapping each REQ and each critical INT to \
+functions, modules, and contracts. Get user approval before writing code.
+4. Implement and tag with `Implements: REQ-xxx` / `Implements: INT-xxx`. \
+Test and tag with `Verifies: REQ-xxx` / `Verifies: INT-xxx`.
 5. Run `serenecode check src/ --spec SPEC.md` to verify full traceability.
 """
 
@@ -71,19 +102,38 @@ Follow the architectural patterns specified in SERENECODE.md.
 ### Verification
 
 After each work iteration (implementing a feature, fixing a bug, refactoring), \
-offer to run verification before considering the task complete.
+run verification before considering the task complete.
 
-**Quick structural check (seconds):**
+**Preferred — MCP while editing:** Register the Serenecode MCP server once, then \
+call **`serenecode_check_function`** (or `serenecode_check_file`) on the code you \
+just changed. Prefer this over shell `serenecode check` during active editing; \
+use **`serenecode_check`** for full-tree or CI-style runs. Run **`serenecode doctor`** \
+if the optional MCP install or IDE registration is unclear.
+
+```bash
+claude mcp add serenecode -- uv run serenecode mcp
+```
+
+Add `--allow-code-execution` to the command if you want Levels 3-6 \
+(coverage, properties, symbolic, compositional) available to the agent. \
+Also use `serenecode_suggest_contracts`, `serenecode_verify_fixed`, \
+`serenecode_uncovered` in the inner loop; `serenecode_validate_spec`, \
+`serenecode_req_status`, `serenecode_integration_status` for traceability; \
+`serenecode_dead_code` for dead-code review.
+
+**CLI — batch / CI:**
+
+Quick structural check (seconds):
 ```bash
 serenecode check src/ --structural
 ```
 
-**Full verification with property testing (minutes):**
+Full verification with property testing (minutes):
 ```bash
 serenecode check src/ --level 4 --allow-code-execution
 ```
 
-**Spec traceability check:**
+Spec traceability check:
 ```bash
 serenecode check src/ --spec SPEC.md
 ```
@@ -103,23 +153,6 @@ behavior — both are required.
 
 Run `pytest -q` after writing tests. Do not consider a task complete \
 until tests exist and pass.
-
-### Serenecode MCP server (optional but recommended)
-
-Serenecode ships an MCP server that exposes the verification pipeline \
-as tools your AI assistant can call mid-edit, instead of waiting for \
-a full `serenecode check` run at the end. Register it once per project:
-
-```bash
-claude mcp add serenecode -- uv run serenecode mcp
-```
-
-Add `--allow-code-execution` to the command if you want Levels 3-6 \
-(coverage, properties, symbolic, compositional) available to the agent. \
-Once registered, use the tools `serenecode_check_function`, \
-`serenecode_suggest_contracts`, `serenecode_verify_fixed`, and \
-`serenecode_uncovered` in the inner edit loop, and \
-`serenecode_validate_spec` / `serenecode_req_status` for spec traceability.
 """,
     "strict": """\
 ## Serenecode (Strict Mode)
@@ -135,22 +168,38 @@ have invariants. No exemptions.
 After each work iteration (implementing a feature, fixing a bug, refactoring), \
 you MUST run verification before considering the task complete. Do not skip this.
 
-**Quick structural check (seconds):**
+**MCP (required for the edit loop):** Register the Serenecode MCP server and \
+call **`serenecode_check_function`** after every function you write or edit. \
+Prefer MCP over shell `serenecode check` during active work; use the CLI for \
+full-tree or CI runs. Run **`serenecode doctor`** if MCP install or registration \
+is unclear.
+
+```bash
+claude mcp add serenecode -- uv run serenecode mcp --allow-code-execution
+```
+
+Use `serenecode_suggest_contracts`, `serenecode_verify_fixed`, \
+`serenecode_uncovered`, `serenecode_req_status` / `serenecode_integration_status`, \
+and `serenecode_dead_code` as documented in SERENECODE.md.
+
+**CLI — batch / CI:**
+
+Quick structural check (seconds):
 ```bash
 serenecode check src/ --structural
 ```
 
-**Full verification with property testing (minutes):**
+Full verification with property testing (minutes):
 ```bash
 serenecode check src/ --level 4 --allow-code-execution
 ```
 
-**Full verification including symbolic and compositional (minutes):**
+Full verification including symbolic and compositional (minutes):
 ```bash
 serenecode check src/ --level 6 --allow-code-execution
 ```
 
-**Spec traceability check:**
+Spec traceability check:
 ```bash
 serenecode check src/ --spec SPEC.md
 ```
@@ -172,22 +221,6 @@ You MUST write tests for every function. Do not skip this.
 
 Run `pytest -q` before considering any task complete. Do not commit \
 code without passing tests.
-
-### Serenecode MCP server (recommended)
-
-You MUST register the Serenecode MCP server so verification runs as part \
-of your inner edit loop, not only at the end:
-
-```bash
-claude mcp add serenecode -- uv run serenecode mcp --allow-code-execution
-```
-
-After every function you write or edit, call \
-`serenecode_check_function` and fix any findings before reporting the \
-work as complete. Use `serenecode_suggest_contracts` to derive \
-contracts from a signature, `serenecode_verify_fixed` to confirm a \
-specific finding is gone after a fix, `serenecode_uncovered` for \
-coverage gaps, and `serenecode_req_status` for spec traceability.
 """,
     "minimal": """\
 ## Serenecode
@@ -198,7 +231,17 @@ preconditions, and public functions should have postconditions.
 
 ### Verification
 
-After completing a feature or fix, run a quick check:
+After completing a feature or fix, verify your work.
+
+**Preferred — MCP:** Register the Serenecode MCP server and use \
+`serenecode_check_function` on symbols you change. Run `serenecode doctor` \
+for setup hints.
+
+```bash
+claude mcp add serenecode -- uv run serenecode mcp
+```
+
+**CLI — quick check:**
 
 ```bash
 serenecode check src/ --structural
@@ -214,15 +257,6 @@ If issues are found, fix them before moving on.
 ### Testing
 
 Write basic tests for public functions. Run `pytest -q` to verify.
-
-### Serenecode MCP server (optional)
-
-If you'd like the verification tools available to your AI assistant \
-inside its edit loop, register the MCP server:
-
-```bash
-claude mcp add serenecode -- uv run serenecode mcp
-```
 """,
 }
 
@@ -248,6 +282,8 @@ class InitResult:
     claude_md_updated: bool
     template_used: str
     spec_mode: str = "generate"
+    spec_md_placeholder_created: bool = False
+    spec_source_placeholder_created: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +349,7 @@ def generate_claude_md_section(
     """
     base = _CLAUDE_MD_BASE[template]
     workflow = _SPEC_WORKFLOW_EXISTING if spec_mode == "existing" else _SPEC_WORKFLOW_GENERATE
-    return base.rstrip() + "\n" + workflow
+    return base.rstrip() + "\n" + workflow + _TRACEABILITY_REMINDER
 
 
 @icontract.require(
@@ -434,10 +470,23 @@ def initialize_project(
         file_writer.write_file(claude_path, claude_section)
         claude_md_created = True
 
+    spec_md_path = os.path.join(directory, "SPEC.md")
+    spec_source_path = os.path.join(directory, "SPEC.source.md")
+    spec_md_placeholder_created = False
+    spec_source_placeholder_created = False
+    if not file_reader.file_exists(spec_md_path):
+        file_writer.write_file(spec_md_path, _SPEC_MD_PLACEHOLDER)
+        spec_md_placeholder_created = True
+    if not file_reader.file_exists(spec_source_path):
+        file_writer.write_file(spec_source_path, _SPEC_SOURCE_PLACEHOLDER)
+        spec_source_placeholder_created = True
+
     return InitResult(
         serenecode_md_created=serenecode_md_created,
         claude_md_created=claude_md_created,
         claude_md_updated=claude_md_updated,
         template_used=template,
         spec_mode=spec_mode,
+        spec_md_placeholder_created=spec_md_placeholder_created,
+        spec_source_placeholder_created=spec_source_placeholder_created,
     )

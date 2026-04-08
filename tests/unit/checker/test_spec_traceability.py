@@ -5,6 +5,7 @@ from __future__ import annotations
 from serenecode.checker.spec_traceability import (
     check_spec_traceability,
     extract_implementations,
+    extract_integration_points,
     extract_spec_requirements,
     extract_verifications,
     validate_spec,
@@ -222,6 +223,8 @@ class TestValidateSpec:
         spec = """\
 # Project Spec
 
+**Source:** none — synthetic fixture.
+
 ### REQ-001: Authentication
 Users must authenticate with email and password.
 
@@ -244,6 +247,8 @@ All actions must be logged.
 
     def test_duplicate_req_fails(self) -> None:
         spec = """\
+**Source:** none — synthetic fixture.
+
 ### REQ-001: First
 Description.
 
@@ -257,6 +262,8 @@ Another description.
 
     def test_gap_in_sequence_fails(self) -> None:
         spec = """\
+**Source:** none — synthetic fixture.
+
 ### REQ-001: First
 Description.
 
@@ -271,6 +278,8 @@ Description.
 
     def test_missing_description_fails(self) -> None:
         spec = """\
+**Source:** none — synthetic fixture.
+
 ### REQ-001
 No description on the heading line.
 """
@@ -280,12 +289,30 @@ No description on the heading line.
         assert any("missing_description" in d.finding_type for r in failed for d in r.details)
 
     def test_single_req_passes(self) -> None:
-        spec = "### REQ-001: The only requirement\nDetails here.\n"
+        spec = (
+            "**Source:** none — synthetic fixture.\n\n"
+            "### REQ-001: The only requirement\nDetails here.\n"
+        )
         result = validate_spec(spec)
         assert result.passed is True
 
+    def test_missing_traceability_source_fails(self) -> None:
+        spec = """\
+### REQ-001: Only requirement
+Description body.
+"""
+        result = validate_spec(spec)
+        assert result.passed is False
+        failed = [r for r in result.results if r.status == CheckStatus.FAILED]
+        assert any(
+            d.finding_type == "missing_traceability_source"
+            for r in failed for d in r.details
+        )
+
     def test_four_digit_ids_pass(self) -> None:
         spec = """\
+**Source:** none — synthetic fixture.
+
 ### REQ-0001: First
 Description.
 
@@ -294,3 +321,23 @@ Description.
 """
         result = validate_spec(spec)
         assert result.passed is True
+
+
+class TestExtractIntegrationPoints:
+    """Tests for INT field parsing used by Level 6 integration semantics."""
+
+    def test_strips_markdown_backticks_from_source_and_target(self) -> None:
+        spec = """\
+### REQ-001: Needed for INT Supports
+Body.
+
+### INT-001: Boundary
+Kind: call
+Source: `checkout.Service.checkout`
+Target: `payments.Gateway.charge`
+Supports: REQ-001
+"""
+        points = extract_integration_points(spec)
+        assert len(points) == 1
+        assert points[0].source == "checkout.Service.checkout"
+        assert points[0].target == "payments.Gateway.charge"

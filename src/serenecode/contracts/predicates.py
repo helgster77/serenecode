@@ -13,8 +13,10 @@ import re
 
 import icontract
 
-# Pattern for valid snake_case identifiers
+# Pattern for valid spec item identifiers
 _REQ_ID_PATTERN = re.compile(r"^REQ-\d{3,4}$")
+_INT_ID_PATTERN = re.compile(r"^INT-\d{3,4}$")
+_SPEC_ITEM_ID_PATTERN = re.compile(r"^(?:REQ|INT)-\d{3,4}$")
 
 _SNAKE_CASE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
@@ -29,7 +31,7 @@ _MIN_VERIFICATION_LEVEL = 1
 _MAX_VERIFICATION_LEVEL = 6
 
 # Valid exit codes per spec
-_VALID_EXIT_CODES = frozenset({0, 1, 2, 3, 4, 5, 6, 10})
+_VALID_EXIT_CODES = frozenset({0, 1, 2, 3, 4, 5, 6, 10, 11})
 
 
 @icontract.require(lambda value: isinstance(value, str), "value must be a string")
@@ -65,7 +67,7 @@ def is_valid_verification_level(level: int) -> bool:
 def is_valid_exit_code(code: int) -> bool:
     """Check that an integer is a valid Serenecode exit code.
 
-    Valid exit codes: 0 (passed), 1-5 (level failures), 10 (internal error).
+    Valid exit codes: 0 (passed), 1-6 (level failures), 10 (internal error), 11 (advisory strict mode).
 
     Args:
         code: The exit code to validate.
@@ -196,3 +198,31 @@ def is_valid_req_id(value: str) -> bool:
         True if value matches the REQ-xxx pattern.
     """
     return bool(_REQ_ID_PATTERN.match(value))
+
+
+@icontract.require(lambda value: isinstance(value, str), "value must be a string")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
+def is_valid_int_id(value: str) -> bool:
+    """Check that a string is a valid integration ID (INT-001 through INT-9999).
+
+    Args:
+        value: The string to check.
+
+    Returns:
+        True if value matches the INT-xxx pattern.
+    """
+    return bool(_INT_ID_PATTERN.match(value))
+
+
+@icontract.require(lambda value: isinstance(value, str), "value must be a string")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
+def is_valid_spec_item_id(value: str) -> bool:
+    """Check that a string is a valid REQ or INT identifier.
+
+    Args:
+        value: The string to check.
+
+    Returns:
+        True if value matches the REQ-xxx or INT-xxx pattern.
+    """
+    return bool(_SPEC_ITEM_ID_PATTERN.match(value))
