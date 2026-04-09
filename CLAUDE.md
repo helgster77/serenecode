@@ -1,6 +1,6 @@
 ## Serenecode
 
-All code in this project MUST follow the standards defined in SERENECODE.md. Read SERENECODE.md before writing or modifying any code. Every public function must have icontract preconditions and postconditions. Every class with state must have invariants. Follow the architectural patterns specified in SERENECODE.md.
+All code in this project MUST follow the same standards SereneCode ships to users: the embedded templates in `src/serenecode/templates/content.py` (default / strict / minimal) define the conventions the structural checker enforces. Read the relevant template before writing or modifying any code. Every public function must have icontract preconditions and postconditions. Every class with state must have invariants. Follow the architectural patterns specified there.
 
 Pre-existing `*_SPEC.md` or PRD files are narrative inputs; only project-root `SPEC.md` with REQ/INT identifiers satisfies SereneCode traceability (`serenecode check --spec`).
 

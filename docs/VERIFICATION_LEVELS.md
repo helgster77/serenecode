@@ -19,11 +19,11 @@ SereneCode checks stack from fast structural rules (Level 1) through types, cove
 
 ## Spec ergonomics
 
-- **Narrative vs traceability:** PRDs, `README` sections, and `*_SPEC.md` files are inputs. REQ/INT traceability and `serenecode check --spec` apply only to project-root **SPEC.md**, which must include a `**Source:** …` line (see SERENECODE.md). Run `serenecode doctor` to see whether SPEC.md and narrative-looking files were detected at the project root.
+- **Narrative vs traceability:** PRDs, `README` sections, and `*_SPEC.md` files are inputs. REQ/INT traceability and `serenecode check --spec` apply only to project-root **SPEC.md**, which must include a `**Source:** …` line (see the Spec Traceability section in your project's `SERENECODE.md` from `serenecode init`, or the embedded templates in `src/serenecode/templates/content.py`). Run `serenecode doctor` to see whether SPEC.md and narrative-looking files were detected at the project root.
 - Use **one primary target per comma segment**; avoid stuffing unrelated names into a single `Target` line unless you intend AND semantics.
 - Align **dotted names** with how types appear in code (`from pkg import X as Y` is easier to reason about when `Target` uses the same simple name the implementation calls).
 
 ## Related reading
 
 - [SECURITY.md](SECURITY.md) — trust model for `--allow-code-execution` (required for Levels 3–6 as implemented today).
-- Project `SERENECODE.md` — conventions the structural checker enforces.
+- Your project's `SERENECODE.md` (from `serenecode init`) — conventions the structural checker enforces; source templates live in `src/serenecode/templates/content.py`.
