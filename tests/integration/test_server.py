@@ -19,7 +19,10 @@ def _reset_mcp_state() -> None:
 
 
 class TestBuildServer:
-    """Tests for FastMCP server construction."""
+    """Tests for FastMCP server construction.
+
+    Verifies: REQ-035
+    """
 
     def test_build_server_returns_fastmcp_instance(self) -> None:
         server = build_server()

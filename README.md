@@ -15,7 +15,7 @@ SereneCode turns the question from "did the model ship code?" to "does it match 
 
 **MCP:** register the server once (Claude Code, Cursor, Cline, Continue, or any MCP client) and the agent can pull structured JSON—findings, suggestions, counterexamples—while the cursor is still on the line, instead of discovering issues only after merge.
 
-> **This framework was bootstrapped with AI under its own rules.** Convention templates in `src/serenecode/templates/content.py` were defined before the first line of code, and the codebase has been developed under those conventions from the start — including the MCP server, which the same AI agents now use to verify their own work mid-edit. The current tree passes its own `serenecode check src --level 6 --allow-code-execution` end-to-end via the bare CLI (counts vary with the tree; expect hundreds of functions with a mix of passed, exempt, and advisory dead-code notes; wall time on the order of minutes for a full L1–L6 run), an internal strict-config Level 6 self-check in the test suite (`pytest tests/integration/test_example_projects.py::test_serenecode_repo_passes_strict_level_6`, which exercises L4–L6 against `strict_config` over the full source tree), `mypy src examples/dosage-serenecode/src`, the shipped dosage example's own `serenecode check src --level 6 --allow-code-execution`, and the full `pytest` suite (on the order of 1,400+ passing tests; a small number are skipped by design). The verification output is transparent about scope: exempt modules (adapters, CLI, ports, MCP server, `__init__.py`) and functions excluded from deep verification (non-primitive parameter types) are reported as "exempt" rather than silently omitted; dead-code findings are **advisories** and appear in the summary unless you use `--fail-on-advisory` to fail CI when any remain.
+> **This framework was bootstrapped with AI under its own rules.** Convention templates in `src/serenecode/templates/content.py` were defined before the first line of code, and the codebase has been developed under those conventions from the start — including the MCP server, which the same AI agents now use to verify their own work mid-edit. The current tree passes its own `serenecode check src --level 6 --allow-code-execution` end-to-end via the bare CLI (counts vary with the tree; expect hundreds of functions with a mix of passed, exempt, and advisory notes; wall time on the order of minutes for a full L1–L6 run), an internal strict-config Level 6 self-check in the test suite (`pytest tests/integration/test_example_projects.py::test_serenecode_repo_passes_strict_level_6`, which exercises L4–L6 against `strict_config` over the full source tree), `mypy src examples/dosage-serenecode/src`, the shipped dosage example's own `serenecode check src --level 6 --allow-code-execution`, and the full `pytest` suite (on the order of 1,450+ passing tests; a small number are skipped by design). The verification output is transparent about scope: exempt modules (adapters, CLI, ports, MCP server, `__init__.py`) and functions excluded from deep verification (non-primitive parameter types) are reported as "exempt" rather than silently omitted; dead-code and module health findings are **advisories** and appear in the summary unless you use `--fail-on-advisory` to fail CI when any remain.
 
 ---
 
@@ -48,6 +48,8 @@ After enough hours pair-programming with coding agents, the same handful of mist
 - **Unsafe deserialization and shell calls.** `eval`, `exec`, `pickle.loads` on untrusted input, and `subprocess.run(..., shell=True)` are calls a security-aware human writes only with a comment explaining why. Agents reach for them when the simple solution looks fastest. L1 flags every one, requiring an `# allow-dangerous: <reason>` opt-out for the rare legitimate case.
 
 - **Tests that pass but verify nothing.** A `def test_foo(): foo()` with no `assert` runs successfully and counts as "covered" — but it only checks that the function doesn't raise. L1's no-assertions-in-tests check fires on any `test_*` function with no `assert`, `pytest.raises`, `pytest.fail`, or `self.assertX` call.
+
+- **Module bloat and god classes.** Agents accumulate code in a single module without splitting. A 2000-line file with 30 methods on one class compiles and tests pass, but it's unmaintainable. Module health checks flag files, functions, and classes that exceed configurable thresholds — advisory warnings when they're getting large, hard errors when they exceed the maximum. The agent gets concrete split suggestions derived from AST analysis: which classes could be standalone modules, which function groups share a prefix, and where banner comments suggest logical boundaries.
 
 - **Architectural drift.** Asked to "add a feature," the agent puts I/O in core, business logic in adapters, and circular imports between them. The system still works in tests because everything is loaded together — but the layering rule that made the code testable in the first place is gone. L6 compositional checks enforce dependency direction, interface compliance, and contract presence at module boundaries.
 
@@ -126,7 +128,7 @@ This creates SERENECODE.md (project conventions including spec traceability) and
 
 A lightweight AST-based checker that validates code follows SERENECODE.md conventions in seconds. Missing a postcondition? No class invariant? No test file for a module? Caught before you waste time on heavy verification.
 
-L1 also catches AI-failure-mode patterns that compile and look correct but represent real bugs: stub residue (`pass`/`...`/`raise NotImplementedError` left as a function body), mutable default arguments, bare `assert` in non-test source, `print()` in core, dangerous calls (`eval`, `exec`, `pickle.loads`, `os.system`, `subprocess` with `shell=True`), `TODO`/`FIXME`/`XXX`/`HACK` markers in tracked files, tests with no assertions, silent exception handlers, tautological postconditions, and likely dead code. Dead-code findings are advisory review items: the agent should ask the user whether to remove or allowlist the code before changing it. Each rule has a per-rule opt-out comment for legitimate exceptions; see SERENECODE.md "Code Quality Standards" for the full list.
+L1 also catches AI-failure-mode patterns that compile and look correct but represent real bugs: stub residue (`pass`/`...`/`raise NotImplementedError` left as a function body), mutable default arguments, bare `assert` in non-test source, `print()` in core, dangerous calls (`eval`, `exec`, `pickle.loads`, `os.system`, `subprocess` with `shell=True`), `TODO`/`FIXME`/`XXX`/`HACK` markers in tracked files, tests with no assertions, silent exception handlers, tautological postconditions, and likely dead code. L1 additionally runs **module health checks**: files exceeding a configurable line threshold, functions that are too long, functions with too many parameters, and classes with too many methods generate warnings (advisory) or errors depending on severity. These target the common AI agent drift pattern of accumulating code in a single module without splitting. Dead-code and module health findings are advisory review items; each rule has a per-rule opt-out comment for legitimate exceptions. See SERENECODE.md "Code Quality Standards" and "Module Health" for the full list. Skip all module health checks with `--skip-module-health`.
 
 ```bash
 serenecode check src/ --structural          # structural conventions + dead-code review
@@ -192,8 +194,9 @@ The same `serenecode mcp` stdio server works in Claude Code, Cursor, Cline, Cont
 | `serenecode_integration_status` | Implementation/verification status of one INT |
 | `serenecode_orphans` | REQs with no implementation or no test |
 | `serenecode_dead_code` | Likely dead-code findings that require user review |
+| `serenecode_module_health` | Module health metrics (file size, function lengths, parameter counts, class sizes) for a single file — no verification needed |
 
-Tool results mirror the CLI pipeline: structured payloads include **`passed`**, levels, **`verdict`**, and a **summary** with counts (including **`advisory_count`** for dead-code-style exempt rows). Paths and `project_root` are resolved on the host — they are not sandboxed to one workspace; see [docs/SECURITY.md](docs/SECURITY.md).
+Tool results mirror the CLI pipeline: structured payloads include **`passed`**, levels, **`verdict`**, and a **summary** with counts (including **`advisory_count`** for advisory findings like dead code and module health warnings). Paths and `project_root` are resolved on the host — they are not sandboxed to one workspace; see [docs/SECURITY.md](docs/SECURITY.md).
 
 **Read-only resources** the agent can fetch without "calling" anything: `serenecode://config` (active SerenecodeConfig as JSON), `serenecode://findings/last-run` (most recent CheckResponse from this server session), `serenecode://exempt-modules` (the exempt path patterns for the active config), `serenecode://reqs` (parsed REQ-xxx list from the project's SPEC.md), and `serenecode://integrations` (parsed INT-xxx metadata from the project's SPEC.md).
 
@@ -276,11 +279,11 @@ SereneCode isn't just a tool that *tells* you to write verified code. It *is* ve
 
 Those convention templates were the first artifacts — before any Python was written. The framework has been developed under those conventions with AI as a first-class contributor, and the repository continuously checks itself with:
 
-- `pytest` across the full suite (on the order of 1,400+ passing tests; a small number skipped by design)
+- `pytest` across the full suite (on the order of 1,450+ passing tests; a small number skipped by design)
 - `mypy --strict` across `src/` and `examples/dosage-serenecode/src/`
 - SereneCode's own structural, type, property, symbolic, and compositional passes
 
-On the current tree, `serenecode check src --level 6 --allow-code-execution` runs the full L1–L6 pipeline against the framework's own source; exact counts of passed / exempt / advisory rows change as the tree grows (wall time often several minutes for a deep run). A separate integration test, `test_serenecode_repo_passes_strict_level_6`, runs the same `src/` tree through `run_pipeline` with `strict_config()` and `start_level=4`, which strips path-based exemptions and forces adapters, CLI, MCP, and similar code through L4–L6. The exempt items in a **default-config** run still include adapter modules, port `Protocol`s, CLI/MCP composition roots, and functions whose parameter types are poor fits for Hypothesis/CrossHair. Exempt and advisory rows stay visible in the output — they are not silently omitted.
+On the current tree, `serenecode check src --level 6 --allow-code-execution` runs the full L1–L6 pipeline against the framework's own source; exact counts of passed / exempt / advisory rows change as the tree grows (wall time often several minutes for a deep run). A separate integration test, `test_serenecode_repo_passes_strict_level_6`, runs the same `src/` tree through `run_pipeline` with `strict_config()` and `start_level=4`, which strips path-based exemptions and forces adapters, CLI, MCP, and similar code through L4–L6. The exempt items in a **default-config** run still include adapter modules, port `Protocol`s, CLI/MCP composition roots, and functions whose parameter types are poor fits for Hypothesis/CrossHair. Advisory items include dead-code findings and module health warnings (file length, function length, parameter count, class method count). Exempt and advisory rows stay visible in the output — they are not silently omitted.
 
 At Level 5, CrossHair and Z3 search for counterexamples across the codebase's symbolic-friendly contracted top-level functions. Functions with non-primitive parameters (custom dataclasses, Protocol implementations, Callable types) are reported as exempt because the solver cannot generate inputs for them. Level 6 adds structural compositional analysis: dependency direction, circular dependency detection, interface compliance, contract presence at module boundaries, aliased cross-module call resolution, and architectural invariants. Interface compliance follows explicit `Protocol` inheritance and checks substitutability, including extra required parameters and incompatible return annotations. Together, they provide both deep per-function verification and system-level structural guarantees — but the structural checks at L6 verify contract *presence*, not logical *sufficiency* across call chains.
 
@@ -329,7 +332,8 @@ serenecode check [<path>] [--level 1-6] [--allow-code-execution]        # run ve
                           [--project-root DIR]                          #   repo root for imports + config
                           [--format human|json]                         #   output format
                           [--structural] [--verify]                     #   L1 only / L3-6 only
-                          [--fail-on-advisory]                         #   exit 11 if dead-code advisories remain
+                          [--skip-module-health]                        #   skip file/function/param/class size checks
+                          [--fail-on-advisory]                         #   exit 11 if advisories remain
                           [--per-condition-timeout N]                   #   L5 CrossHair budgets
                           [--per-path-timeout N] [--module-timeout N]   #   (defaults: 30/10/300s)
                           [--coverage-timeout N]                        #   L3 pytest/coverage subprocess (default 600s)
@@ -343,7 +347,7 @@ serenecode mcp [--allow-code-execution]                                 # boot t
 
 **Environment (optional):** `SERENECODE_MAX_WORKERS` overrides `--workers`; `SERENECODE_COVERAGE_TIMEOUT` overrides `--coverage-timeout`. **`SERENECODE_DEBUG=1`** logs subprocess environment **key names** (not values) when tools spawn mypy, pytest, CrossHair, etc. Details: [docs/SECURITY.md](docs/SECURITY.md).
 
-**Exit codes:** 0 = passed (and no `--fail-on-advisory` violation), 1–6 = first failing verification level (structural … compositional), 10 = internal error or deep verification refused without `--allow-code-execution`, **11 = dead-code advisories remain with `--fail-on-advisory`** (checks otherwise passed).
+**Exit codes:** 0 = passed (and no `--fail-on-advisory` violation), 1–6 = first failing verification level (structural … compositional), 10 = internal error or deep verification refused without `--allow-code-execution`, **11 = advisories remain with `--fail-on-advisory`** (dead code, module health warnings; checks otherwise passed).
 
 ---
 
@@ -355,7 +359,7 @@ SereneCode is honest about what it can and can't do:
 
 **Contracts are only as good as you write them.** A function with weak postconditions will pass verification even if the implementation is subtly wrong. SereneCode checks that contracts exist and hold, but can't check that they fully capture your intent. Tautological contracts like `lambda self: True` are now flagged by the conventions and should not be used — they provide no verification value.
 
-**Exempt items are visible, not hidden.** Modules exempt from structural checking (adapters, CLI, ports, MCP server, `__init__.py`) and functions excluded from deep verification (non-primitive parameter types, adapter code) are reported as "exempt" in the output rather than being silently omitted. This makes the verification scope transparent: the tool reports passed, failed, skipped, and exempt counts separately so you can see exactly what was and wasn't deeply verified. Previous versions silently omitted these, inflating the apparent scope.
+**Exempt items are visible, not hidden.** Modules exempt from structural checking (adapters, CLI, ports, MCP server, `__init__.py`) and functions excluded from deep verification (non-primitive parameter types, adapter code) are reported as "exempt" in the output rather than being silently omitted. Advisory items (dead code, module health warnings) are also visible and counted separately. This makes the verification scope transparent: the tool reports passed, failed, skipped, exempt, and advisory counts separately so you can see exactly what was and wasn't deeply verified.
 
 **Runtime checks can be disabled.** icontract decorators are checked on every call by default, but can be disabled via environment variables for performance in production. This is a feature, not a bug — but it means runtime guarantees depend on configuration.
 
@@ -383,6 +387,7 @@ CLI / Library API / MCP     ← composition roots (interactive init, spec valida
     │       ├──▸ Structural Checker    (ast)
     │       ├──▸ Spec Traceability     (REQ-xxx / INT-xxx → Implements/Verifies)
     │       ├──▸ Dead-Code Review      (likely unused code → ask before removal)
+    │       ├──▸ Module Health         (file/function/class size → advisory or error)
     │       ├──▸ Test Existence        (test_<module>.py discovery)
     │       ├──▸ Type Checker          (mypy)
     │       ├──▸ Coverage Analyzer     (coverage.py)
@@ -396,6 +401,16 @@ CLI / Library API / MCP     ← composition roots (interactive init, spec valida
 ```
 
 Core logic is pure. All I/O goes through Protocol-defined ports. The verification engine itself is verifiable.
+
+## Comparison: AWS Kiro and Spec Kit / Speckit
+
+SereneCode overlaps with these tools on **spec-first, AI-assisted development**—all three push against unstructured “vibe coding.” The difference is **what each product optimizes for**.
+
+**AWS Kiro** is an agentic AI IDE from AWS (Bedrock-powered), with spec-driven flows, autonomous agents, “powers,” and multi-repo work inside that environment. SereneCode is **not an IDE**: it is a **Python verification toolkit** (CLI + MCP) that plugs into editors you already use. Kiro optimizes **how you build in their stack**; SereneCode optimizes **repeatable assurance on Python code**—traceability from root `SPEC.md` IDs to implementation and tests, `icontract` contracts, mypy, coverage, Hypothesis, bounded CrossHair search, and compositional checks. The two are **complementary** if you use Kiro to author code but still want repo-local, machine-checkable verification on a Python tree.
+
+**Spec Kit** (GitHub’s methodology) and ecosystem tools such as **Speckit** focus on **structured specification and phased delivery**—for example constitution, specify, plan, tasks, and implementation—with agents and templates driving the workflow. “Executable” there often means **process and artifact structure** that steers implementation. SereneCode adds a different meaning of executable: **contracts and checkers that run against your Python**, plus optional solvers and property tests, with explicit **REQ-xxx / INT-xxx** traceability to `Implements:` / `Verifies:` in code and tests. Spec Kit is typically **stack-agnostic**; SereneCode is **Python-specific** by design.
+
+If you already use Spec Kit–style phases, SereneCode fits **after** the spec is stable enough to land as root `SPEC.md`—as the **verification layer** that answers whether the code and tests actually match what you declared.
 
 ## Security and trust
 

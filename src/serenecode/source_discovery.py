@@ -213,6 +213,7 @@ def discover_narrative_spec_paths(project_root: str) -> tuple[str, ...]:
         return ()
 
     found: list[str] = []
+    # silent-except: gracefully return empty when directory listing fails due to permissions
     try:
         # Loop invariant: found is sorted for entries processed so far from iterdir
         for p in sorted(root.iterdir()):

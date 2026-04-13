@@ -27,6 +27,7 @@ __all__ = [
     "NamingConfig",
     "ExemptionConfig",
     "CodeQualityConfig",
+    "ModuleHealthConfig",
     "SerenecodeConfig",
     "default_config",
     "strict_config",
@@ -153,6 +154,61 @@ class CodeQualityConfig:
 
 
 @icontract.invariant(
+    lambda self: self.file_length_warn > 0 and self.file_length_error > 0,
+    "File length thresholds must be positive",
+)
+@icontract.invariant(
+    lambda self: self.file_length_warn < self.file_length_error,
+    "File length warn threshold must be less than error threshold",
+)
+@icontract.invariant(
+    lambda self: self.function_length_warn > 0 and self.function_length_error > 0,
+    "Function length thresholds must be positive",
+)
+@icontract.invariant(
+    lambda self: self.function_length_warn < self.function_length_error,
+    "Function length warn threshold must be less than error threshold",
+)
+@icontract.invariant(
+    lambda self: self.parameter_count_warn > 0 and self.parameter_count_error > 0,
+    "Parameter count thresholds must be positive",
+)
+@icontract.invariant(
+    lambda self: self.parameter_count_warn < self.parameter_count_error,
+    "Parameter count warn threshold must be less than error threshold",
+)
+@icontract.invariant(
+    lambda self: self.class_method_count_warn > 0 and self.class_method_count_error > 0,
+    "Class method count thresholds must be positive",
+)
+@icontract.invariant(
+    lambda self: self.class_method_count_warn < self.class_method_count_error,
+    "Class method count warn threshold must be less than error threshold",
+)
+@dataclass(frozen=True)
+class ModuleHealthConfig:
+    """Configuration for module health checks (Level 1).
+
+    Implements: REQ-001
+
+    Each pair of thresholds defines an advisory warning level and a hard
+    error level. Advisory warnings use the EXEMPT advisory pattern
+    (visible but non-blocking). Errors use FAILED status and block
+    verification.
+    """
+
+    enabled: bool
+    file_length_warn: int
+    file_length_error: int
+    function_length_warn: int
+    function_length_error: int
+    parameter_count_warn: int
+    parameter_count_error: int
+    class_method_count_warn: int
+    class_method_count_error: int
+
+
+@icontract.invariant(
     lambda self: 1 <= self.recommended_level <= 6,
     "Recommended level must be between 1 and 6",
 )
@@ -163,6 +219,8 @@ class CodeQualityConfig:
 @dataclass(frozen=True)
 class SerenecodeConfig:
     """Complete Serenecode configuration parsed from SERENECODE.md.
+
+    Implements: REQ-002
 
     This is the central configuration object that all checkers use
     to determine what rules to enforce.
@@ -176,6 +234,7 @@ class SerenecodeConfig:
     naming_conventions: NamingConfig
     exemptions: ExemptionConfig
     code_quality_rules: CodeQualityConfig
+    module_health: ModuleHealthConfig
     template_name: str
     recommended_level: int = 3
 
@@ -213,6 +272,31 @@ _DEFAULT_EXEMPT_PATHS = (
     "exceptions.py",
 )
 
+# Module health presets per template
+_DEFAULT_MODULE_HEALTH = ModuleHealthConfig(
+    enabled=True,
+    file_length_warn=500, file_length_error=1000,
+    function_length_warn=50, function_length_error=100,
+    parameter_count_warn=5, parameter_count_error=8,
+    class_method_count_warn=15, class_method_count_error=25,
+)
+
+_STRICT_MODULE_HEALTH = ModuleHealthConfig(
+    enabled=True,
+    file_length_warn=400, file_length_error=700,
+    function_length_warn=30, function_length_error=60,
+    parameter_count_warn=4, parameter_count_error=6,
+    class_method_count_warn=10, class_method_count_error=18,
+)
+
+_MINIMAL_MODULE_HEALTH = ModuleHealthConfig(
+    enabled=True,
+    file_length_warn=750, file_length_error=1500,
+    function_length_warn=75, function_length_error=150,
+    parameter_count_warn=7, parameter_count_error=10,
+    class_method_count_warn=20, class_method_count_error=35,
+)
+
 # Default forbidden exception types in core
 _DEFAULT_FORBIDDEN_EXCEPTIONS = (
     "Exception",
@@ -231,6 +315,8 @@ _DEFAULT_FORBIDDEN_EXCEPTIONS = (
 )
 def default_config() -> SerenecodeConfig:
     """Return the default Serenecode configuration.
+
+    Implements: REQ-003
 
     Matches the conventions defined in the standard SERENECODE.md template.
     """
@@ -278,6 +364,7 @@ def default_config() -> SerenecodeConfig:
             forbid_isinstance_tautology=True,
             forbid_unused_parameters=False,
         ),
+        module_health=_DEFAULT_MODULE_HEALTH,
         template_name="default",
         recommended_level=4,
     )
@@ -289,6 +376,8 @@ def default_config() -> SerenecodeConfig:
 )
 def strict_config() -> SerenecodeConfig:
     """Return the strict Serenecode configuration.
+
+    Implements: REQ-003
 
     All SHOULD become MUST, no exemptions.
     """
@@ -336,6 +425,7 @@ def strict_config() -> SerenecodeConfig:
             forbid_isinstance_tautology=True,
             forbid_unused_parameters=True,
         ),
+        module_health=_STRICT_MODULE_HEALTH,
         template_name="strict",
         recommended_level=6,
     )
@@ -347,6 +437,8 @@ def strict_config() -> SerenecodeConfig:
 )
 def minimal_config() -> SerenecodeConfig:
     """Return the minimal Serenecode configuration.
+
+    Implements: REQ-003
 
     Contracts on public functions only, relaxed architecture rules.
     """
@@ -393,6 +485,7 @@ def minimal_config() -> SerenecodeConfig:
             forbid_isinstance_tautology=False,
             forbid_unused_parameters=False,
         ),
+        module_health=_MINIMAL_MODULE_HEALTH,
         template_name="minimal",
         recommended_level=2,
     )
@@ -465,14 +558,40 @@ def _apply_content_overrides(
     exempt_paths: tuple[str, ...] | None,
 ) -> SerenecodeConfig:
     """Apply supported rule overrides derived from SERENECODE.md content."""
-    require_domain_exceptions = _matches_rule(
-        content,
-        r"Core domain functions raise domain-specific exceptions",
-        config.error_handling_rules.require_domain_exceptions,
+    contract_requirements = _override_contract_config(content, config)
+    type_requirements = _override_type_config(content, config)
+    error_handling_rules = _override_error_handling_config(content, config)
+    loop_recursion_rules = _override_loop_recursion_config(content, config)
+    architecture_rules = _override_architecture_config(
+        config, type_requirements, error_handling_rules,
     )
-    forbidden_exception_types = _extract_forbidden_exception_types(content)
+    exemptions = ExemptionConfig(
+        exempt_paths=(
+            config.exemptions.exempt_paths
+            if exempt_paths is None
+            else exempt_paths
+        ),
+    )
+    code_quality_rules = _override_code_quality_config(content, config)
 
-    contract_requirements = ContractConfig(
+    return SerenecodeConfig(
+        contract_requirements=contract_requirements,
+        type_requirements=type_requirements,
+        architecture_rules=architecture_rules,
+        error_handling_rules=error_handling_rules,
+        loop_recursion_rules=loop_recursion_rules,
+        naming_conventions=config.naming_conventions,
+        exemptions=exemptions,
+        code_quality_rules=code_quality_rules,
+        module_health=config.module_health,
+        template_name=config.template_name,
+        recommended_level=config.recommended_level,
+    )
+
+
+def _override_contract_config(content: str, config: SerenecodeConfig) -> ContractConfig:
+    """Derive ContractConfig overrides from SERENECODE.md content."""
+    return ContractConfig(
         require_on_public_functions=config.contract_requirements.require_on_public_functions,
         require_on_classes=_matches_rule(
             content,
@@ -491,7 +610,10 @@ def _apply_content_overrides(
         ),
     )
 
-    type_requirements = TypeConfig(
+
+def _override_type_config(content: str, config: SerenecodeConfig) -> TypeConfig:
+    """Derive TypeConfig overrides from SERENECODE.md content."""
+    return TypeConfig(
         require_annotations=config.type_requirements.require_annotations,
         forbid_any_in_core=_matches_rule(
             content,
@@ -505,14 +627,22 @@ def _apply_content_overrides(
         ),
     )
 
+
+def _override_error_handling_config(content: str, config: SerenecodeConfig) -> ErrorHandlingConfig:
+    """Derive ErrorHandlingConfig overrides from SERENECODE.md content."""
+    require_domain_exceptions = _matches_rule(
+        content,
+        r"Core domain functions raise domain-specific exceptions",
+        config.error_handling_rules.require_domain_exceptions,
+    )
+    forbidden_exception_types = _extract_forbidden_exception_types(content)
     forbid_silent_exception_handling = _matches_rule(
         content,
         r"(?:silent|silently)[^\n]*except|except[^\n]*(?:silent|silently)|"
         r"silent\s+exception\s+handling",
         config.error_handling_rules.forbid_silent_exception_handling,
     )
-
-    error_handling_rules = ErrorHandlingConfig(
+    return ErrorHandlingConfig(
         require_domain_exceptions=require_domain_exceptions,
         forbidden_exception_types=(
             forbidden_exception_types
@@ -524,7 +654,10 @@ def _apply_content_overrides(
         forbid_silent_exception_handling=forbid_silent_exception_handling,
     )
 
-    loop_recursion_rules = LoopRecursionConfig(
+
+def _override_loop_recursion_config(content: str, config: SerenecodeConfig) -> LoopRecursionConfig:
+    """Derive LoopRecursionConfig overrides from SERENECODE.md content."""
+    return LoopRecursionConfig(
         require_loop_invariant_comments=_matches_rule(
             content,
             r"[Ll]oops? MUST include (?:a comment describing the loop invariant|invariant comments)",
@@ -537,6 +670,13 @@ def _apply_content_overrides(
         ),
     )
 
+
+def _override_architecture_config(
+    config: SerenecodeConfig,
+    type_requirements: TypeConfig,
+    error_handling_rules: ErrorHandlingConfig,
+) -> ArchitectureConfig:
+    """Derive ArchitectureConfig, filling core patterns when needed."""
     needs_core_patterns = (
         (
             type_requirements.forbid_any_in_core
@@ -544,7 +684,7 @@ def _apply_content_overrides(
         )
         and len(config.architecture_rules.core_module_patterns) == 0
     )
-    architecture_rules = ArchitectureConfig(
+    return ArchitectureConfig(
         forbidden_imports_in_core=config.architecture_rules.forbidden_imports_in_core,
         core_module_patterns=(
             _DEFAULT_CORE_PATTERNS
@@ -553,18 +693,15 @@ def _apply_content_overrides(
         ),
     )
 
-    exemptions = ExemptionConfig(
-        exempt_paths=(
-            config.exemptions.exempt_paths
-            if exempt_paths is None
-            else exempt_paths
-        ),
-    )
 
-    # Each rule activates only on an imperative statement (MUST/forbid/required/
-    # MUST NOT) so the descriptive prose in the Code Quality Standards section
-    # doesn't accidentally turn rules on or off.
-    code_quality_rules = CodeQualityConfig(
+def _override_code_quality_config(content: str, config: SerenecodeConfig) -> CodeQualityConfig:
+    """Derive CodeQualityConfig overrides from SERENECODE.md content.
+
+    Each rule activates only on an imperative statement (MUST/forbid/required/
+    MUST NOT) so the descriptive prose in the Code Quality Standards section
+    doesn't accidentally turn rules on or off.
+    """
+    return CodeQualityConfig(
         forbid_stub_residue=_matches_rule(
             content,
             r"(?:MUST(?: NOT)?|forbid)[^\n]*stub (?:residue|bod(?:y|ies))",
@@ -610,19 +747,6 @@ def _apply_content_overrides(
             r"(?:MUST(?: NOT)?|forbid)[^\n]*unused (?:function )?parameters?",
             config.code_quality_rules.forbid_unused_parameters,
         ),
-    )
-
-    return SerenecodeConfig(
-        contract_requirements=contract_requirements,
-        type_requirements=type_requirements,
-        architecture_rules=architecture_rules,
-        error_handling_rules=error_handling_rules,
-        loop_recursion_rules=loop_recursion_rules,
-        naming_conventions=config.naming_conventions,
-        exemptions=exemptions,
-        code_quality_rules=code_quality_rules,
-        template_name=config.template_name,
-        recommended_level=config.recommended_level,
     )
 
 

@@ -158,6 +158,7 @@ def is_pascal_case(name: str) -> bool:
     return bool(_PASCAL_CASE_PATTERN.match(name))
 
 
+# allow-unused: public API
 @icontract.require(lambda name: isinstance(name, str), "name must be a string")
 @icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
 def is_upper_snake_case(name: str) -> bool:
@@ -186,6 +187,7 @@ def is_valid_template_name(name: str) -> bool:
     return name in ("default", "strict", "minimal")
 
 
+# allow-unused: public API
 @icontract.require(lambda value: isinstance(value, str), "value must be a string")
 @icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
 def is_valid_req_id(value: str) -> bool:
@@ -214,6 +216,7 @@ def is_valid_int_id(value: str) -> bool:
     return bool(_INT_ID_PATTERN.match(value))
 
 
+# allow-unused: public API
 @icontract.require(lambda value: isinstance(value, str), "value must be a string")
 @icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
 def is_valid_spec_item_id(value: str) -> bool:

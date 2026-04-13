@@ -164,6 +164,23 @@ a new check after each fix.
 
 ---
 
+## Module Health
+
+Module health checks run on every verification level and flag files, functions, \
+and classes that have grown beyond recommended thresholds. Warnings are advisory \
+(do not block verification). Errors block until fixed.
+
+| Metric              | Warning | Error | What to do                                         |
+|---------------------|---------|-------|----------------------------------------------------|
+| File length (lines) | 500     | 1000  | Split into focused, single-responsibility modules  |
+| Function length     | 50      | 100   | Extract helper functions for distinct steps         |
+| Parameter count     | 5       | 8     | Group parameters into a dataclass or config         |
+| Class methods       | 15      | 25    | Extract cohesive method groups into new classes     |
+
+Skip all module health checks with `--skip-module-health`.
+
+---
+
 ## Exemptions
 
 The following are exempt from full contract requirements:
@@ -370,6 +387,22 @@ findings in parallel when there are many.
 
 ---
 
+## Module Health
+
+Module health checks run on every verification level. Warnings are advisory. \
+Errors block verification. Strict mode uses tighter thresholds.
+
+| Metric              | Warning | Error | What to do                                         |
+|---------------------|---------|-------|----------------------------------------------------|
+| File length (lines) | 400     | 700   | Split into focused, single-responsibility modules  |
+| Function length     | 30      | 60    | Extract helper functions for distinct steps         |
+| Parameter count     | 4       | 6     | Group parameters into a dataclass or config         |
+| Class methods       | 10      | 18    | Extract cohesive method groups into new classes     |
+
+Skip all module health checks with `--skip-module-health`.
+
+---
+
 ## No Exemptions
 
 Strict mode has NO exempt modules. Every module, including CLI and adapters, \
@@ -428,6 +461,22 @@ Re-running wastes the user's time and produces the same output. Address \
 all findings in a single batch rather than starting a new check after \
 each fix. If the output is too long to read inline, use `--format json` \
 and parse it programmatically.
+
+---
+
+## Module Health
+
+Module health checks run on every verification level. Warnings are advisory. \
+Errors block verification. Minimal mode uses relaxed thresholds.
+
+| Metric              | Warning | Error | What to do                                         |
+|---------------------|---------|-------|----------------------------------------------------|
+| File length (lines) | 750     | 1500  | Split into focused, single-responsibility modules  |
+| Function length     | 75      | 150   | Extract helper functions for distinct steps         |
+| Parameter count     | 7       | 10    | Group parameters into a dataclass or config         |
+| Class methods       | 20      | 35    | Extract cohesive method groups into new classes     |
+
+Skip all module health checks with `--skip-module-health`.
 
 ---
 
@@ -625,6 +674,7 @@ _TEMPLATES = {
 }
 
 
+# allow-unused: public API
 @icontract.require(
     lambda template_name: is_valid_template_name(template_name),
     "template_name must be a valid template name",
@@ -635,6 +685,8 @@ _TEMPLATES = {
 )
 def get_template(template_name: str) -> str:
     """Return the template content for a named template.
+
+    Implements: REQ-036
 
     Args:
         template_name: One of 'default', 'strict', or 'minimal'.

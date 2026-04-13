@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 
 import icontract
 
-from serenecode.models import CheckResult, CheckStatus
+from serenecode.models import ADVISORY_FINDING_TYPES, CheckResult, CheckStatus
 
 
 # no-invariant: pure JSON wire-format dataclass; structural fields validated by mypy
@@ -59,16 +59,18 @@ class CheckResponse:
 def to_check_response(check_result: CheckResult) -> CheckResponse:
     """Project a CheckResult into the wire-shaped CheckResponse.
 
+    Implements: REQ-007
+
     Drops PASSED entries from `findings`. EXEMPT entries stay hidden by
-    default except for dead-code advisories, which remain visible so
-    agents can ask the user whether to remove or allowlist them.
+    default except for advisory findings (dead code, module health),
+    which remain visible so agents can act on them.
     """
     findings: list[FindingDTO] = []
     for r in check_result.results:
         include_result = r.status in (CheckStatus.FAILED, CheckStatus.SKIPPED)
         if r.status == CheckStatus.EXEMPT:
             include_result = any(
-                detail.finding_type == "dead_code"
+                detail.finding_type in ADVISORY_FINDING_TYPES
                 for detail in r.details
             )
         if not include_result:
@@ -76,7 +78,7 @@ def to_check_response(check_result: CheckResult) -> CheckResponse:
         for d in r.details:
             if (
                 r.status == CheckStatus.EXEMPT
-                and d.finding_type != "dead_code"
+                and d.finding_type not in ADVISORY_FINDING_TYPES
             ):
                 continue
             findings.append(FindingDTO(

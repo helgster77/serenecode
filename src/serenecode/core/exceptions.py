@@ -18,10 +18,12 @@ class ConfigurationError(SerenecodeError):
     """Raised when SERENECODE.md parsing or configuration fails."""
 
 
+# allow-unused: public API
 class StructuralViolationError(SerenecodeError):
     """Raised when code does not follow SERENECODE.md structural conventions."""
 
 
+# allow-unused: public API
 class VerificationError(SerenecodeError):
     """Raised when formal verification finds a counterexample."""
 

@@ -150,6 +150,7 @@ class LocalFileWriter:
         except OSError as exc:
             raise InitializationError(f"Cannot write file '{path}': {exc}") from exc
 
+    # allow-unused: implements FileWriter Protocol
     @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
     @icontract.ensure(lambda result: result is None, "result must be None")
     def ensure_directory(self, path: str) -> None:

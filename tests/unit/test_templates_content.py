@@ -67,6 +67,12 @@ class TestGetTemplateWithOptions:
         plain = get_template("default")
         assert result == plain
 
+    def test_all_templates_include_module_health_section(self) -> None:
+        """Verifies: REQ-036"""
+        for name in ("default", "strict", "minimal"):
+            result = get_template(name)
+            assert "## Module Health" in result
+
     def test_read_the_full_output_directive_present(self) -> None:
         # All three templates should include the new "read full output" directive
         for name in ("default", "strict", "minimal"):

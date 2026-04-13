@@ -115,6 +115,7 @@ class IntegrationPoint:
     supports: tuple[str, ...] = ()
 
 
+# allow-unused: public API
 @icontract.require(
     lambda spec_content: isinstance(spec_content, str),
     "spec_content must be a string",
@@ -276,51 +277,54 @@ def validate_spec(spec_content: str) -> CheckResult:
     func_results: list[FunctionResult] = []
 
     if not sections:
-        func_results.append(FunctionResult(
-            function="SPEC.md",
-            file="SPEC.md",
-            line=1,
-            level_requested=1,
-            level_achieved=0,
-            status=CheckStatus.FAILED,
-            details=(Detail(
-                level=VerificationLevel.STRUCTURAL,
-                tool="spec_validation",
-                finding_type="no_requirements",
-                message="No REQ-xxx or INT-xxx headings found in spec",
-                suggestion=(
-                    "Add headings like '### REQ-001: Requirement' or "
-                    "'### INT-001: Integration point'."
-                ),
-            ),),
+        func_results.append(_spec_failure(
+            1, "no_requirements",
+            "No REQ-xxx or INT-xxx headings found in spec",
+            "Add headings like '### REQ-001: Requirement' or '### INT-001: Integration point'.",
         ))
         return make_check_result(
             tuple(func_results), level_requested=1, duration_seconds=0.0,
         )
 
     if not _has_traceability_source_header(spec_content):
-        func_results.append(FunctionResult(
-            function="SPEC.md",
-            file="SPEC.md",
-            line=1,
-            level_requested=1,
-            level_achieved=0,
-            status=CheckStatus.FAILED,
-            details=(Detail(
-                level=VerificationLevel.STRUCTURAL,
-                tool="spec_validation",
-                finding_type="missing_traceability_source",
-                message="No **Source:** line found (traceability anchor for narrative specs)",
-                suggestion=(
-                    "Add a line near the top, e.g. "
-                    "'**Source:** path/to/other_spec.md' when REQ/INT content is derived from "
-                    "a PRD or *_SPEC.md, or "
-                    "'**Source:** none — this SPEC.md is authoritative.' "
-                    "`serenecode check --spec` and REQ/INT traceability apply only to SPEC.md."
-                ),
-            ),),
+        func_results.append(_spec_failure(
+            1, "missing_traceability_source",
+            "No **Source:** line found (traceability anchor for narrative specs)",
+            "Add a line near the top, e.g. '**Source:** path/to/other_spec.md' when REQ/INT "
+            "content is derived from a PRD or *_SPEC.md, or '**Source:** none — this SPEC.md "
+            "is authoritative.' `serenecode check --spec` and REQ/INT traceability apply only to SPEC.md.",
         ))
 
+    declared_reqs, declared_ints = _split_sections(sections)
+    func_results.extend(_validate_spec_structure(sections, declared_reqs, declared_ints))
+
+    if not func_results:
+        func_results.append(_spec_valid_result(declared_reqs, declared_ints))
+
+    return make_check_result(
+        tuple(func_results), level_requested=1, duration_seconds=0.0,
+    )
+
+
+def _spec_failure(
+    line: int, finding_type: str, message: str, suggestion: str,
+) -> FunctionResult:
+    """Create a standardized spec validation failure."""
+    return FunctionResult(
+        function="SPEC.md", file="SPEC.md", line=line,
+        level_requested=1, level_achieved=0,
+        status=CheckStatus.FAILED,
+        details=(Detail(
+            level=VerificationLevel.STRUCTURAL, tool="spec_validation",
+            finding_type=finding_type, message=message, suggestion=suggestion,
+        ),),
+    )
+
+
+def _split_sections(
+    sections: tuple[tuple[str, str | None, int, tuple[tuple[str, int], ...]], ...],
+) -> tuple[list[tuple[str, str | None, int]], list[tuple[str, str | None, int, tuple[tuple[str, int], ...]]]]:
+    """Split parsed sections into REQ and INT groups."""
     declared_reqs = [
         (identifier, description, line_no)
         for identifier, description, line_no, _body in sections
@@ -331,72 +335,57 @@ def validate_spec(spec_content: str) -> CheckResult:
         for identifier, description, line_no, body in sections
         if identifier.startswith("INT-")
     ]
+    return declared_reqs, declared_ints
 
-    func_results.extend(_duplicate_and_gap_findings(
-        declared_reqs,
-        prefix="REQ",
-        duplicate_finding_type="duplicate_requirement",
+
+def _validate_spec_structure(
+    sections: tuple[tuple[str, str | None, int, tuple[tuple[str, int], ...]], ...],
+    declared_reqs: list[tuple[str, str | None, int]],
+    declared_ints: list[tuple[str, str | None, int, tuple[tuple[str, int], ...]]],
+) -> list[FunctionResult]:
+    """Run duplicate/gap, description, and integration checks."""
+    results: list[FunctionResult] = []
+    results.extend(_duplicate_and_gap_findings(
+        declared_reqs, prefix="REQ", duplicate_finding_type="duplicate_requirement",
     ))
-    func_results.extend(_duplicate_and_gap_findings(
-        [(identifier, description, line_no) for identifier, description, line_no, _body in declared_ints],
-        prefix="INT",
-        duplicate_finding_type="duplicate_integration",
+    results.extend(_duplicate_and_gap_findings(
+        [(i, d, l) for i, d, l, _b in declared_ints],
+        prefix="INT", duplicate_finding_type="duplicate_integration",
     ))
 
-    # Loop invariant: func_results contains missing-description findings for sections[0..i]
+    # Loop invariant: results contains missing-description findings for sections[0..i]
     for identifier, description, line_no, _body in sections:
         if description is None or not description.strip():
-            func_results.append(FunctionResult(
-                function=identifier,
-                file="SPEC.md",
-                line=line_no,
-                level_requested=1,
-                level_achieved=0,
-                status=CheckStatus.FAILED,
-                details=(Detail(
-                    level=VerificationLevel.STRUCTURAL,
-                    tool="spec_validation",
-                    finding_type="missing_description",
-                    message=f"{identifier} has no description",
-                    suggestion=(
-                        f"Add a description: '### {identifier}: What this item "
-                        f"means and why it matters'."
-                    ),
-                ),),
+            results.append(_spec_failure(
+                line_no, "missing_description",
+                f"{identifier} has no description",
+                f"Add a description: '### {identifier}: What this item means and why it matters'.",
             ))
 
     declared_req_ids = frozenset(identifier for identifier, _desc, _line in declared_reqs)
-    func_results.extend(_integration_validation_findings(
-        declared_ints,
-        declared_req_ids,
-    ))
+    results.extend(_integration_validation_findings(declared_ints, declared_req_ids))
+    return results
 
-    if not func_results:
-        req_count = len(declared_reqs)
-        int_count = len(declared_ints)
-        summary_parts: list[str] = []
-        if req_count > 0:
-            summary_parts.append(f"{req_count} requirements")
-        if int_count > 0:
-            summary_parts.append(f"{int_count} integration points")
-        summary_text = ", ".join(summary_parts)
-        func_results.append(FunctionResult(
-            function="SPEC.md",
-            file="SPEC.md",
-            line=1,
-            level_requested=1,
-            level_achieved=1,
-            status=CheckStatus.PASSED,
-            details=(Detail(
-                level=VerificationLevel.STRUCTURAL,
-                tool="spec_validation",
-                finding_type="valid_spec",
-                message=f"Spec is valid: {summary_text}",
-            ),),
-        ))
 
-    return make_check_result(
-        tuple(func_results), level_requested=1, duration_seconds=0.0,
+def _spec_valid_result(
+    declared_reqs: list[tuple[str, str | None, int]],
+    declared_ints: list[tuple[str, str | None, int, tuple[tuple[str, int], ...]]],
+) -> FunctionResult:
+    """Create a passing result when spec is valid."""
+    summary_parts: list[str] = []
+    if declared_reqs:
+        summary_parts.append(f"{len(declared_reqs)} requirements")
+    if declared_ints:
+        summary_parts.append(f"{len(declared_ints)} integration points")
+    return FunctionResult(
+        function="SPEC.md", file="SPEC.md", line=1,
+        level_requested=1, level_achieved=1,
+        status=CheckStatus.PASSED,
+        details=(Detail(
+            level=VerificationLevel.STRUCTURAL, tool="spec_validation",
+            finding_type="valid_spec",
+            message=f"Spec is valid: {', '.join(summary_parts)}",
+        ),),
     )
 
 
@@ -478,129 +467,136 @@ def check_spec_traceability(
     if not declared_items:
         return make_check_result((), level_requested=1, duration_seconds=0.0)
 
-    implemented = _collect_references_from_sources(source_files, extract_implementations)
-    verified = _collect_references_from_test_sources(test_sources, extract_verifications)
-
-    # Also check source files for Verifies tags (some projects keep tests inline).
-    source_verified = _collect_references_from_sources(source_files, extract_verifications)
-    # Loop invariant: verified contains merged verification refs from tests and source_verified[0..i]
-    for identifier, refs in source_verified.items():
-        verified.setdefault(identifier, []).extend(refs)
-
+    implemented, verified = _collect_all_references(
+        source_files, test_sources,
+    )
     all_referenced = set(implemented.keys()) | set(verified.keys())
     func_results: list[FunctionResult] = []
 
-    # Loop invariant: func_results contains coverage findings for declared_items[0..i]
+    func_results.extend(_traceability_coverage_findings(
+        declared_items, implemented, verified,
+    ))
+    func_results.extend(_orphan_reference_findings(
+        all_referenced - declared_items, implemented, verified,
+    ))
+
+    return make_check_result(
+        tuple(func_results), level_requested=1, duration_seconds=0.0,
+    )
+
+
+def _collect_all_references(
+    source_files: tuple[SourceFile, ...],
+    test_sources: tuple[tuple[str, str], ...],
+) -> tuple[dict[str, list[tuple[str, str, int]]], dict[str, list[tuple[str, str, int]]]]:
+    """Collect all Implements and Verifies references."""
+    implemented = _collect_references_from_sources(source_files, extract_implementations)
+    verified = _collect_references_from_test_sources(test_sources, extract_verifications)
+    source_verified = _collect_references_from_sources(source_files, extract_verifications)
+    # Loop invariant: verified contains merged verification refs
+    for identifier, refs in source_verified.items():
+        verified.setdefault(identifier, []).extend(refs)
+    return implemented, verified
+
+
+def _traceability_item_finding(
+    identifier: str,
+    impl_refs: list[tuple[str, str, int]],
+    test_refs: list[tuple[str, str, int]],
+) -> FunctionResult:
+    """Create a traceability finding for a single declared item."""
+    has_impl = len(impl_refs) > 0
+    has_test = len(test_refs) > 0
+    item_label = "integration point" if identifier.startswith("INT-") else "requirement"
+
+    if has_impl and has_test:
+        return FunctionResult(
+            function=identifier, file=impl_refs[0][0], line=impl_refs[0][2],
+            level_requested=1, level_achieved=1, status=CheckStatus.PASSED,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL, tool="spec_traceability",
+                finding_type="covered",
+                message=f"{identifier} {item_label} is implemented and tested",
+            ),),
+        )
+    if has_impl and not has_test:
+        return FunctionResult(
+            function=identifier, file=impl_refs[0][0], line=impl_refs[0][2],
+            level_requested=1, level_achieved=0, status=CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL, tool="spec_traceability",
+                finding_type="missing_verification",
+                message=f"{identifier} {item_label} is implemented but has no test",
+                suggestion=f"Add 'Verifies: {identifier}' to a test function or class docstring.",
+            ),),
+        )
+    if not has_impl and has_test:
+        return FunctionResult(
+            function=identifier, file=test_refs[0][0], line=test_refs[0][2],
+            level_requested=1, level_achieved=0, status=CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL, tool="spec_traceability",
+                finding_type="missing_implementation",
+                message=f"{identifier} {item_label} has a test but no implementation reference",
+                suggestion=f"Add 'Implements: {identifier}' to the implementing symbol's docstring.",
+            ),),
+        )
+    return FunctionResult(
+        function=identifier, file="SPEC.md", line=1,
+        level_requested=1, level_achieved=0, status=CheckStatus.FAILED,
+        details=(Detail(
+            level=VerificationLevel.STRUCTURAL, tool="spec_traceability",
+            finding_type="not_covered",
+            message=f"{identifier} {item_label} has no implementation and no test",
+            suggestion=(
+                f"Implement {identifier} and add 'Implements: {identifier}' "
+                f"to the docstring, then add a test with 'Verifies: {identifier}'."
+            ),
+        ),),
+    )
+
+
+def _traceability_coverage_findings(
+    declared_items: frozenset[str],
+    implemented: dict[str, list[tuple[str, str, int]]],
+    verified: dict[str, list[tuple[str, str, int]]],
+) -> list[FunctionResult]:
+    """Build coverage findings for all declared items."""
+    results: list[FunctionResult] = []
+    # Loop invariant: results contains findings for declared_items[0..i]
     for identifier in sorted(declared_items):
-        impl_refs = implemented.get(identifier, [])
-        test_refs = verified.get(identifier, [])
-        has_impl = len(impl_refs) > 0
-        has_test = len(test_refs) > 0
-        item_label = "integration point" if identifier.startswith("INT-") else "requirement"
+        results.append(_traceability_item_finding(
+            identifier,
+            implemented.get(identifier, []),
+            verified.get(identifier, []),
+        ))
+    return results
 
-        if has_impl and has_test:
-            impl_info = impl_refs[0]
-            func_results.append(FunctionResult(
-                function=identifier,
-                file=impl_info[0],
-                line=impl_info[2],
-                level_requested=1,
-                level_achieved=1,
-                status=CheckStatus.PASSED,
-                details=(Detail(
-                    level=VerificationLevel.STRUCTURAL,
-                    tool="spec_traceability",
-                    finding_type="covered",
-                    message=f"{identifier} {item_label} is implemented and tested",
-                ),),
-            ))
-        elif has_impl and not has_test:
-            impl_info = impl_refs[0]
-            func_results.append(FunctionResult(
-                function=identifier,
-                file=impl_info[0],
-                line=impl_info[2],
-                level_requested=1,
-                level_achieved=0,
-                status=CheckStatus.FAILED,
-                details=(Detail(
-                    level=VerificationLevel.STRUCTURAL,
-                    tool="spec_traceability",
-                    finding_type="missing_verification",
-                    message=f"{identifier} {item_label} is implemented but has no test",
-                    suggestion=(
-                        f"Add 'Verifies: {identifier}' to a test function or class docstring."
-                    ),
-                ),),
-            ))
-        elif not has_impl and has_test:
-            test_info = test_refs[0]
-            func_results.append(FunctionResult(
-                function=identifier,
-                file=test_info[0],
-                line=test_info[2],
-                level_requested=1,
-                level_achieved=0,
-                status=CheckStatus.FAILED,
-                details=(Detail(
-                    level=VerificationLevel.STRUCTURAL,
-                    tool="spec_traceability",
-                    finding_type="missing_implementation",
-                    message=f"{identifier} {item_label} has a test but no implementation reference",
-                    suggestion=(
-                        f"Add 'Implements: {identifier}' to the implementing symbol's docstring."
-                    ),
-                ),),
-            ))
-        else:
-            func_results.append(FunctionResult(
-                function=identifier,
-                file="SPEC.md",
-                line=1,
-                level_requested=1,
-                level_achieved=0,
-                status=CheckStatus.FAILED,
-                details=(Detail(
-                    level=VerificationLevel.STRUCTURAL,
-                    tool="spec_traceability",
-                    finding_type="not_covered",
-                    message=f"{identifier} {item_label} has no implementation and no test",
-                    suggestion=(
-                        f"Implement {identifier} and add 'Implements: {identifier}' "
-                        f"to the docstring, then add a test with "
-                        f"'Verifies: {identifier}'."
-                    ),
-                ),),
-            ))
 
-    orphans = all_referenced - declared_items
-    # Loop invariant: func_results contains orphan findings for orphans[0..i]
+def _orphan_reference_findings(
+    orphans: set[str],
+    implemented: dict[str, list[tuple[str, str, int]]],
+    verified: dict[str, list[tuple[str, str, int]]],
+) -> list[FunctionResult]:
+    """Build findings for references not declared in the spec."""
+    results: list[FunctionResult] = []
+    # Loop invariant: results contains orphan findings for orphans[0..i]
     for identifier in sorted(orphans):
         locations = implemented.get(identifier, []) + verified.get(identifier, [])
         if not locations:
             continue
         loc = locations[0]
-        func_results.append(FunctionResult(
-            function=identifier,
-            file=loc[0],
-            line=loc[2],
-            level_requested=1,
-            level_achieved=0,
-            status=CheckStatus.FAILED,
+        results.append(FunctionResult(
+            function=identifier, file=loc[0], line=loc[2],
+            level_requested=1, level_achieved=0, status=CheckStatus.FAILED,
             details=(Detail(
-                level=VerificationLevel.STRUCTURAL,
-                tool="spec_traceability",
+                level=VerificationLevel.STRUCTURAL, tool="spec_traceability",
                 finding_type="orphan_reference",
                 message=f"{identifier} is referenced in code or tests but not declared in the spec",
                 suggestion=f"Add {identifier} to SPEC.md or remove the reference.",
             ),),
         ))
-
-    return make_check_result(
-        tuple(func_results),
-        level_requested=1,
-        duration_seconds=0.0,
-    )
+    return results
 
 
 @icontract.require(lambda spec_content: isinstance(spec_content, str), "spec_content must be a string")
@@ -734,97 +730,97 @@ def _integration_validation_findings(
     # Loop invariant: results contains INT validation findings for integrations[0..i]
     for identifier, _description, heading_line, body in integrations:
         fields = _parse_integration_fields(body)
-        kind_entry = fields.get("Kind")
-        source_entry = fields.get("Source")
-        target_entry = fields.get("Target")
-        supports_entry = fields.get("Supports")
+        results.extend(_validate_required_fields(identifier, heading_line, fields))
+        results.extend(_validate_kind_field(identifier, fields))
+        results.extend(_validate_supports_field(identifier, fields, declared_req_ids))
 
-        if kind_entry is None:
-            results.append(_integration_field_failure(
-                identifier,
-                heading_line,
-                "Kind",
-                "Add 'Kind: call' or 'Kind: implements' below the heading.",
+    return results
+
+
+def _validate_required_fields(
+    identifier: str,
+    heading_line: int,
+    fields: dict[str, tuple[str, int]],
+) -> list[FunctionResult]:
+    """Check that Kind, Source, and Target fields are present."""
+    results: list[FunctionResult] = []
+    if fields.get("Kind") is None:
+        results.append(_integration_field_failure(
+            identifier, heading_line, "Kind",
+            "Add 'Kind: call' or 'Kind: implements' below the heading.",
+        ))
+    if fields.get("Source") is None:
+        results.append(_integration_field_failure(
+            identifier, heading_line, "Source",
+            "Add 'Source: Component.function' below the heading.",
+        ))
+    if fields.get("Target") is None:
+        results.append(_integration_field_failure(
+            identifier, heading_line, "Target",
+            "Add 'Target: Dependency.function' below the heading.",
+        ))
+    return results
+
+
+def _validate_kind_field(
+    identifier: str,
+    fields: dict[str, tuple[str, int]],
+) -> list[FunctionResult]:
+    """Check that the Kind field has a supported value."""
+    kind_entry = fields.get("Kind")
+    if kind_entry is None:
+        return []
+    kind_value = kind_entry[0].strip().lower()
+    if kind_value in _SUPPORTED_INTEGRATION_KINDS:
+        return []
+    supported = ", ".join(sorted(_SUPPORTED_INTEGRATION_KINDS))
+    return [FunctionResult(
+        function=identifier, file="SPEC.md", line=kind_entry[1],
+        level_requested=1, level_achieved=0, status=CheckStatus.FAILED,
+        details=(Detail(
+            level=VerificationLevel.STRUCTURAL, tool="spec_validation",
+            finding_type="unsupported_integration_kind",
+            message=f"{identifier} declares unsupported integration kind '{kind_entry[0].strip()}'",
+            suggestion=f"Use one of the supported kinds: {supported}.",
+        ),),
+    )]
+
+
+def _validate_supports_field(
+    identifier: str,
+    fields: dict[str, tuple[str, int]],
+    declared_req_ids: frozenset[str],
+) -> list[FunctionResult]:
+    """Check that the Supports field references valid REQ ids."""
+    supports_entry = fields.get("Supports")
+    if supports_entry is None:
+        return []
+    parsed_supports = _parse_supports_value(supports_entry[0])
+    if parsed_supports is None:
+        return [FunctionResult(
+            function=identifier, file="SPEC.md", line=supports_entry[1],
+            level_requested=1, level_achieved=0, status=CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL, tool="spec_validation",
+                finding_type="invalid_support_reference",
+                message=f"{identifier} has an invalid Supports field",
+                suggestion="List comma-separated REQ ids, e.g. 'Supports: REQ-001, REQ-002'.",
+            ),),
+        )]
+    results: list[FunctionResult] = []
+    # Loop invariant: results contains failures for parsed_supports[0..i] missing from declared_req_ids
+    for req_id in parsed_supports:
+        if req_id not in declared_req_ids:
+            results.append(FunctionResult(
+                function=identifier, file="SPEC.md", line=supports_entry[1],
+                level_requested=1, level_achieved=0, status=CheckStatus.FAILED,
+                details=(Detail(
+                    level=VerificationLevel.STRUCTURAL, tool="spec_validation",
+                    finding_type="invalid_support_reference",
+                    message=f"{identifier} references unsupported requirement '{req_id}' in Supports",
+                    suggestion=f"Declare {req_id} as a REQ heading or remove it from Supports.",
+                ),),
             ))
-        if source_entry is None:
-            results.append(_integration_field_failure(
-                identifier,
-                heading_line,
-                "Source",
-                "Add 'Source: Component.function' below the heading.",
-            ))
-        if target_entry is None:
-            results.append(_integration_field_failure(
-                identifier,
-                heading_line,
-                "Target",
-                "Add 'Target: Dependency.function' below the heading.",
-            ))
-
-        if kind_entry is not None:
-            kind_value = kind_entry[0].strip().lower()
-            if kind_value not in _SUPPORTED_INTEGRATION_KINDS:
-                supported = ", ".join(sorted(_SUPPORTED_INTEGRATION_KINDS))
-                results.append(FunctionResult(
-                    function=identifier,
-                    file="SPEC.md",
-                    line=kind_entry[1],
-                    level_requested=1,
-                    level_achieved=0,
-                    status=CheckStatus.FAILED,
-                    details=(Detail(
-                        level=VerificationLevel.STRUCTURAL,
-                        tool="spec_validation",
-                        finding_type="unsupported_integration_kind",
-                        message=(
-                            f"{identifier} declares unsupported integration kind "
-                            f"'{kind_entry[0].strip()}'"
-                        ),
-                        suggestion=f"Use one of the supported kinds: {supported}.",
-                    ),),
-                ))
-
-        if supports_entry is not None:
-            parsed_supports = _parse_supports_value(supports_entry[0])
-            if parsed_supports is None:
-                results.append(FunctionResult(
-                    function=identifier,
-                    file="SPEC.md",
-                    line=supports_entry[1],
-                    level_requested=1,
-                    level_achieved=0,
-                    status=CheckStatus.FAILED,
-                    details=(Detail(
-                        level=VerificationLevel.STRUCTURAL,
-                        tool="spec_validation",
-                        finding_type="invalid_support_reference",
-                        message=f"{identifier} has an invalid Supports field",
-                        suggestion="List comma-separated REQ ids, e.g. 'Supports: REQ-001, REQ-002'.",
-                    ),),
-                ))
-            else:
-                # Loop invariant: results contains failures for parsed_supports[0..i] missing from declared_req_ids
-                for req_id in parsed_supports:
-                    if req_id not in declared_req_ids:
-                        results.append(FunctionResult(
-                            function=identifier,
-                            file="SPEC.md",
-                            line=supports_entry[1],
-                            level_requested=1,
-                            level_achieved=0,
-                            status=CheckStatus.FAILED,
-                            details=(Detail(
-                                level=VerificationLevel.STRUCTURAL,
-                                tool="spec_validation",
-                                finding_type="invalid_support_reference",
-                                message=(
-                                    f"{identifier} references unsupported requirement "
-                                    f"'{req_id}' in Supports"
-                                ),
-                                suggestion=f"Declare {req_id} as a REQ heading or remove it from Supports.",
-                            ),),
-                        ))
-
     return results
 
 

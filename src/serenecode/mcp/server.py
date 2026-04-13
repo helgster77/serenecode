@@ -1,7 +1,7 @@
 """FastMCP server boot for Serenecode.
 
-Wires the tool functions in `tools.py` and the resource readers in
-`resources.py` to a FastMCP server. The server runs over stdio so it
+Wires the tool functions in `tools.py` / `tools_spec.py` and the resource
+readers in `resources.py` to a FastMCP server. The server runs over stdio so it
 can be registered with any MCP-speaking AI tool (Claude Code, Cursor,
 Cline, etc.) using a single `claude mcp add` (or equivalent) command.
 
@@ -41,16 +41,19 @@ from serenecode.mcp.tools import (
     tool_check_file,
     tool_check_function,
     tool_dead_code,
+    tool_module_health,
+    tool_suggest_contracts,
+    tool_suggest_test,
+    tool_uncovered,
+    tool_verify_fixed,
+)
+from serenecode.mcp.tools_spec import (
     tool_integration_status,
     tool_list_integrations,
     tool_list_reqs,
     tool_orphans,
     tool_req_status,
-    tool_suggest_contracts,
-    tool_suggest_test,
-    tool_uncovered,
     tool_validate_spec,
-    tool_verify_fixed,
 )
 
 _SERVER_NAME = "serenecode"
@@ -61,6 +64,8 @@ _INSTRUCTIONS = (
     "gates, or intentional whole-tree runs. "
     "Call serenecode_check_function on every function you write or edit to "
     "verify contracts, types, coverage, and architectural conventions. Use "
+    "serenecode_module_health to proactively monitor file size, function "
+    "length, parameter counts, and class sizes during editing. Use "
     "serenecode_suggest_contracts to derive icontract decorators from a function "
     "signature, serenecode_validate_spec plus serenecode_req_status / "
     "serenecode_integration_status for spec traceability, serenecode_dead_code "
@@ -92,6 +97,8 @@ def build_server(
 ) -> FastMCP[Any]:
     """Construct a FastMCP server with all serenecode tools and resources registered.
 
+    Implements: REQ-035
+
     Args:
         project_root: Default project root used when a tool call doesn't
             include a path. May be None.
@@ -108,8 +115,17 @@ def build_server(
     state.allow_code_execution = allow_code_execution
 
     server = FastMCP(name=_SERVER_NAME, instructions=_INSTRUCTIONS)
+    _register_verification_tools(server)
+    _register_authoring_tools(server)
+    _register_spec_tools(server)
+    _register_analysis_tools(server)
+    _register_resources(server)
 
-    # Tools — verification core
+    return server
+
+
+def _register_verification_tools(server: FastMCP[Any]) -> None:
+    """Register core verification tools on the server."""
     server.tool(
         name="serenecode_check",
         description=(
@@ -145,7 +161,9 @@ def build_server(
         ),
     )(cast(Any, tool_verify_fixed))
 
-    # Tools — authoring helpers
+
+def _register_authoring_tools(server: FastMCP[Any]) -> None:
+    """Register authoring helper tools on the server."""
     server.tool(
         name="serenecode_suggest_contracts",
         description=(
@@ -169,7 +187,9 @@ def build_server(
         ),
     )(cast(Any, tool_suggest_test))
 
-    # Tools — spec / REQ traceability
+
+def _register_spec_tools(server: FastMCP[Any]) -> None:
+    """Register spec / REQ traceability tools on the server."""
     server.tool(
         name="serenecode_validate_spec",
         description=(
@@ -217,6 +237,10 @@ def build_server(
             "(unimplemented) or no `Verifies:` reference (untested)."
         ),
     )(cast(Any, tool_orphans))
+
+
+def _register_analysis_tools(server: FastMCP[Any]) -> None:
+    """Register dead-code and module-health tools on the server."""
     server.tool(
         name="serenecode_dead_code",
         description=(
@@ -224,8 +248,18 @@ def build_server(
             "the user before removing or allowlisting code."
         ),
     )(cast(Any, tool_dead_code))
+    server.tool(
+        name="serenecode_module_health",
+        description=(
+            "Return module health metrics (line count, function sizes, parameter counts, "
+            "class sizes) for a single file WITHOUT running verification. Use proactively "
+            "to monitor module structure during editing. No --allow-code-execution needed."
+        ),
+    )(cast(Any, tool_module_health))
 
-    # Resources — read-only context
+
+def _register_resources(server: FastMCP[Any]) -> None:
+    """Register read-only context resources on the server."""
     server.resource(
         "serenecode://config",
         description=(
@@ -254,8 +288,6 @@ def build_server(
         description="Parsed INT-xxx integration metadata from the project's SPEC.md if present.",
         mime_type="application/json",
     )(cast(Any, resource_integrations))
-
-    return server
 
 
 @icontract.require(

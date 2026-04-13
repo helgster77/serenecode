@@ -74,7 +74,7 @@ class TestIsValidExitCodeProperty:
     def test_valid_codes_accepted(self, code: int) -> None:
         assert is_valid_exit_code(code) is True
 
-    @given(code=st.integers().filter(lambda x: x not in {0, 1, 2, 3, 4, 5, 6, 10}))
+    @given(code=st.integers().filter(lambda x: x not in {0, 1, 2, 3, 4, 5, 6, 10, 11}))
     @example(code=7)
     @example(code=9)
     @example(code=-1)
