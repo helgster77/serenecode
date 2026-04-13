@@ -358,6 +358,7 @@ class _FreshSourceLoader(importlib.abc.Loader):
         self._fullname = fullname
         self._source_path = source_path
 
+    # allow-unused: importlib.abc.Loader interface
     @icontract.require(lambda spec: isinstance(spec, ModuleSpec), "spec must be a ModuleSpec")
     @icontract.ensure(
         lambda result: result is None or isinstance(result, ModuleType),
@@ -367,6 +368,7 @@ class _FreshSourceLoader(importlib.abc.Loader):
         """Delegate module object creation to Python's default import machinery."""
         return None
 
+    # allow-unused: importlib.abc.Loader interface
     @icontract.require(lambda module: isinstance(module, ModuleType), "module must be a module")
     @icontract.ensure(lambda result: result is None, "exec_module returns None")
     def exec_module(self, module: ModuleType) -> None:

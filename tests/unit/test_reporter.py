@@ -96,6 +96,7 @@ class TestFormatHuman:
         assert "src/math.py" in output
 
     def test_dead_code_advisory_is_visible(self) -> None:
+        """Verifies: REQ-006"""
         advisory = FunctionResult(
             function="stale",
             file="src/math.py",
@@ -236,6 +237,7 @@ class TestFormatHtml:
         assert result.version in output
 
     def test_contains_dead_code_advisory_label(self) -> None:
+        """Verifies: REQ-006"""
         advisory = FunctionResult(
             function="stale",
             file="src/math.py",

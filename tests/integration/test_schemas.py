@@ -107,6 +107,7 @@ class TestToCheckResponse:
         assert response.summary["exempt"] == 1
 
     def test_dead_code_advisory_exempt_is_included(self) -> None:
+        """Verifies: REQ-007"""
         passed = FunctionResult(
             function="live",
             file="app.py",

@@ -51,7 +51,7 @@ class CoverageSuggestion:
     target_lines: tuple[int, ...]
     suggested_test_code: str
     required_mocks: tuple[MockDependency, ...]
-    all_mocks_necessary: bool
+    all_mocks_necessary: bool  # allow-unused: dataclass field used by consumers
 
 
 @icontract.invariant(
@@ -82,7 +82,7 @@ class CoverageFinding:
     line_coverage_percent: float
     branch_coverage_percent: float
     uncovered_lines: tuple[int, ...]
-    uncovered_branches: tuple[tuple[int, int], ...]
+    uncovered_branches: tuple[tuple[int, int], ...]  # allow-unused: dataclass field used by consumers
     suggestions: tuple[CoverageSuggestion, ...]
     meets_threshold: bool
     message: str

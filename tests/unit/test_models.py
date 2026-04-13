@@ -14,6 +14,7 @@ import pytest
 from tests.conftest import assert_violation_or_skip
 
 from serenecode.models import (
+    ADVISORY_FINDING_TYPES,
     CheckResult,
     CheckStatus,
     CheckSummary,
@@ -335,6 +336,22 @@ class TestCheckResult:
         assert len(parsed["results"]) == 1
 
 
+class TestAdvisoryFindingTypes:
+    """Tests for ADVISORY_FINDING_TYPES constant."""
+
+    def test_contains_expected_types(self) -> None:
+        """Verifies: REQ-004"""
+        assert "dead_code" in ADVISORY_FINDING_TYPES
+        assert "file_length" in ADVISORY_FINDING_TYPES
+        assert "function_length" in ADVISORY_FINDING_TYPES
+        assert "parameter_count" in ADVISORY_FINDING_TYPES
+        assert "class_method_count" in ADVISORY_FINDING_TYPES
+
+    def test_is_frozenset(self) -> None:
+        """Verifies: REQ-004"""
+        assert isinstance(ADVISORY_FINDING_TYPES, frozenset)
+
+
 class TestMakeCheckResult:
     """Tests for the make_check_result factory function."""
 
@@ -457,6 +474,28 @@ class TestMakeCheckResult:
         assert check.level_achieved == 3
         assert check.passed is True
         assert check.summary.passed_count == 1
+        assert check.summary.exempt_count == 1
+
+    def test_advisory_counting_uses_advisory_finding_types(self) -> None:
+        """Verifies: REQ-005, INT-002"""
+        results = (
+            FunctionResult(
+                function="<module>",
+                file="src/big.py",
+                line=1,
+                level_requested=1,
+                level_achieved=0,
+                status=CheckStatus.EXEMPT,
+                details=(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="module_health",
+                    finding_type="file_length",
+                    message="file_length advisory",
+                ),),
+            ),
+        )
+        check = make_check_result(results, level_requested=1, duration_seconds=0.1)
+        assert check.summary.advisory_count == 1
         assert check.summary.exempt_count == 1
 
     def test_empty_results_pass_at_requested_level(self) -> None:

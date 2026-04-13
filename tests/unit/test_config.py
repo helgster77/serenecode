@@ -22,6 +22,24 @@ class TestDefaultConfig:
         config = default_config()
         assert config.template_name == "default"
 
+    def test_has_module_health_config(self) -> None:
+        """Verifies: REQ-002"""
+        config = default_config()
+        assert config.module_health is not None
+        assert config.module_health.enabled is True
+
+    def test_default_module_health_thresholds(self) -> None:
+        """Verifies: REQ-003"""
+        config = default_config()
+        assert config.module_health.file_length_warn == 500
+        assert config.module_health.file_length_error == 1000
+        assert config.module_health.function_length_warn == 50
+        assert config.module_health.function_length_error == 100
+        assert config.module_health.parameter_count_warn == 5
+        assert config.module_health.parameter_count_error == 8
+        assert config.module_health.class_method_count_warn == 15
+        assert config.module_health.class_method_count_error == 25
+
     def test_requires_public_contracts(self) -> None:
         config = default_config()
         assert config.contract_requirements.require_on_public_functions is True
@@ -68,6 +86,12 @@ class TestStrictConfig:
         config = strict_config()
         assert config.template_name == "strict"
 
+    def test_strict_module_health_thresholds(self) -> None:
+        """Verifies: REQ-003"""
+        config = strict_config()
+        assert config.module_health.file_length_warn == 400
+        assert config.module_health.file_length_error == 700
+
     def test_requires_private_contracts(self) -> None:
         config = strict_config()
         assert config.contract_requirements.require_on_private is True
@@ -83,6 +107,12 @@ class TestMinimalConfig:
     def test_template_name(self) -> None:
         config = minimal_config()
         assert config.template_name == "minimal"
+
+    def test_minimal_module_health_thresholds(self) -> None:
+        """Verifies: REQ-003"""
+        config = minimal_config()
+        assert config.module_health.file_length_warn == 750
+        assert config.module_health.file_length_error == 1500
 
     def test_no_class_invariants_required(self) -> None:
         config = minimal_config()

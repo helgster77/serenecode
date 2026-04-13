@@ -17,6 +17,16 @@ import icontract
 
 from serenecode.contracts.predicates import is_non_empty_string, is_non_negative_int
 
+# Finding types that use the advisory pattern: EXEMPT status, visible in output,
+# do not block verification unless --fail-on-advisory is set.
+ADVISORY_FINDING_TYPES: frozenset[str] = frozenset({
+    "dead_code",
+    "file_length",
+    "function_length",
+    "parameter_count",
+    "class_method_count",
+})
+
 
 @icontract.ensure(lambda result: len(result) > 0, "version string must be non-empty")
 def _get_version() -> str:
@@ -63,7 +73,7 @@ class ExitCode(IntEnum):
     SYMBOLIC = 5
     COMPOSITIONAL = 6
     INTERNAL = 10
-    ADVISORY = 11  # --fail-on-advisory: passed checks but dead-code advisories remain
+    ADVISORY = 11  # --fail-on-advisory: passed checks but advisories remain (dead code, module health, etc.)
 
 
 @icontract.invariant(
@@ -245,6 +255,7 @@ class CheckResult:
     summary: CheckSummary
     version: str = _VERSION
 
+    # allow-unused: public API
     @property
     def failures(self) -> list[FunctionResult]:
         """Return only the failed function results."""
@@ -266,6 +277,7 @@ class CheckResult:
             "results": [r.to_dict() for r in self.results],
         }
 
+    # allow-unused: public API
     @icontract.ensure(
         lambda self, result: len(result) > 0 and '"passed"' in result,
         "JSON output must be non-empty and contain required fields",
@@ -295,6 +307,8 @@ def make_check_result(
 ) -> CheckResult:
     """Create a CheckResult from a tuple of FunctionResults.
 
+    Implements: REQ-004, REQ-005, INT-002
+
     Automatically computes passed/failed/skipped counts and overall status.
 
     Args:
@@ -319,7 +333,7 @@ def make_check_result(
     for r in results:
         if r.status == CheckStatus.EXEMPT:
             exempt_count += 1
-            if any(detail.finding_type == "dead_code" for detail in r.details):
+            if any(detail.finding_type in ADVISORY_FINDING_TYPES for detail in r.details):
                 advisory_count += 1
             continue
         has_non_exempt = True

@@ -1,6 +1,6 @@
 [project]
 name = "serenecode"
-version = "0.4.0"
+version = "0.5.0"
 description = "Verification framework for AI-generated Python — test coverage, property testing, and symbolic execution"
 requires-python = ">=3.10"
 license = "MIT"

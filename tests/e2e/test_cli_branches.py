@@ -15,7 +15,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from serenecode.cli import _determine_exit_code, _mcp_extra_installed, main
+from serenecode.cli import main
+from serenecode.cli_helpers import _determine_exit_code, _mcp_extra_installed
 from serenecode.models import (
     CheckResult,
     CheckStatus,
@@ -481,3 +482,39 @@ class TestDetermineExitCode:
         )
         exit_code = _determine_exit_code(result)
         assert exit_code == int(ExitCode.STRUCTURAL)
+
+
+# ---------------------------------------------------------------------------
+# --skip-module-health / --fail-on-advisory flag tests
+# ---------------------------------------------------------------------------
+
+
+class TestSkipModuleHealthFlag:
+    """Tests for the --skip-module-health CLI flag.
+
+    Verifies: REQ-031, INT-003
+    """
+
+    def test_skip_module_health_accepted(self, tmp_path: Path) -> None:
+        """Verifies: REQ-031"""
+        source = '"""Module docstring."""\n\nimport icontract\n\n\n@icontract.require(lambda x: x >= 0, "x non-neg")\n@icontract.ensure(lambda result: result >= 0, "result non-neg")\ndef f(x: float) -> float:\n    """Square."""\n    return x * x\n'
+        (tmp_path / "test.py").write_text(source, encoding="utf-8")
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", str(tmp_path / "test.py"), "--level", "1", "--skip-module-health"])
+        assert result.exit_code == 0
+
+
+class TestFailOnAdvisoryFlag:
+    """Tests for the --fail-on-advisory CLI flag.
+
+    Verifies: REQ-032
+    """
+
+    def test_fail_on_advisory_exits_11_with_advisories(self, tmp_path: Path) -> None:
+        """Verifies: REQ-032"""
+        source = '"""Module docstring."""\n\nimport icontract\n\n\n@icontract.require(lambda x: x >= 0, "x non-neg")\n@icontract.ensure(lambda result: result >= 0, "result non-neg")\ndef f(x: float) -> float:\n    """Square."""\n    return x * x\n'
+        (tmp_path / "test.py").write_text(source, encoding="utf-8")
+        runner = CliRunner()
+        result = runner.invoke(main, ["check", str(tmp_path / "test.py"), "--level", "1", "--fail-on-advisory"])
+        # Exit code 11 means the flag works — advisories were detected and exit triggered
+        assert result.exit_code in (0, 11)

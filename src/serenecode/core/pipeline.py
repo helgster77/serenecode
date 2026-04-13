@@ -23,6 +23,11 @@ from serenecode.contracts.predicates import (
     is_valid_verification_level,
 )
 from serenecode.core.exceptions import ToolNotInstalledError
+from serenecode.core.pipeline_helpers import (
+    _is_test_file_path,
+    check_test_existence as _check_test_existence,
+    run_dead_code_analysis as _run_dead_code_analysis,
+)
 from serenecode.ports.coverage_analyzer import CoverageAnalyzer
 from serenecode.ports.dead_code_analyzer import DeadCodeAnalyzer
 from serenecode.ports.property_tester import PropertyTester
@@ -40,18 +45,30 @@ from serenecode.models import (
 StructuralChecker = Callable[[str, SerenecodeConfig, str, str], CheckResult]
 
 
-@icontract.require(lambda file_path: is_non_empty_string(file_path), "file_path must be non-empty")
-@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
-def _is_test_file_path(file_path: str) -> bool:
-    """Return True when a path points to a test-only Python file."""
-    normalized = file_path.replace("\\", "/")
-    basename = normalized.rsplit("/", maxsplit=1)[-1]
-    path_parts = normalized.split("/")
-    return (
-        "tests" in path_parts
-        or basename.startswith("test_")
-        or basename == "conftest.py"
-    )
+@icontract.invariant(
+    lambda self: self.max_workers >= 1,
+    "max_workers must be at least 1",
+)
+@dataclass(frozen=True)
+class PipelineConfig:
+    """Bundle of adapter and option parameters for the verification pipeline.
+
+    Encapsulates the optional backends and knobs so that
+    ``run_pipeline`` has a manageable parameter count.
+    """
+
+    structural_checker: StructuralChecker | None = None
+    type_checker: TypeChecker | None = None
+    coverage_analyzer: CoverageAnalyzer | None = None
+    property_tester: PropertyTester | None = None
+    symbolic_checker: SymbolicChecker | None = None
+    dead_code_analyzer: DeadCodeAnalyzer | None = None
+    early_termination: bool = True
+    progress: Callable[[str], None] | None = None
+    max_workers: int = 4
+    known_test_stems: frozenset[str] = frozenset()
+    spec_content: str | None = None
+    test_sources: tuple[tuple[str, str], ...] = ()
 
 
 @icontract.invariant(
@@ -105,10 +122,6 @@ def _not_importable_detail_message(sf: SourceFile) -> str:
     lambda level, start_level: start_level <= level,
     "start_level must not exceed level",
 )
-@icontract.require(
-    lambda max_workers: is_positive_int(max_workers),
-    "max_workers must be at least 1",
-)
 @icontract.ensure(
     lambda level, result: result.level_requested == level,
     "result must report the correct requested level",
@@ -118,22 +131,14 @@ def run_pipeline(
     level: int,
     start_level: int,
     config: SerenecodeConfig,
-    structural_checker: StructuralChecker | None = None,
-    type_checker: TypeChecker | None = None,
-    coverage_analyzer: CoverageAnalyzer | None = None,
-    property_tester: PropertyTester | None = None,
-    symbolic_checker: SymbolicChecker | None = None,
-    dead_code_analyzer: DeadCodeAnalyzer | None = None,
-    early_termination: bool = True,
-    progress: Callable[[str], None] | None = None,
-    max_workers: int = 4,
-    known_test_stems: frozenset[str] = frozenset(),
-    spec_content: str | None = None,
-    test_sources: tuple[tuple[str, str], ...] = (),
+    pc: PipelineConfig | None = None,
+    **kwargs: object,
 ) -> CheckResult:
     """Run the verification pipeline up to the specified level.
 
-    Executes levels sequentially (1→2→3→4→5→6). If early_termination
+    Implements: REQ-028, REQ-029, REQ-030, INT-001
+
+    Executes levels sequentially (1->2->3->4->5->6). If early_termination
     is True (default), stops at the first level with failures.
 
     Args:
@@ -141,200 +146,86 @@ def run_pipeline(
         level: Maximum verification level (1-6).
         start_level: First verification level to execute.
         config: Active Serenecode configuration.
-        structural_checker: Callable for Level 1 (or None to use default).
-        type_checker: TypeChecker protocol implementation for Level 2.
-        coverage_analyzer: CoverageAnalyzer protocol implementation for Level 3.
-        property_tester: PropertyTester protocol implementation for Level 4.
-        symbolic_checker: SymbolicChecker protocol implementation for Level 5.
-        dead_code_analyzer: Dead-code analyzer implementation for baseline
-            static unused-code findings. When None, this step is disabled;
-            user-facing composition roots should pass either a real analyzer
-            or an unavailable adapter so the skip remains visible.
-        early_termination: Stop at first failing level if True.
-        progress: Optional callback for progress messages.
-        max_workers: Max concurrent modules for Level 5 symbolic verification.
-        known_test_stems: Frozenset of test file stems (e.g. {"test_engine",
-            "test_models"}) discovered from the tests/ directory. When
-            non-empty, Level 1 checks that each source module has a
-            corresponding test file.
-        spec_content: Content of SPEC.md for traceability checking. When
-            provided, Level 1 verifies that every REQ-xxx in the spec
-            has implementation and test references.
-        test_sources: Tuple of (file_path, source_content) for test files,
-            used by spec traceability checking to find Verifies: tags.
+        pc: Optional PipelineConfig bundling adapters and options.
+            When None, one is built from ``kwargs``.
+        **kwargs: Fields forwarded to ``PipelineConfig`` when *pc* is None.
 
     Returns:
         An aggregated CheckResult across all executed levels.
     """
+    if pc is None:
+        pc = PipelineConfig(
+            max_workers=min(int(kwargs.pop("max_workers", 4)), 32),  # type: ignore[arg-type]
+            **{k: v for k, v in kwargs.items() if k in PipelineConfig.__dataclass_fields__},  # type: ignore[arg-type]
+        )
+    return _run_pipeline_impl(source_files, level, start_level, config, pc)
+
+
+@icontract.require(
+    lambda level: is_valid_verification_level(level),
+    "level must be between 1 and 6",
+)
+@icontract.require(
+    lambda start_level: is_valid_verification_level(start_level),
+    "start_level must be between 1 and 6",
+)
+@icontract.require(
+    lambda level, start_level: start_level <= level,
+    "start_level must not exceed level",
+)
+@icontract.ensure(
+    lambda level, result: result.level_requested == level,
+    "result must report the correct requested level",
+)
+def _run_pipeline_impl(
+    source_files: tuple[SourceFile, ...],
+    level: int,
+    start_level: int,
+    config: SerenecodeConfig,
+    pc: PipelineConfig,
+) -> CheckResult:
+    """Core pipeline logic with bundled configuration."""
     start_time = time.monotonic()
     all_results: list[FunctionResult] = []
     achieved_level = start_level - 1
     has_source_files = len(source_files) > 0
 
-    # Cap max_workers to a reasonable limit to avoid resource exhaustion
-    max_workers = min(max_workers, 32)
-
     def _emit(msg: str) -> None:
-        if progress is not None:
+        if pc.progress is not None:
             # silent-except: progress callback is best-effort UI; failures must not abort the pipeline
             try:
-                progress(msg)
+                pc.progress(msg)
             except Exception:
                 pass
 
     # Level 1: Structural check
     if start_level <= 1 <= level:
-        _emit(f"Level 1: Structural check ({len(source_files)} files)...")
-        level_1_results = _run_level_1(source_files, config, structural_checker)
-        if known_test_stems:
-            level_1_results.extend(
-                _check_test_existence(source_files, known_test_stems, config)
-            )
-        if spec_content is not None:
-            from serenecode.checker.spec_traceability import (
-                check_spec_traceability,
-                validate_spec,
-            )
-
-            _emit("  Spec validation...")
-            validation_result = validate_spec(spec_content)
-            level_1_results.extend(validation_result.results)
-
-            _emit("  Spec traceability check...")
-            spec_result = check_spec_traceability(
-                spec_content, source_files, test_sources,
-            )
-            level_1_results.extend(spec_result.results)
-        if dead_code_analyzer is not None:
-            _emit("  Dead code analysis...")
-            level_1_results.extend(
-                _run_dead_code_analysis(source_files, dead_code_analyzer),
-            )
+        level_1_results = _run_level_1_full(
+            source_files, config, pc, _emit,
+        )
         all_results.extend(level_1_results)
-
-        if early_termination and _has_failures(level_1_results):
-            elapsed = time.monotonic() - start_time
-            return make_check_result(
-                tuple(all_results),
-                level_requested=level,
-                duration_seconds=elapsed,
-                level_achieved=achieved_level,
-            )
+        if pc.early_termination and _has_failures(level_1_results):
+            return _make_early_return(all_results, level, start_time, achieved_level)
         if _level_achieved(level_1_results, has_source_files):
             achieved_level = 1
 
-    # Level 2: Type checking
-    if start_level <= 2 <= level:
-        if type_checker is not None:
-            _emit("Level 2: Type checking...")
-            level_2_results = _run_level_2(source_files, type_checker)
-        else:
-            _emit("Level 2: Type checking unavailable.")
-            level_2_results = _make_unavailable_results(
-                source_files,
-                requested_level=2,
-                level_achieved=1,
-                tool="mypy",
-                message="Type checking unavailable: mypy is not installed",
-            )
-        all_results.extend(level_2_results)
-
-        if early_termination and _has_failures(level_2_results):
-            elapsed = time.monotonic() - start_time
-            return make_check_result(
-                tuple(all_results),
-                level_requested=level,
-                duration_seconds=elapsed,
-                level_achieved=achieved_level,
-            )
-        if _level_achieved(level_2_results, has_source_files):
-            achieved_level = 2
-
-    # Level 3: Coverage analysis
-    if start_level <= 3 <= level:
-        if coverage_analyzer is not None:
-            _emit("Level 3: Coverage analysis...")
-            level_3_results = _run_level_3_coverage(source_files, coverage_analyzer)
-        else:
-            _emit("Level 3: Coverage analysis unavailable.")
-            level_3_results = _make_unavailable_results(
-                source_files,
-                requested_level=3,
-                level_achieved=2,
-                tool="coverage",
-                message="Coverage analysis unavailable: coverage is not installed",
-            )
-        all_results.extend(level_3_results)
-
-        if early_termination and _has_failures(level_3_results):
-            elapsed = time.monotonic() - start_time
-            return make_check_result(
-                tuple(all_results),
-                level_requested=level,
-                duration_seconds=elapsed,
-                level_achieved=achieved_level,
-            )
-        if _level_achieved(level_3_results, has_source_files, require_evidence=True):
-            achieved_level = 3
-
-    # Level 4: Property-based testing
-    if start_level <= 4 <= level:
-        if property_tester is not None:
-            _emit("Level 4: Property-based testing...")
-            level_4_results = _run_level_4(source_files, property_tester)
-        else:
-            _emit("Level 4: Property-based testing unavailable.")
-            level_4_results = _make_unavailable_results(
-                source_files,
-                requested_level=4,
-                level_achieved=3,
-                tool="hypothesis",
-                message="Property testing unavailable: Hypothesis is not installed",
-            )
-        all_results.extend(level_4_results)
-
-        if early_termination and _has_failures(level_4_results):
-            elapsed = time.monotonic() - start_time
-            return make_check_result(
-                tuple(all_results),
-                level_requested=level,
-                duration_seconds=elapsed,
-                level_achieved=achieved_level,
-            )
-        if _level_achieved(level_4_results, has_source_files, require_evidence=True):
-            achieved_level = 4
-
-    # Level 5: Symbolic verification
-    if start_level <= 5 <= level:
-        if symbolic_checker is not None:
-            _emit("Level 5: Symbolic verification (this may take several minutes)...")
-            level_5_results = _run_level_5(source_files, symbolic_checker, _emit, max_workers)
-        else:
-            _emit("Level 5: Symbolic verification unavailable.")
-            level_5_results = _make_unavailable_results(
-                source_files,
-                requested_level=5,
-                level_achieved=4,
-                tool="crosshair",
-                message="Symbolic verification unavailable: CrossHair is not installed",
-            )
-        all_results.extend(level_5_results)
-
-        if early_termination and _has_failures(level_5_results):
-            elapsed = time.monotonic() - start_time
-            return make_check_result(
-                tuple(all_results),
-                level_requested=level,
-                duration_seconds=elapsed,
-                level_achieved=achieved_level,
-            )
-        if _level_achieved(level_5_results, has_source_files, require_evidence=True):
-            achieved_level = 5
+    # Levels 2-5: backend verification
+    level_configs = _backend_level_configs(source_files, pc, _emit)
+    # Loop invariant: all_results contains findings for completed levels
+    for lv, runner, require_evidence in level_configs:
+        if not (start_level <= lv <= level):
+            continue
+        level_results = runner()
+        all_results.extend(level_results)
+        if pc.early_termination and _has_failures(level_results):
+            return _make_early_return(all_results, level, start_time, achieved_level)
+        if _level_achieved(level_results, has_source_files, require_evidence=require_evidence):
+            achieved_level = lv
 
     # Level 6: Compositional verification
     if start_level <= 6 <= level:
         _emit("Level 6: Compositional verification...")
-        level_6_results = _run_level_6(source_files, config, spec_content)
+        level_6_results = _run_level_6(source_files, config, pc.spec_content)
         all_results.extend(level_6_results)
         if _level_achieved(level_6_results, has_source_files):
             achieved_level = 6
@@ -346,6 +237,151 @@ def run_pipeline(
         duration_seconds=elapsed,
         level_achieved=achieved_level,
     )
+
+
+def _make_early_return(
+    all_results: list[FunctionResult],
+    level: int,
+    start_time: float,
+    achieved_level: int,
+) -> CheckResult:
+    """Build an early-termination CheckResult."""
+    elapsed = time.monotonic() - start_time
+    return make_check_result(
+        tuple(all_results),
+        level_requested=level,
+        duration_seconds=elapsed,
+        level_achieved=achieved_level,
+    )
+
+
+def _run_level_1_full(
+    source_files: tuple[SourceFile, ...],
+    config: SerenecodeConfig,
+    pc: PipelineConfig,
+    emit: Callable[[str], None],
+) -> list[FunctionResult]:
+    """Run all Level 1 checks: structural, spec, dead code, module health."""
+    emit(f"Level 1: Structural check ({len(source_files)} files)...")
+    results = _run_level_1(source_files, config, pc.structural_checker)
+
+    if pc.known_test_stems:
+        results.extend(
+            _check_test_existence(source_files, pc.known_test_stems, config)
+        )
+    if pc.spec_content is not None:
+        results.extend(_run_spec_checks(source_files, pc, emit))
+    if pc.dead_code_analyzer is not None:
+        emit("  Dead code analysis...")
+        results.extend(
+            _run_dead_code_analysis(source_files, pc.dead_code_analyzer),
+        )
+    if config.module_health.enabled:
+        results.extend(_run_module_health_checks(source_files, config, emit))
+    return results
+
+
+def _run_spec_checks(
+    source_files: tuple[SourceFile, ...],
+    pc: PipelineConfig,
+    emit: Callable[[str], None],
+) -> list[FunctionResult]:
+    """Run spec validation and traceability checks."""
+    from serenecode.checker.spec_traceability import (
+        check_spec_traceability,
+        validate_spec,
+    )
+
+    results: list[FunctionResult] = []
+    if pc.spec_content is None:
+        return results
+    emit("  Spec validation...")
+    validation_result = validate_spec(pc.spec_content)
+    results.extend(validation_result.results)
+
+    emit("  Spec traceability check...")
+    spec_result = check_spec_traceability(
+        pc.spec_content, source_files, pc.test_sources,
+    )
+    results.extend(spec_result.results)
+    return results
+
+
+def _run_module_health_checks(
+    source_files: tuple[SourceFile, ...],
+    config: SerenecodeConfig,
+    emit: Callable[[str], None],
+) -> list[FunctionResult]:
+    """Run all module health sub-checks."""
+    from serenecode.core.module_health import (
+        check_class_method_count,
+        check_file_length,
+        check_function_length,
+        check_parameter_count,
+    )
+
+    emit("  Module health checks...")
+    results: list[FunctionResult] = []
+    results.extend(check_file_length(source_files, config))
+    results.extend(check_function_length(source_files, config))
+    results.extend(check_parameter_count(source_files, config))
+    results.extend(check_class_method_count(source_files, config))
+    return results
+
+
+def _backend_level_configs(
+    source_files: tuple[SourceFile, ...],
+    pc: PipelineConfig,
+    emit: Callable[[str], None],
+) -> list[tuple[int, Callable[[], list[FunctionResult]], bool]]:
+    """Return (level, runner, require_evidence) tuples for levels 2-5."""
+
+    def _level_2() -> list[FunctionResult]:
+        if pc.type_checker is not None:
+            emit("Level 2: Type checking...")
+            return _run_level_2(source_files, pc.type_checker)
+        emit("Level 2: Type checking unavailable.")
+        return _make_unavailable_results(
+            source_files, requested_level=2, level_achieved=1,
+            tool="mypy", message="Type checking unavailable: mypy is not installed",
+        )
+
+    def _level_3() -> list[FunctionResult]:
+        if pc.coverage_analyzer is not None:
+            emit("Level 3: Coverage analysis...")
+            return _run_level_3_coverage(source_files, pc.coverage_analyzer)
+        emit("Level 3: Coverage analysis unavailable.")
+        return _make_unavailable_results(
+            source_files, requested_level=3, level_achieved=2,
+            tool="coverage", message="Coverage analysis unavailable: coverage is not installed",
+        )
+
+    def _level_4() -> list[FunctionResult]:
+        if pc.property_tester is not None:
+            emit("Level 4: Property-based testing...")
+            return _run_level_4(source_files, pc.property_tester)
+        emit("Level 4: Property-based testing unavailable.")
+        return _make_unavailable_results(
+            source_files, requested_level=4, level_achieved=3,
+            tool="hypothesis", message="Property testing unavailable: Hypothesis is not installed",
+        )
+
+    def _level_5() -> list[FunctionResult]:
+        if pc.symbolic_checker is not None:
+            emit("Level 5: Symbolic verification (this may take several minutes)...")
+            return _run_level_5(source_files, pc.symbolic_checker, emit, pc.max_workers)
+        emit("Level 5: Symbolic verification unavailable.")
+        return _make_unavailable_results(
+            source_files, requested_level=5, level_achieved=4,
+            tool="crosshair", message="Symbolic verification unavailable: CrossHair is not installed",
+        )
+
+    return [
+        (2, _level_2, False),
+        (3, _level_3, True),
+        (4, _level_4, True),
+        (5, _level_5, True),
+    ]
 
 
 @icontract.require(
@@ -521,222 +557,6 @@ def _run_level_1(
             sf.source, config, sf.module_path, sf.file_path,
         )
         results.extend(check_result.results)
-    return results
-
-
-@icontract.require(
-    lambda source_files: isinstance(source_files, tuple),
-    "source_files must be a tuple",
-)
-@icontract.require(
-    lambda dead_code_analyzer: dead_code_analyzer is not None,
-    "dead_code_analyzer must be provided",
-)
-@icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
-)
-def _run_dead_code_analysis(
-    source_files: tuple[SourceFile, ...],
-    dead_code_analyzer: DeadCodeAnalyzer,
-) -> list[FunctionResult]:
-    """Run static dead-code analysis on the current source set."""
-    paths = tuple(
-        source_file.file_path
-        for source_file in source_files
-        if not _is_test_file_path(source_file.file_path)
-    )
-    if not paths:
-        return []
-
-    # silent-except: dead-code backend failures must be surfaced as SKIPPED results, not crash the pipeline
-    try:
-        findings = dead_code_analyzer.analyze_paths(paths)
-    except Exception as exc:
-        return [_make_dead_code_skipped_result(
-            f"Dead-code analysis unavailable: {exc}",
-        )]
-
-    results: list[FunctionResult] = []
-    # Loop invariant: results contains dead-code findings for findings[0..i]
-    for finding in findings:
-        results.append(FunctionResult(
-            function=finding.symbol_name,
-            file=finding.file_path,
-            line=finding.line,
-            level_requested=1,
-            level_achieved=1,
-            status=CheckStatus.EXEMPT,
-            details=(Detail(
-                level=VerificationLevel.STRUCTURAL,
-                tool="dead_code",
-                finding_type="dead_code",
-                message=finding.message,
-                suggestion=(
-                    "Ask the user whether this likely dead code should be removed "
-                    "or allowlisted with '# allow-unused: reason'."
-                ),
-                counterexample={
-                    "symbol_type": finding.symbol_type,
-                    "confidence": finding.confidence,
-                },
-            ),),
-        ))
-
-    return results
-
-
-@icontract.require(
-    lambda message: is_non_empty_string(message),
-    "message must be a non-empty string",
-)
-@icontract.ensure(
-    lambda result: result.status == CheckStatus.SKIPPED,
-    "result must be a skipped dead-code result",
-)
-def _make_dead_code_skipped_result(message: str) -> FunctionResult:
-    """Create a visible skipped result for dead-code analysis unavailability."""
-    return FunctionResult(
-        function="<dead_code>",
-        file="dead_code",
-        line=1,
-        level_requested=1,
-        level_achieved=0,
-        status=CheckStatus.SKIPPED,
-        details=(Detail(
-            level=VerificationLevel.STRUCTURAL,
-            tool="dead_code",
-            finding_type="unavailable",
-            message=message,
-            suggestion="Install or fix the dead-code backend, or rerun once it is available.",
-        ),),
-    )
-
-
-# Modules with no testable logic are exempt from test-file requirements.
-# This is narrower than the contract-exemption list: adapters, CLI, and
-# init modules contain real logic that must be tested, even though they
-# are exempt from full contract requirements.
-_TEST_FILE_EXEMPT_PATTERNS = (
-    "ports/",
-    "templates/",
-    "tests/fixtures/",
-    "exceptions.py",
-)
-
-
-@icontract.require(
-    lambda module_path: isinstance(module_path, str),
-    "module_path must be a string",
-)
-@icontract.ensure(
-    lambda result: isinstance(result, bool),
-    "result must be a bool",
-)
-def _is_test_file_exempt(module_path: str) -> bool:
-    """Check whether a module has no testable logic and needs no test file.
-
-    Exempts only protocol definitions, static templates, exception
-    hierarchies, and test fixtures. Adapter modules, CLI code, and
-    other modules with real logic are NOT exempt.
-
-    Args:
-        module_path: The module's path (e.g. 'serenecode/ports/file_system.py').
-
-    Returns:
-        True if the module needs no dedicated test file.
-    """
-    from serenecode.config import _path_pattern_matches
-
-    # Loop invariant: no pattern in _TEST_FILE_EXEMPT_PATTERNS[0..i] matched
-    for pattern in _TEST_FILE_EXEMPT_PATTERNS:
-        if _path_pattern_matches(module_path, pattern):
-            return True
-    return False
-
-
-@icontract.require(
-    lambda known_test_stems: known_test_stems is not None,
-    "test stems must be provided",
-)
-@icontract.ensure(
-    lambda result: result is not None,
-    "result must not be None",
-)
-def _check_test_existence(
-    source_files: tuple[SourceFile, ...],
-    known_test_stems: frozenset[str],
-    config: SerenecodeConfig,
-) -> list[FunctionResult]:
-    """Check that each source module has a corresponding test file.
-
-    For a source file named ``foo.py``, this looks for ``test_foo`` in the
-    known test stems. ``__init__.py`` files are skipped since they rarely
-    need dedicated test files. Modules with no testable logic (protocol
-    definitions, static templates, exception hierarchies, test fixtures)
-    are also skipped.
-
-    Args:
-        source_files: Source files to check.
-        known_test_stems: Set of test file stems (e.g. ``test_engine``).
-        config: Active configuration (used for exemption checks).
-
-    Returns:
-        List of FAILED results for source modules missing test files,
-        and PASSED results for those that have them.
-    """
-    results: list[FunctionResult] = []
-
-    # Loop invariant: results contains test-existence findings for source_files[0..i]
-    for sf in source_files:
-        basename = sf.file_path.rsplit("/", 1)[-1] if "/" in sf.file_path else sf.file_path
-        if basename == "__init__.py":
-            continue
-
-        # Skip modules with no testable logic: protocol definitions,
-        # static templates, exception hierarchies, and test fixtures.
-        if _is_test_file_exempt(sf.module_path):
-            continue
-
-        module_stem = basename.removesuffix(".py")
-        expected_test_stem = f"test_{module_stem}"
-        has_test = expected_test_stem in known_test_stems
-
-        if has_test:
-            results.append(FunctionResult(
-                function="<module>",
-                file=sf.file_path,
-                line=1,
-                level_requested=1,
-                level_achieved=1,
-                status=CheckStatus.PASSED,
-                details=(Detail(
-                    level=VerificationLevel.STRUCTURAL,
-                    tool="structural",
-                    finding_type="test_exists",
-                    message=f"Test file found for '{module_stem}'",
-                ),),
-            ))
-        else:
-            results.append(FunctionResult(
-                function="<module>",
-                file=sf.file_path,
-                line=1,
-                level_requested=1,
-                level_achieved=0,
-                status=CheckStatus.FAILED,
-                details=(Detail(
-                    level=VerificationLevel.STRUCTURAL,
-                    tool="structural",
-                    finding_type="missing_tests",
-                    message=f"No test file found for '{module_stem}'",
-                    suggestion=(
-                        f"Create a test file named '{expected_test_stem}.py' "
-                        f"in your tests/ directory."
-                    ),
-                ),),
-            ))
-
     return results
 
 
@@ -977,84 +797,106 @@ def _run_level_5(
     from serenecode.checker.symbolic import transform_symbolic_results
 
     emit_lock = threading.Lock()
+    verifiable, results = _partition_importable(source_files)
+
+    def _safe_emit(msg: str) -> None:
+        with emit_lock:
+            emit(msg)
+
+    total = len(verifiable)
+    _safe_emit(f"  Verifying {total} modules ({max_workers} workers)...")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_verify_one_module, sf, symbolic_checker): sf
+            for sf in verifiable
+        }
+        completed = 0
+        # Loop invariant: results contains findings for all completed futures
+        for future in concurrent.futures.as_completed(futures):
+            completed += 1
+            sf, findings, error = future.result()
+            _process_symbolic_result(
+                results, sf, findings, error, completed, total, _safe_emit,
+            )
+
+    return results
+
+
+def _partition_importable(
+    source_files: tuple[SourceFile, ...],
+) -> tuple[list[SourceFile], list[FunctionResult]]:
+    """Split source files into importable and non-importable, recording skips."""
     verifiable: list[SourceFile] = []
     results: list[FunctionResult] = []
-
-    # Record non-importable modules as skipped so they appear in the output
     # Loop invariant: verifiable contains importable files from source_files[0..i]
     for sf in source_files:
         if sf.importable_module is not None:
             verifiable.append(sf)
         else:
             results.append(FunctionResult(
-                function="<module>",
-                file=sf.file_path,
-                line=1,
-                level_requested=5,
-                level_achieved=4,
+                function="<module>", file=sf.file_path, line=1,
+                level_requested=5, level_achieved=4,
                 status=CheckStatus.SKIPPED,
                 details=(Detail(
-                    level=VerificationLevel.SYMBOLIC,
-                    tool="crosshair",
+                    level=VerificationLevel.SYMBOLIC, tool="crosshair",
                     finding_type="not_importable",
                     message=_not_importable_detail_message(sf),
                 ),),
             ))
+    return verifiable, results
 
-    total = len(verifiable)
-    completed = 0
 
-    def _verify_one(
-        sf: SourceFile,
-    ) -> tuple[SourceFile, list[SymbolicFinding] | None, Exception | None]:
-        if sf.importable_module is None:
-            return (sf, None, ToolNotInstalledError("No importable module"))
-        try:
-            findings = symbolic_checker.verify_module(
-                sf.importable_module,
-                search_paths=sf.import_search_paths,
-            )
-            return (sf, findings, None)
-        except Exception as exc:
-            return (sf, None, exc)
+def _verify_one_module(
+    sf: SourceFile,
+    symbolic_checker: SymbolicChecker,
+) -> tuple[SourceFile, list[SymbolicFinding] | None, Exception | None]:
+    """Verify a single module via the symbolic checker."""
+    if sf.importable_module is None:
+        return (sf, None, ToolNotInstalledError("No importable module"))
+    try:
+        findings = symbolic_checker.verify_module(
+            sf.importable_module, search_paths=sf.import_search_paths,
+        )
+        return (sf, findings, None)
+    except Exception as exc:
+        return (sf, None, exc)
 
-    def _safe_emit(msg: str) -> None:
-        with emit_lock:
-            emit(msg)
 
-    _safe_emit(f"  Verifying {total} modules ({max_workers} workers)...")
+def _process_symbolic_result(
+    results: list[FunctionResult],
+    sf: SourceFile,
+    findings: list[SymbolicFinding] | None,
+    error: Exception | None,
+    completed: int,
+    total: int,
+    safe_emit: Callable[[str], None],
+) -> None:
+    """Process one completed symbolic verification future."""
+    from serenecode.checker.symbolic import transform_symbolic_results
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_verify_one, sf): sf for sf in verifiable}
-        # Loop invariant: results contains findings for all completed futures
-        for future in concurrent.futures.as_completed(futures):
-            completed += 1
-            sf, findings, error = future.result()
-            module_name = sf.importable_module
-            if error is not None:
-                _safe_emit(f"  [{completed}/{total}] Skipped {module_name}: {error}")
-                results.append(FunctionResult(
-                    function="<module>",
-                    file=sf.file_path,
-                    line=1,
-                    level_requested=5,
-                    level_achieved=4,
-                    status=CheckStatus.SKIPPED if isinstance(error, ToolNotInstalledError) else CheckStatus.FAILED,
-                    details=(Detail(
-                        level=VerificationLevel.SYMBOLIC,
-                        tool="crosshair",
-                        finding_type="unavailable" if isinstance(error, ToolNotInstalledError) else "error",
-                        message=f"Symbolic verification skipped for '{module_name}': {error}"
-                        if isinstance(error, ToolNotInstalledError)
-                        else f"Symbolic verification failed for '{module_name}': {error}",
-                    ),),
-                ))
-            elif findings is not None:
-                _safe_emit(f"  [{completed}/{total}] Done {module_name}")
-                check_result = transform_symbolic_results(findings, sf.file_path, 0.0)
-                results.extend(check_result.results)
-
-    return results
+    module_name = sf.importable_module
+    if error is not None:
+        safe_emit(f"  [{completed}/{total}] Skipped {module_name}: {error}")
+        is_tool_error = isinstance(error, ToolNotInstalledError)
+        results.append(FunctionResult(
+            function="<module>", file=sf.file_path, line=1,
+            level_requested=5, level_achieved=4,
+            status=CheckStatus.SKIPPED if is_tool_error else CheckStatus.FAILED,
+            details=(Detail(
+                level=VerificationLevel.SYMBOLIC, tool="crosshair",
+                finding_type="unavailable" if is_tool_error else "error",
+                message=(
+                    f"Symbolic verification skipped for '{module_name}': {error}"
+                    if is_tool_error
+                    else f"Symbolic verification failed for '{module_name}': {error}"
+                ),
+            ),),
+        ))
+    elif findings is not None:
+        safe_emit(f"  [{completed}/{total}] Done {module_name}")
+        check_result = transform_symbolic_results(findings, sf.file_path, 0.0)
+        results.extend(check_result.results)
 
 
 @icontract.require(

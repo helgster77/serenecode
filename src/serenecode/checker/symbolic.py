@@ -53,88 +53,75 @@ def transform_symbolic_results(
 
     # Loop invariant: func_results contains transformed results for findings[0..i]
     for finding in findings:
-        details: list[Detail] = []
-        status: CheckStatus
-        level_achieved: int
-
-        if finding.outcome == "verified":
-            status = CheckStatus.PASSED
-            level_achieved = 5
-            details.append(Detail(
-                level=VerificationLevel.SYMBOLIC,
-                tool="crosshair",
-                finding_type="verified",
-                message=f"No counterexample found within analysis bounds: '{finding.function_name}'",
-            ))
-        elif finding.outcome == "counterexample":
-            status = CheckStatus.FAILED
-            level_achieved = 4
-            details.append(Detail(
-                level=VerificationLevel.SYMBOLIC,
-                tool="crosshair",
-                finding_type="counterexample",
-                message=finding.message,
-                counterexample=finding.counterexample,
-                suggestion=_suggest_fix_symbolic(finding),
-            ))
-        elif finding.outcome == "timeout":
-            status = CheckStatus.SKIPPED
-            level_achieved = 4
-            details.append(Detail(
-                level=VerificationLevel.SYMBOLIC,
-                tool="crosshair",
-                finding_type="timeout",
-                message=f"Symbolic verification timed out for '{finding.function_name}'",
-                suggestion=(
-                    "The solver ran out of time. Options: "
-                    "(1) increase --per-condition-timeout or --module-timeout, "
-                    "(2) simplify the function logic or contracts, "
-                    "(3) split the function into smaller pieces, "
-                    "(4) add tighter preconditions to reduce the search space"
-                ),
-            ))
-        elif finding.outcome == "unsupported":
-            status = CheckStatus.EXEMPT
-            level_achieved = 4
-            details.append(Detail(
-                level=VerificationLevel.SYMBOLIC,
-                tool="crosshair",
-                finding_type="unsupported",
-                message=f"Symbolic verification unsupported for '{finding.function_name}'",
-                suggestion=(
-                    "This function cannot be symbolically verified — "
-                    "it has non-primitive parameter types that the solver cannot generate. "
-                    "Ensure it is covered by property-based tests (L3) or explicit unit tests"
-                ),
-            ))
-        else:
-            status = CheckStatus.FAILED
-            level_achieved = 4
-            details.append(Detail(
-                level=VerificationLevel.SYMBOLIC,
-                tool="crosshair",
-                finding_type="error",
-                message=finding.message,
-                suggestion=(
-                    "Symbolic verification encountered an internal error. "
-                    "Check that the module imports cleanly and that all dependencies are installed"
-                ),
-            ))
-
-        func_results.append(FunctionResult(
-            function=finding.function_name,
-            file=file_path,
-            line=1,
-            level_requested=5,
-            level_achieved=level_achieved,
-            status=status,
-            details=tuple(details),
-        ))
+        func_results.append(_transform_single_finding(finding, file_path))
 
     return make_check_result(
-        tuple(func_results),
-        level_requested=5,
-        duration_seconds=duration_seconds,
+        tuple(func_results), level_requested=5, duration_seconds=duration_seconds,
+    )
+
+
+def _transform_single_finding(
+    finding: SymbolicFinding,
+    file_path: str,
+) -> FunctionResult:
+    """Transform a single symbolic finding into a FunctionResult."""
+    status, level_achieved, detail = _classify_symbolic_finding(finding)
+    return FunctionResult(
+        function=finding.function_name, file=file_path, line=1,
+        level_requested=5, level_achieved=level_achieved,
+        status=status, details=(detail,),
+    )
+
+
+def _classify_symbolic_finding(
+    finding: SymbolicFinding,
+) -> tuple[CheckStatus, int, Detail]:
+    """Classify a symbolic finding into status, level, and detail."""
+    if finding.outcome == "verified":
+        return CheckStatus.PASSED, 5, Detail(
+            level=VerificationLevel.SYMBOLIC, tool="crosshair",
+            finding_type="verified",
+            message=f"No counterexample found within analysis bounds: '{finding.function_name}'",
+        )
+    if finding.outcome == "counterexample":
+        return CheckStatus.FAILED, 4, Detail(
+            level=VerificationLevel.SYMBOLIC, tool="crosshair",
+            finding_type="counterexample",
+            message=finding.message,
+            counterexample=finding.counterexample,
+            suggestion=_suggest_fix_symbolic(finding),
+        )
+    if finding.outcome == "timeout":
+        return CheckStatus.SKIPPED, 4, Detail(
+            level=VerificationLevel.SYMBOLIC, tool="crosshair",
+            finding_type="timeout",
+            message=f"Symbolic verification timed out for '{finding.function_name}'",
+            suggestion=(
+                "The solver ran out of time. Options: "
+                "(1) increase --per-condition-timeout or --module-timeout, "
+                "(2) simplify the function logic or contracts, "
+                "(3) split the function into smaller pieces, "
+                "(4) add tighter preconditions to reduce the search space"
+            ),
+        )
+    if finding.outcome == "unsupported":
+        return CheckStatus.EXEMPT, 4, Detail(
+            level=VerificationLevel.SYMBOLIC, tool="crosshair",
+            finding_type="unsupported",
+            message=f"Symbolic verification unsupported for '{finding.function_name}'",
+            suggestion=(
+                "This function cannot be symbolically verified — "
+                "it has non-primitive parameter types that the solver cannot generate. "
+                "Ensure it is covered by property-based tests (L3) or explicit unit tests"
+            ),
+        )
+    return CheckStatus.FAILED, 4, Detail(
+        level=VerificationLevel.SYMBOLIC, tool="crosshair",
+        finding_type="error", message=finding.message,
+        suggestion=(
+            "Symbolic verification encountered an internal error. "
+            "Check that the module imports cleanly and that all dependencies are installed"
+        ),
     )
 
 

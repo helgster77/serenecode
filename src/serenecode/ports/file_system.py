@@ -84,6 +84,7 @@ class FileWriter(Protocol):
         """
         ...
 
+    # allow-unused: implements Protocol interface
     @icontract.require(lambda path: isinstance(path, str), "path must be a string")
     @icontract.ensure(lambda result: result is None, "result must be None")
     def ensure_directory(self, path: str) -> None:

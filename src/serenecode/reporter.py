@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import icontract
 
-from serenecode.models import CheckResult, CheckStatus, FunctionResult
+from serenecode.models import ADVISORY_FINDING_TYPES, CheckResult, CheckStatus, FunctionResult
 
 __all__ = [
     "format_human",
@@ -41,6 +41,8 @@ _MCP_EDITOR_HINT = (
 def format_human(check_result: CheckResult) -> str:
     """Format a CheckResult as human-readable terminal output.
 
+    Implements: REQ-006
+
     Condenses passing files into a single summary line and only
     expands files that contain failures or skips with details.
 
@@ -59,107 +61,9 @@ def format_human(check_result: CheckResult) -> str:
     lines.append("=" * 50)
     lines.append("")
 
-    # Group results by file
-    by_file: dict[str, list[FunctionResult]] = {}
-    # Loop invariant: by_file contains all results from results[0..i] grouped by file
-    for func_result in check_result.results:
-        by_file.setdefault(func_result.file, []).append(func_result)
-
-    # Loop invariant: lines contains formatted output for all files processed so far
-    for file_path, func_results in sorted(by_file.items()):
-        passed = [r for r in func_results if r.status == CheckStatus.PASSED]
-        failed = [r for r in func_results if r.status == CheckStatus.FAILED]
-        skipped = [r for r in func_results if r.status == CheckStatus.SKIPPED]
-        advisories = [
-            r for r in func_results
-            if r.status == CheckStatus.EXEMPT
-            and any(detail.finding_type == "dead_code" for detail in r.details)
-        ]
-        exempt = [
-            r for r in func_results
-            if r.status == CheckStatus.EXEMPT
-            and not any(detail.finding_type == "dead_code" for detail in r.details)
-        ]
-
-        # Compact summary for all-pass files
-        if not failed and not skipped and not advisories and not exempt:
-            lines.append(f"  {file_path} — {len(passed)} passed")
-            continue
-
-        # Compact summary for exempt-only files
-        if not failed and not skipped and not passed and not advisories:
-            lines.append(f"  {file_path} — exempt")
-            continue
-
-        # File header with counts
-        parts = []
-        if passed:
-            parts.append(f"{len(passed)} passed")
-        if failed:
-            parts.append(f"{len(failed)} failed")
-        if skipped:
-            parts.append(f"{len(skipped)} skipped")
-        if advisories:
-            parts.append(f"{len(advisories)} advisory")
-        if exempt:
-            parts.append(f"{len(exempt)} exempt")
-        lines.append(f"  {file_path} — {', '.join(parts)}")
-
-        # Only show non-passing results with details
-        # Loop invariant: lines contains output for non-passing func_results[0..j]
-        for func_result in func_results:
-            is_dead_code_advisory = (
-                func_result.status == CheckStatus.EXEMPT
-                and any(detail.finding_type == "dead_code" for detail in func_result.details)
-            )
-            if func_result.status == CheckStatus.PASSED:
-                continue
-            if func_result.status == CheckStatus.EXEMPT and not is_dead_code_advisory:
-                continue
-            if func_result.status == CheckStatus.FAILED:
-                marker = "FAIL"
-            elif func_result.status == CheckStatus.SKIPPED:
-                marker = "SKIP"
-            else:
-                marker = "NOTE"
-            lines.append(f"    [{marker}] {func_result.function} (line {func_result.line})")
-
-            # Loop invariant: lines contains all details for details[0..k]
-            for detail in func_result.details:
-                lines.append(f"           {detail.message}")
-                if detail.suggestion:
-                    lines.append(f"           -> {detail.suggestion}")
-                if detail.counterexample:
-                    lines.append(f"           counterexample: {detail.counterexample}")
-
-        lines.append("")
-
-    # Summary
-    lines.append("-" * 50)
-    summary = check_result.summary
-    summary_parts = [
-        f"{summary.total_functions} checked",
-        f"{summary.passed_count} passed",
-        f"{summary.failed_count} failed",
-        f"{summary.skipped_count} skipped",
-    ]
-    if summary.exempt_count > 0:
-        summary_parts.append(f"{summary.exempt_count} exempt")
-    if summary.advisory_count > 0:
-        summary_parts.append(f"{summary.advisory_count} advisory (dead code)")
-    lines.append(", ".join(summary_parts))
-    lines.append(f"Duration: {summary.duration_seconds:.3f}s")
-
-    if summary.failed_count >= 5:
-        lines.append("")
-        lines.append(
-            f"Tip: {summary.failed_count} findings to address. "
-            "Consider spawning subagents to fix groups of related "
-            "findings in parallel."
-        )
-
-    lines.append("")
-    lines.append(_MCP_EDITOR_HINT)
+    by_file = _group_results_by_file(check_result)
+    _format_human_file_sections(lines, by_file)
+    _format_human_summary(lines, check_result.summary)
 
     return "\n".join(lines)
 
@@ -208,6 +112,8 @@ def format_json(check_result: CheckResult) -> str:
 def format_html(check_result: CheckResult) -> str:
     """Format a CheckResult as an HTML verification report.
 
+    Implements: REQ-006
+
     Produces a self-contained HTML document with expandable sections,
     verification level badges, and styled results suitable for
     compliance documentation or CI/CD artifacts.
@@ -223,76 +129,8 @@ def format_html(check_result: CheckResult) -> str:
     status_text = "PASSED" if check_result.passed else "FAILED"
     summary = check_result.summary
 
-    # Group results by file
-    by_file: dict[str, list[FunctionResult]] = {}
-    # Loop invariant: by_file contains results grouped for results[0..i]
-    for func_result in check_result.results:
-        by_file.setdefault(func_result.file, []).append(func_result)
-
-    # Build file sections
-    file_sections: list[str] = []
-    # Loop invariant: file_sections contains HTML for files processed so far
-    for file_path, func_results in sorted(by_file.items()):
-        file_passed = all(r.status in (CheckStatus.PASSED, CheckStatus.EXEMPT) for r in func_results)
-        file_class = "passed" if file_passed else "failed"
-        file_icon = "&#x2714;" if file_passed else "&#x2718;"
-
-        rows: list[str] = []
-        # Loop invariant: rows contains table rows for func_results[0..j]
-        for fr in func_results:
-            is_dead_code_advisory = (
-                fr.status == CheckStatus.EXEMPT
-                and any(detail.finding_type == "dead_code" for detail in fr.details)
-            )
-            if fr.status == CheckStatus.EXEMPT and not is_dead_code_advisory:
-                continue
-
-            row_class = "pass-row" if fr.status in (CheckStatus.PASSED, CheckStatus.EXEMPT) else "fail-row"
-            status_badge = _level_badge(fr.level_achieved)
-            detail_html = ""
-            if fr.details:
-                detail_parts: list[str] = []
-                # Loop invariant: detail_parts contains detail HTML for details[0..k]
-                for d in fr.details:
-                    part = f'<div class="detail">{_escape_html(d.message)}'
-                    if d.suggestion:
-                        escaped_suggestion = _escape_html(d.suggestion)
-                        if "\n" in d.suggestion:
-                            part += f'<br><pre class="suggestion">{escaped_suggestion}</pre>'
-                        else:
-                            part += f'<br><span class="suggestion">&#x27A1; {escaped_suggestion}</span>'
-                    if d.counterexample is not None and d.counterexample:
-                        try:
-                            ce_text = json.dumps(d.counterexample, default=str)
-                        except (TypeError, ValueError):
-                            ce_text = str(d.counterexample)
-                        part += f'<br><span class="counterexample">Counterexample: {_escape_html(ce_text)}</span>'
-                    part += "</div>"
-                    detail_parts.append(part)
-                detail_html = "".join(detail_parts)
-
-            rows.append(
-                f'<tr class="{row_class}">'
-                f'<td>{_escape_html(fr.function)}</td>'
-                f"<td>{fr.line}</td>"
-                f"<td>{status_badge}</td>"
-                f"<td>{'advisory' if is_dead_code_advisory else fr.status.value}</td>"
-                f"<td>{detail_html}</td>"
-                f"</tr>"
-            )
-
-        table_html = "\n".join(rows)
-        file_sections.append(
-            f'<details class="file-section {file_class}">'
-            f"<summary>{file_icon} {_escape_html(file_path)}</summary>"
-            f'<table class="results-table">'
-            f"<thead><tr><th>Function</th><th>Line</th><th>Level</th><th>Status</th><th>Details</th></tr></thead>"
-            f"<tbody>{table_html}</tbody>"
-            f"</table>"
-            f"</details>"
-        )
-
-    files_html = "\n".join(file_sections)
+    by_file = _group_results_by_file(check_result)
+    files_html = _build_html_file_sections(by_file)
 
     return f"""\
 <!DOCTYPE html>
@@ -357,6 +195,199 @@ def format_html(check_result: CheckResult) -> str:
 </div>
 </body>
 </html>"""
+
+
+def _group_results_by_file(
+    check_result: CheckResult,
+) -> dict[str, list[FunctionResult]]:
+    """Group function results by file path."""
+    by_file: dict[str, list[FunctionResult]] = {}
+    # Loop invariant: by_file contains results grouped for results[0..i]
+    for func_result in check_result.results:
+        by_file.setdefault(func_result.file, []).append(func_result)
+    return by_file
+
+
+def _format_human_file_sections(
+    lines: list[str],
+    by_file: dict[str, list[FunctionResult]],
+) -> None:
+    """Append human-formatted file sections to lines."""
+    # Loop invariant: lines contains formatted output for all files processed so far
+    for file_path, func_results in sorted(by_file.items()):
+        passed = [r for r in func_results if r.status == CheckStatus.PASSED]
+        failed = [r for r in func_results if r.status == CheckStatus.FAILED]
+        skipped = [r for r in func_results if r.status == CheckStatus.SKIPPED]
+        advisories = [
+            r for r in func_results
+            if r.status == CheckStatus.EXEMPT
+            and any(detail.finding_type in ADVISORY_FINDING_TYPES for detail in r.details)
+        ]
+        exempt = [
+            r for r in func_results
+            if r.status == CheckStatus.EXEMPT
+            and not any(detail.finding_type in ADVISORY_FINDING_TYPES for detail in r.details)
+        ]
+
+        if not failed and not skipped and not advisories and not exempt:
+            lines.append(f"  {file_path} — {len(passed)} passed")
+            continue
+        if not failed and not skipped and not passed and not advisories:
+            lines.append(f"  {file_path} — exempt")
+            continue
+
+        parts = []
+        if passed:
+            parts.append(f"{len(passed)} passed")
+        if failed:
+            parts.append(f"{len(failed)} failed")
+        if skipped:
+            parts.append(f"{len(skipped)} skipped")
+        if advisories:
+            parts.append(f"{len(advisories)} advisory")
+        if exempt:
+            parts.append(f"{len(exempt)} exempt")
+        lines.append(f"  {file_path} — {', '.join(parts)}")
+
+        _format_human_func_results(lines, func_results)
+        lines.append("")
+
+
+def _format_human_func_results(
+    lines: list[str],
+    func_results: list[FunctionResult],
+) -> None:
+    """Append non-passing function results with details to lines."""
+    # Loop invariant: lines contains output for non-passing func_results[0..j]
+    for func_result in func_results:
+        is_dead_code_advisory = (
+            func_result.status == CheckStatus.EXEMPT
+            and any(detail.finding_type in ADVISORY_FINDING_TYPES for detail in func_result.details)
+        )
+        if func_result.status == CheckStatus.PASSED:
+            continue
+        if func_result.status == CheckStatus.EXEMPT and not is_dead_code_advisory:
+            continue
+        if func_result.status == CheckStatus.FAILED:
+            marker = "FAIL"
+        elif func_result.status == CheckStatus.SKIPPED:
+            marker = "SKIP"
+        else:
+            marker = "NOTE"
+        lines.append(f"    [{marker}] {func_result.function} (line {func_result.line})")
+
+        # Loop invariant: lines contains all details for details[0..k]
+        for detail in func_result.details:
+            lines.append(f"           {detail.message}")
+            if detail.suggestion:
+                lines.append(f"           -> {detail.suggestion}")
+            if detail.counterexample:
+                lines.append(f"           counterexample: {detail.counterexample}")
+
+
+def _format_human_summary(lines: list[str], summary: object) -> None:
+    """Append summary section and MCP hint to lines."""
+    lines.append("-" * 50)
+    summary_parts = [
+        f"{summary.total_functions} checked",
+        f"{summary.passed_count} passed",
+        f"{summary.failed_count} failed",
+        f"{summary.skipped_count} skipped",
+    ]
+    if summary.exempt_count > 0:
+        summary_parts.append(f"{summary.exempt_count} exempt")
+    if summary.advisory_count > 0:
+        summary_parts.append(f"{summary.advisory_count} advisory")
+    lines.append(", ".join(summary_parts))
+    lines.append(f"Duration: {summary.duration_seconds:.3f}s")
+
+    if summary.failed_count >= 5:
+        lines.append("")
+        lines.append(
+            f"Tip: {summary.failed_count} findings to address. "
+            "Consider spawning subagents to fix groups of related "
+            "findings in parallel."
+        )
+
+    lines.append("")
+    lines.append(_MCP_EDITOR_HINT)
+
+
+def _build_html_file_sections(
+    by_file: dict[str, list[FunctionResult]],
+) -> str:
+    """Build the HTML file sections for the report."""
+    file_sections: list[str] = []
+    # Loop invariant: file_sections contains HTML for files processed so far
+    for file_path, func_results in sorted(by_file.items()):
+        file_passed = all(r.status in (CheckStatus.PASSED, CheckStatus.EXEMPT) for r in func_results)
+        file_class = "passed" if file_passed else "failed"
+        file_icon = "&#x2714;" if file_passed else "&#x2718;"
+
+        rows = _build_html_rows(func_results)
+        table_html = "\n".join(rows)
+        file_sections.append(
+            f'<details class="file-section {file_class}">'
+            f"<summary>{file_icon} {_escape_html(file_path)}</summary>"
+            f'<table class="results-table">'
+            f"<thead><tr><th>Function</th><th>Line</th><th>Level</th><th>Status</th><th>Details</th></tr></thead>"
+            f"<tbody>{table_html}</tbody>"
+            f"</table>"
+            f"</details>"
+        )
+
+    return "\n".join(file_sections)
+
+
+def _build_html_rows(func_results: list[FunctionResult]) -> list[str]:
+    """Build HTML table rows for a file's function results."""
+    rows: list[str] = []
+    # Loop invariant: rows contains table rows for func_results[0..j]
+    for fr in func_results:
+        is_dead_code_advisory = (
+            fr.status == CheckStatus.EXEMPT
+            and any(detail.finding_type in ADVISORY_FINDING_TYPES for detail in fr.details)
+        )
+        if fr.status == CheckStatus.EXEMPT and not is_dead_code_advisory:
+            continue
+
+        row_class = "pass-row" if fr.status in (CheckStatus.PASSED, CheckStatus.EXEMPT) else "fail-row"
+        status_badge = _level_badge(fr.level_achieved)
+        detail_html = _build_html_detail(fr.details) if fr.details else ""
+
+        rows.append(
+            f'<tr class="{row_class}">'
+            f'<td>{_escape_html(fr.function)}</td>'
+            f"<td>{fr.line}</td>"
+            f"<td>{status_badge}</td>"
+            f"<td>{'advisory' if is_dead_code_advisory else fr.status.value}</td>"
+            f"<td>{detail_html}</td>"
+            f"</tr>"
+        )
+    return rows
+
+
+def _build_html_detail(details: tuple) -> str:
+    """Build HTML for a function result's detail entries."""
+    detail_parts: list[str] = []
+    # Loop invariant: detail_parts contains detail HTML for details[0..k]
+    for d in details:
+        part = f'<div class="detail">{_escape_html(d.message)}'
+        if d.suggestion:
+            escaped_suggestion = _escape_html(d.suggestion)
+            if "\n" in d.suggestion:
+                part += f'<br><pre class="suggestion">{escaped_suggestion}</pre>'
+            else:
+                part += f'<br><span class="suggestion">&#x27A1; {escaped_suggestion}</span>'
+        if d.counterexample is not None and d.counterexample:
+            try:
+                ce_text = json.dumps(d.counterexample, default=str)
+            except (TypeError, ValueError):
+                ce_text = str(d.counterexample)
+            part += f'<br><span class="counterexample">Counterexample: {_escape_html(ce_text)}</span>'
+        part += "</div>"
+        detail_parts.append(part)
+    return "".join(detail_parts)
 
 
 @icontract.require(lambda level: level >= 0, "level must be non-negative")

@@ -207,7 +207,10 @@ def broken(x: int, y: int) -> int:
 
 
 class TestPipelineLevel1:
-    """Tests for pipeline running Level 1 only."""
+    """Tests for pipeline running Level 1 only.
+
+    Verifies: REQ-029, INT-001
+    """
 
     def test_valid_source_passes(self) -> None:
         sf = SourceFile(
@@ -322,6 +325,7 @@ class TestPipelineEarlyTermination:
     """Tests for early termination behavior."""
 
     def test_stops_at_level_1_failure(self) -> None:
+        """Verifies: REQ-030"""
         sf = SourceFile(
             file_path="test.py",
             module_path="test.py",
@@ -756,26 +760,26 @@ class TestIsTestFileExempt:
 
     def test_ports_module_is_exempt(self) -> None:
         """Branch (line 515): pattern matches → return True."""
-        from serenecode.core.pipeline import _is_test_file_exempt
+        from serenecode.core.pipeline_helpers import is_test_file_exempt as _is_test_file_exempt
         assert _is_test_file_exempt("serenecode/ports/file_system.py") is True
 
     def test_templates_module_is_exempt(self) -> None:
-        from serenecode.core.pipeline import _is_test_file_exempt
+        from serenecode.core.pipeline_helpers import is_test_file_exempt as _is_test_file_exempt
         assert _is_test_file_exempt("serenecode/templates/content.py") is True
 
     def test_exceptions_module_is_exempt(self) -> None:
-        from serenecode.core.pipeline import _is_test_file_exempt
+        from serenecode.core.pipeline_helpers import is_test_file_exempt as _is_test_file_exempt
         assert _is_test_file_exempt("serenecode/exceptions.py") is True
 
     def test_fixture_module_is_exempt(self) -> None:
-        from serenecode.core.pipeline import _is_test_file_exempt
+        from serenecode.core.pipeline_helpers import is_test_file_exempt as _is_test_file_exempt
         assert _is_test_file_exempt("tests/fixtures/broken.py") is True
 
     def test_regular_module_is_not_exempt(self) -> None:
         """Regular core modules are NOT exempt — they need test files."""
-        from serenecode.core.pipeline import _is_test_file_exempt
+        from serenecode.core.pipeline_helpers import is_test_file_exempt as _is_test_file_exempt
         assert _is_test_file_exempt("serenecode/core/pipeline.py") is False
 
     def test_adapter_module_is_not_exempt(self) -> None:
-        from serenecode.core.pipeline import _is_test_file_exempt
+        from serenecode.core.pipeline_helpers import is_test_file_exempt as _is_test_file_exempt
         assert _is_test_file_exempt("serenecode/adapters/local_fs.py") is False

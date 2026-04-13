@@ -8,7 +8,8 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from serenecode.adapters.local_fs import LocalFileReader, LocalFileWriter
-from serenecode.cli import _print_mcp_setup_snippet, main
+from serenecode.cli import main
+from serenecode.cli_helpers import _print_mcp_setup_snippet
 from serenecode.init import initialize_project, merge_claude_md
 
 
@@ -195,7 +196,7 @@ class TestPrintMcpSetupSnippet:
 
     def test_when_mcp_installed_skips_install_step(self) -> None:
         lines: list[str] = []
-        with patch("serenecode.cli._mcp_extra_installed", return_value=True):
+        with patch("serenecode.cli_helpers._mcp_extra_installed", return_value=True):
             _print_mcp_setup_snippet(lines.append)
         text = "\n".join(lines)
         assert "pip install 'serenecode[mcp]'" not in text
@@ -204,7 +205,7 @@ class TestPrintMcpSetupSnippet:
 
     def test_when_mcp_not_installed_includes_install_step(self) -> None:
         lines: list[str] = []
-        with patch("serenecode.cli._mcp_extra_installed", return_value=False):
+        with patch("serenecode.cli_helpers._mcp_extra_installed", return_value=False):
             _print_mcp_setup_snippet(lines.append)
         text = "\n".join(lines)
         # PyPI install path
@@ -220,7 +221,7 @@ class TestPrintMcpSetupSnippet:
 
     def test_snippet_mentions_other_mcp_clients(self) -> None:
         lines: list[str] = []
-        with patch("serenecode.cli._mcp_extra_installed", return_value=True):
+        with patch("serenecode.cli_helpers._mcp_extra_installed", return_value=True):
             _print_mcp_setup_snippet(lines.append)
         text = "\n".join(lines)
         assert "Cursor" in text
@@ -229,7 +230,7 @@ class TestPrintMcpSetupSnippet:
 
     def test_snippet_points_at_serenecode_md_section(self) -> None:
         lines: list[str] = []
-        with patch("serenecode.cli._mcp_extra_installed", return_value=True):
+        with patch("serenecode.cli_helpers._mcp_extra_installed", return_value=True):
             _print_mcp_setup_snippet(lines.append)
         text = "\n".join(lines)
         assert "MCP Integration" in text

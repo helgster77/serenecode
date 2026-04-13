@@ -117,12 +117,12 @@ class TestHypothesisAdapterInternals:
     """Tests for Hypothesis adapter internal functions."""
 
     def test_strategy_for_int(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.adapters.hypothesis_strategies import _get_strategy_for_annotation
         strategy = _get_strategy_for_annotation(int)
         assert strategy is not None
 
     def test_callable_stub_can_return_check_result(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _make_callable_stub
+        from serenecode.adapters.hypothesis_strategies import _make_callable_stub
         from serenecode.models import CheckResult
 
         stub = _make_callable_stub(Callable[[str], CheckResult])
@@ -131,37 +131,37 @@ class TestHypothesisAdapterInternals:
         assert isinstance(result, CheckResult)
 
     def test_strategy_for_float(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.adapters.hypothesis_strategies import _get_strategy_for_annotation
         strategy = _get_strategy_for_annotation(float)
         assert strategy is not None
 
     def test_strategy_for_str(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.adapters.hypothesis_strategies import _get_strategy_for_annotation
         strategy = _get_strategy_for_annotation(str)
         assert strategy is not None
 
     def test_strategy_for_bool(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.adapters.hypothesis_strategies import _get_strategy_for_annotation
         strategy = _get_strategy_for_annotation(bool)
         assert strategy is not None
 
     def test_strategy_for_bytes(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.adapters.hypothesis_strategies import _get_strategy_for_annotation
         strategy = _get_strategy_for_annotation(bytes)
         assert strategy is not None
 
     def test_no_strategy_for_none(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.adapters.hypothesis_strategies import _get_strategy_for_annotation
         strategy = _get_strategy_for_annotation(None)
         assert strategy is None
 
     def test_strategy_for_list_int(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.adapters.hypothesis_strategies import _get_strategy_for_annotation
         strategy = _get_strategy_for_annotation(list[int])
         assert strategy is not None
 
     def test_strategy_for_protocol_stub(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.adapters.hypothesis_strategies import _get_strategy_for_annotation
         from serenecode.ports.file_system import FileReader
 
         strategy = _get_strategy_for_annotation(FileReader)
@@ -169,7 +169,7 @@ class TestHypothesisAdapterInternals:
         assert strategy is not None
 
     def test_strategy_for_ast_module(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.adapters.hypothesis_strategies import _get_strategy_for_annotation
         import ast
 
         strategy = _get_strategy_for_annotation(ast.Module)
@@ -177,7 +177,7 @@ class TestHypothesisAdapterInternals:
         assert strategy is not None
 
     def test_strategy_for_check_result(self) -> None:
-        from serenecode.adapters.hypothesis_adapter import _get_strategy_for_annotation
+        from serenecode.adapters.hypothesis_strategies import _get_strategy_for_annotation
         from serenecode.models import CheckResult
 
         strategy = _get_strategy_for_annotation(CheckResult)
@@ -292,7 +292,7 @@ class TestCrossHairAdapterInternals:
     """
 
     def test_parse_counterexample_with_args(self) -> None:
-        from serenecode.adapters.crosshair_adapter import _parse_counterexample
+        from serenecode.support.crosshair_parsing import _parse_counterexample
         msg = "when calling func(x=5, y=-1)"
         result = _parse_counterexample(msg)
         assert result is not None
@@ -300,19 +300,19 @@ class TestCrossHairAdapterInternals:
         assert result["y"] == "-1"
 
     def test_parse_counterexample_no_match(self) -> None:
-        from serenecode.adapters.crosshair_adapter import _parse_counterexample
+        from serenecode.support.crosshair_parsing import _parse_counterexample
         msg = "Postcondition violated"
         result = _parse_counterexample(msg)
         assert result is None
 
     def test_parse_cli_output_empty(self) -> None:
-        from serenecode.adapters.crosshair_adapter import _parse_cli_output
+        from serenecode.support.crosshair_parsing import _parse_cli_output
         findings = _parse_cli_output("test_module", "", "")
         assert len(findings) == 1
         assert findings[0].outcome == "verified"
 
     def test_parse_cli_output_error(self) -> None:
-        from serenecode.adapters.crosshair_adapter import _parse_cli_output
+        from serenecode.support.crosshair_parsing import _parse_cli_output
         findings = _parse_cli_output(
             "test_module",
             "test.py:10: error: Postcondition failed\n",
@@ -322,7 +322,7 @@ class TestCrossHairAdapterInternals:
         assert findings[0].outcome == "counterexample"
 
     def test_parse_cli_output_stderr(self) -> None:
-        from serenecode.adapters.crosshair_adapter import _parse_cli_output
+        from serenecode.support.crosshair_parsing import _parse_cli_output
         findings = _parse_cli_output("test_module", "", "Some error occurred")
         assert len(findings) == 1
         assert findings[0].outcome == "error"

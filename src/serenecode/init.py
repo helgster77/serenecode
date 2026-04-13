@@ -61,7 +61,8 @@ only SPEC.md does. Validate with `serenecode spec SPEC.md`.
 functions, modules, and contracts. Get user approval before writing code.
 4. Implement and tag with `Implements: REQ-xxx` / `Implements: INT-xxx`. \
 Test and tag with `Verifies: REQ-xxx` / `Verifies: INT-xxx`.
-5. Run `serenecode check src/ --spec SPEC.md` to verify full traceability.
+5. Run the full verification command from the Verification section above \
+(with `--spec SPEC.md` if not auto-discovered) to verify traceability and correctness together.
 """
 
 _TRACEABILITY_REMINDER = """\
@@ -86,7 +87,8 @@ Validate with `serenecode spec SPEC.md`.
 functions, modules, and contracts. Get user approval before writing code.
 4. Implement and tag with `Implements: REQ-xxx` / `Implements: INT-xxx`. \
 Test and tag with `Verifies: REQ-xxx` / `Verifies: INT-xxx`.
-5. Run `serenecode check src/ --spec SPEC.md` to verify full traceability.
+5. Run the full verification command from the Verification section above \
+(with `--spec SPEC.md` if not auto-discovered) to verify traceability and correctness together.
 """
 
 _CLAUDE_MD_BASE = {
@@ -121,21 +123,16 @@ Also use `serenecode_suggest_contracts`, `serenecode_verify_fixed`, \
 `serenecode_req_status`, `serenecode_integration_status` for traceability; \
 `serenecode_dead_code` for dead-code review.
 
-**CLI — batch / CI:**
+**CLI — batch / CI (use the full command, not just structural):**
 
-Quick structural check (seconds):
-```bash
-serenecode check src/ --structural
-```
-
-Full verification with property testing (minutes):
+Full verification (required before considering any task complete):
 ```bash
 serenecode check src/ --level 4 --allow-code-execution
 ```
 
-Spec traceability check:
+Quick structural smoke test (seconds, use only during active iteration):
 ```bash
-serenecode check src/ --spec SPEC.md
+serenecode check src/ --structural
 ```
 
 Levels 3-6 import and execute project modules. Only use \
@@ -182,26 +179,16 @@ Use `serenecode_suggest_contracts`, `serenecode_verify_fixed`, \
 `serenecode_uncovered`, `serenecode_req_status` / `serenecode_integration_status`, \
 and `serenecode_dead_code` as documented in SERENECODE.md.
 
-**CLI — batch / CI:**
+**CLI — batch / CI (use the full command, not just structural):**
 
-Quick structural check (seconds):
-```bash
-serenecode check src/ --structural
-```
-
-Full verification with property testing (minutes):
-```bash
-serenecode check src/ --level 4 --allow-code-execution
-```
-
-Full verification including symbolic and compositional (minutes):
+Full verification (required before considering any task complete):
 ```bash
 serenecode check src/ --level 6 --allow-code-execution
 ```
 
-Spec traceability check:
+Quick structural smoke test (seconds, use only during active iteration):
 ```bash
-serenecode check src/ --spec SPEC.md
+serenecode check src/ --structural
 ```
 
 Levels 3-6 import and execute project modules. Only use \
@@ -241,16 +228,14 @@ for setup hints.
 claude mcp add serenecode -- uv run serenecode mcp
 ```
 
-**CLI — quick check:**
+**CLI (use before considering any task complete):**
 
 ```bash
-serenecode check src/ --structural
+serenecode check src/
 ```
 
-**Spec traceability check:**
-```bash
-serenecode check src/ --spec SPEC.md
-```
+This runs the project's configured verification level. Add `--allow-code-execution` \
+for deeper checks. Use `--structural` only as a quick smoke test during iteration.
 
 If issues are found, fix them before moving on.
 
@@ -357,8 +342,8 @@ def generate_claude_md_section(
     "serenecode_section must be a non-empty string",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, str),
-    "result must be a string",
+    lambda serenecode_section, result: serenecode_section in result,
+    "result must contain the serenecode section",
 )
 def merge_claude_md(existing_content: str | None, serenecode_section: str) -> str:
     """Merge the Serenecode section into existing CLAUDE.md content.
@@ -392,8 +377,8 @@ def merge_claude_md(existing_content: str | None, serenecode_section: str) -> st
     "template must be a valid template name",
 )
 @icontract.ensure(
-    lambda result: isinstance(result, InitResult),
-    "result must be an InitResult",
+    lambda result: result.serenecode_md_created or result.serenecode_md_existed,
+    "initialization must either create or find existing SERENECODE.md",
 )
 def initialize_project(
     directory: str,
@@ -442,6 +427,7 @@ def initialize_project(
         # Best-effort backup of the existing file before overwrite
         if serenecode_exists:
             backup_path = serenecode_path + ".bak"
+            # silent-except: best-effort backup, do not block init on backup failure
             try:
                 existing_content = file_reader.read_file(serenecode_path)
                 file_writer.write_file(backup_path, existing_content)
