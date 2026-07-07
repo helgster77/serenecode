@@ -306,6 +306,9 @@ def validate_spec(spec_content: str) -> CheckResult:
     )
 
 
+@icontract.require(lambda line: isinstance(line, int) and line >= 1, "line must be >= 1")
+@icontract.require(lambda finding_type: is_non_empty_string(finding_type), "finding_type must be non-empty")
+@icontract.ensure(lambda result: result.status == CheckStatus.FAILED and result.file == "SPEC.md", "result must be a SPEC.md failure")
 def _spec_failure(
     line: int, finding_type: str, message: str, suggestion: str,
 ) -> FunctionResult:
@@ -321,6 +324,9 @@ def _spec_failure(
     )
 
 
+@icontract.require(lambda sections: isinstance(sections, tuple), "sections must be a tuple")
+@icontract.ensure(lambda result: isinstance(result, tuple) and len(result) == 2, "result must be a (reqs, ints) pair")
+@icontract.ensure(lambda sections, result: len(result[0]) + len(result[1]) <= len(sections), "split groups cannot exceed input sections")
 def _split_sections(
     sections: tuple[tuple[str, str | None, int, tuple[tuple[str, int], ...]], ...],
 ) -> tuple[list[tuple[str, str | None, int]], list[tuple[str, str | None, int, tuple[tuple[str, int], ...]]]]:
@@ -338,6 +344,9 @@ def _split_sections(
     return declared_reqs, declared_ints
 
 
+@icontract.require(lambda sections: isinstance(sections, tuple), "sections must be a tuple")
+@icontract.require(lambda declared_reqs, declared_ints: isinstance(declared_reqs, list) and isinstance(declared_ints, list), "declared groups must be lists")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def _validate_spec_structure(
     sections: tuple[tuple[str, str | None, int, tuple[tuple[str, int], ...]], ...],
     declared_reqs: list[tuple[str, str | None, int]],
@@ -367,6 +376,9 @@ def _validate_spec_structure(
     return results
 
 
+@icontract.require(lambda declared_reqs, declared_ints: isinstance(declared_reqs, list) and isinstance(declared_ints, list), "declared groups must be lists")
+@icontract.require(lambda declared_reqs, declared_ints: len(declared_reqs) + len(declared_ints) > 0, "at least one declared item is required")
+@icontract.ensure(lambda result: result.status == CheckStatus.PASSED, "result must be a passing result")
 def _spec_valid_result(
     declared_reqs: list[tuple[str, str | None, int]],
     declared_ints: list[tuple[str, str | None, int, tuple[tuple[str, int], ...]]],
@@ -485,6 +497,9 @@ def check_spec_traceability(
     )
 
 
+@icontract.require(lambda source_files: isinstance(source_files, tuple), "source_files must be a tuple")
+@icontract.require(lambda test_sources: isinstance(test_sources, tuple), "test_sources must be a tuple")
+@icontract.ensure(lambda result: isinstance(result, tuple) and len(result) == 2, "result must be an (implemented, verified) pair")
 def _collect_all_references(
     source_files: tuple[SourceFile, ...],
     test_sources: tuple[tuple[str, str], ...],
@@ -499,6 +514,9 @@ def _collect_all_references(
     return implemented, verified
 
 
+@icontract.require(lambda identifier: is_non_empty_string(identifier), "identifier must be non-empty")
+@icontract.require(lambda impl_refs, test_refs: isinstance(impl_refs, list) and isinstance(test_refs, list), "refs must be lists")
+@icontract.ensure(lambda identifier, result: result.function == identifier, "result must be attributed to the declared item")
 def _traceability_item_finding(
     identifier: str,
     impl_refs: list[tuple[str, str, int]],
@@ -556,6 +574,9 @@ def _traceability_item_finding(
     )
 
 
+@icontract.require(lambda declared_items: isinstance(declared_items, frozenset), "declared_items must be a frozenset")
+@icontract.require(lambda implemented, verified: isinstance(implemented, dict) and isinstance(verified, dict), "reference maps must be dicts")
+@icontract.ensure(lambda declared_items, result: len(result) == len(declared_items), "one finding is produced per declared item")
 def _traceability_coverage_findings(
     declared_items: frozenset[str],
     implemented: dict[str, list[tuple[str, str, int]]],
@@ -573,6 +594,9 @@ def _traceability_coverage_findings(
     return results
 
 
+@icontract.require(lambda orphans: isinstance(orphans, set), "orphans must be a set")
+@icontract.require(lambda implemented, verified: isinstance(implemented, dict) and isinstance(verified, dict), "reference maps must be dicts")
+@icontract.ensure(lambda orphans, result: len(result) <= len(orphans), "at most one finding is produced per orphan")
 def _orphan_reference_findings(
     orphans: set[str],
     implemented: dict[str, list[tuple[str, str, int]]],
@@ -737,6 +761,10 @@ def _integration_validation_findings(
     return results
 
 
+@icontract.require(lambda identifier: is_non_empty_string(identifier), "identifier must be non-empty")
+@icontract.require(lambda heading_line: isinstance(heading_line, int) and heading_line >= 1, "heading_line must be >= 1")
+@icontract.require(lambda fields: isinstance(fields, dict), "fields must be a dict")
+@icontract.ensure(lambda result: isinstance(result, list) and len(result) <= 3, "at most one finding per required field")
 def _validate_required_fields(
     identifier: str,
     heading_line: int,
@@ -762,6 +790,8 @@ def _validate_required_fields(
     return results
 
 
+@icontract.require(lambda identifier, fields: is_non_empty_string(identifier) and isinstance(fields, dict), "identifier must be non-empty and fields a dict")
+@icontract.ensure(lambda result: isinstance(result, list) and len(result) <= 1, "at most one finding for the Kind field")
 def _validate_kind_field(
     identifier: str,
     fields: dict[str, tuple[str, int]],
@@ -786,6 +816,9 @@ def _validate_kind_field(
     )]
 
 
+@icontract.require(lambda identifier, fields: is_non_empty_string(identifier) and isinstance(fields, dict), "identifier must be non-empty and fields a dict")
+@icontract.require(lambda declared_req_ids: isinstance(declared_req_ids, frozenset), "declared_req_ids must be a frozenset")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def _validate_supports_field(
     identifier: str,
     fields: dict[str, tuple[str, int]],

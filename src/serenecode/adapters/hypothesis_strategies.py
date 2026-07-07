@@ -17,7 +17,7 @@ import inspect
 import re
 import types
 import typing
-from typing import Callable, cast
+from typing import Any, Callable, cast
 
 import icontract
 
@@ -85,6 +85,8 @@ def _get_strategy_for_annotation_with_seen(
     return _strategy_for_class_type(annotation, seen_classes)
 
 
+@icontract.require(lambda annotation: annotation is None or isinstance(annotation, object), "annotation must be a Python object or None")
+@icontract.ensure(lambda result: result is None or hasattr(result, "map"), "result must be a Hypothesis strategy or None")
 def _strategy_for_basic_type(annotation: type | None) -> SearchStrategy | None:
     """Return strategy for basic scalar types, or None."""
     strategy_map: dict[type, SearchStrategy] = {
@@ -105,6 +107,9 @@ def _strategy_for_basic_type(annotation: type | None) -> SearchStrategy | None:
     return None
 
 
+@icontract.require(lambda annotation: annotation is not None, "annotation must be provided")
+@icontract.require(lambda seen_classes: isinstance(seen_classes, frozenset), "seen_classes must be a frozenset")
+@icontract.ensure(lambda result: result is None or hasattr(result, "map"), "result must be a Hypothesis strategy or None")
 def _strategy_for_generic_type(
     annotation: type | object,
     seen_classes: frozenset[type],
@@ -142,8 +147,11 @@ def _strategy_for_generic_type(
     return None
 
 
+@icontract.require(lambda args: isinstance(args, tuple), "args must be a tuple")
+@icontract.require(lambda seen_classes: isinstance(seen_classes, frozenset), "seen_classes must be a frozenset")
+@icontract.ensure(lambda result: result is None or hasattr(result, "map"), "result must be a Hypothesis strategy or None")
 def _strategy_for_tuple_type(
-    args: tuple[type, ...],
+    args: tuple[Any, ...],
     seen_classes: frozenset[type],
 ) -> SearchStrategy | None:
     """Return strategy for tuple types."""
@@ -160,6 +168,9 @@ def _strategy_for_tuple_type(
     return st.tuples(*inner_strats)
 
 
+@icontract.require(lambda annotation: annotation is not None, "annotation must be provided")
+@icontract.require(lambda seen_classes: isinstance(seen_classes, frozenset), "seen_classes must be a frozenset")
+@icontract.ensure(lambda result: result is None or hasattr(result, "map"), "result must be a Hypothesis strategy or None")
 def _strategy_for_class_type(
     annotation: type | object,
     seen_classes: frozenset[type],
@@ -463,6 +474,7 @@ def _strategy_for_model_type(
     return None
 
 
+@icontract.ensure(lambda result: isinstance(result, dict) and all(key in result for key in ("non_empty", "path", "name")), "result must contain the model text strategies")
 def _model_text_strategies() -> dict[str, SearchStrategy]:
     """Return reusable text strategies for model types."""
     return {
@@ -481,9 +493,13 @@ def _model_text_strategies() -> dict[str, SearchStrategy]:
     }
 
 
+@icontract.require(lambda detail_factory: callable(detail_factory), "detail_factory must be callable")
+@icontract.require(lambda verification_level_values: isinstance(verification_level_values, list) and len(verification_level_values) > 0, "verification_level_values must be a non-empty list")
+@icontract.require(lambda text_strats: isinstance(text_strats, dict) and "non_empty" in text_strats and "name" in text_strats, "text_strats must contain non_empty and name strategies")
+@icontract.ensure(lambda result: hasattr(result, "map"), "result must be a Hypothesis strategy")
 def _build_detail_strategy(
     detail_factory: Callable[..., object],
-    verification_level_values: list,
+    verification_level_values: list[Any],
     text_strats: dict[str, SearchStrategy],
 ) -> SearchStrategy:
     """Build a Hypothesis strategy for Detail objects."""
@@ -507,9 +523,14 @@ def _build_detail_strategy(
     )
 
 
+@icontract.require(lambda function_result_factory: callable(function_result_factory), "function_result_factory must be callable")
+@icontract.require(lambda check_status_values: isinstance(check_status_values, list) and len(check_status_values) > 0, "check_status_values must be a non-empty list")
+@icontract.require(lambda detail_strategy: hasattr(detail_strategy, "map"), "detail_strategy must be a Hypothesis strategy")
+@icontract.require(lambda text_strats: isinstance(text_strats, dict) and "name" in text_strats and "path" in text_strats, "text_strats must contain name and path strategies")
+@icontract.ensure(lambda result: hasattr(result, "map"), "result must be a Hypothesis strategy")
 def _build_function_result_strategy(
     function_result_factory: Callable[..., object],
-    check_status_values: list,
+    check_status_values: list[Any],
     detail_strategy: SearchStrategy,
     text_strats: dict[str, SearchStrategy],
 ) -> SearchStrategy:
@@ -531,6 +552,11 @@ def _build_function_result_strategy(
     return _function_result_strategy()
 
 
+@icontract.require(lambda annotation: annotation is not None, "annotation must be provided")
+@icontract.require(lambda module_globals: isinstance(module_globals, dict), "module_globals must be a dict")
+@icontract.require(lambda canonical_summary: inspect.isclass(canonical_summary), "canonical_summary must be a class")
+@icontract.require(lambda function_result_strategy: hasattr(function_result_strategy, "map"), "function_result_strategy must be a Hypothesis strategy")
+@icontract.ensure(lambda result: hasattr(result, "map"), "result must be a Hypothesis strategy")
 def _build_check_result_strategy(
     annotation: type | object,
     module_globals: dict[str, object],

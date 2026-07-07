@@ -124,6 +124,8 @@ def build_server(
     return server
 
 
+@icontract.require(lambda server: server is not None, "server must be provided")
+@icontract.ensure(lambda result: result is None, "registration helpers return None")
 def _register_verification_tools(server: FastMCP[Any]) -> None:
     """Register core verification tools on the server."""
     server.tool(
@@ -162,6 +164,8 @@ def _register_verification_tools(server: FastMCP[Any]) -> None:
     )(cast(Any, tool_verify_fixed))
 
 
+@icontract.require(lambda server: server is not None, "server must be provided")
+@icontract.ensure(lambda result: result is None, "registration helpers return None")
 def _register_authoring_tools(server: FastMCP[Any]) -> None:
     """Register authoring helper tools on the server."""
     server.tool(
@@ -188,6 +192,8 @@ def _register_authoring_tools(server: FastMCP[Any]) -> None:
     )(cast(Any, tool_suggest_test))
 
 
+@icontract.require(lambda server: server is not None, "server must be provided")
+@icontract.ensure(lambda result: result is None, "registration helpers return None")
 def _register_spec_tools(server: FastMCP[Any]) -> None:
     """Register spec / REQ traceability tools on the server."""
     server.tool(
@@ -239,6 +245,8 @@ def _register_spec_tools(server: FastMCP[Any]) -> None:
     )(cast(Any, tool_orphans))
 
 
+@icontract.require(lambda server: server is not None, "server must be provided")
+@icontract.ensure(lambda result: result is None, "registration helpers return None")
 def _register_analysis_tools(server: FastMCP[Any]) -> None:
     """Register dead-code and module-health tools on the server."""
     server.tool(
@@ -258,6 +266,8 @@ def _register_analysis_tools(server: FastMCP[Any]) -> None:
     )(cast(Any, tool_module_health))
 
 
+@icontract.require(lambda server: server is not None, "server must be provided")
+@icontract.ensure(lambda result: result is None, "registration helpers return None")
 def _register_resources(server: FastMCP[Any]) -> None:
     """Register read-only context resources on the server."""
     server.resource(

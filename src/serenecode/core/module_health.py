@@ -26,7 +26,7 @@ from serenecode.models import (
     FunctionResult,
     VerificationLevel,
 )
-from serenecode.source_discovery import SourceFile
+from serenecode.core.pipeline import SourceFile
 
 _BANNER_PATTERN = re.compile(r"^#\s*[-=]{3,}\s*(.+?)\s*[-=]*\s*$")
 
@@ -61,10 +61,12 @@ def suggest_split_points(source: str) -> list[str]:
 
     Implements: REQ-025, REQ-026, REQ-027
     """
-    # silent-except: if the file can't parse, no suggestions to give
+    # ValueError covers null bytes in source; TypeError covers non-str
+    # proxies such as CrossHair's symbolic strings, which compile() rejects.
+    # silent-except: if the file can't parse, no suggestions to give.
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except (SyntaxError, ValueError, TypeError):
         return []
 
     suggestions: list[str] = []
@@ -120,6 +122,22 @@ def suggest_split_points(source: str) -> list[str]:
     return suggestions
 
 
+@icontract.require(
+    lambda line_count: line_count >= 0,
+    "line_count must be non-negative",
+)
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda warn_threshold: warn_threshold > 0,
+    "warn_threshold must be positive",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, str) and len(result) > 0,
+    "result must be a non-empty suggestion string",
+)
 def _build_file_length_suggestion(
     line_count: int,
     source: str,
@@ -214,6 +232,14 @@ def check_file_length(
     return results
 
 
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be an AST module",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, list),
+    "result must be a list",
+)
 def _collect_func_nodes(
     tree: ast.Module,
 ) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -316,6 +342,18 @@ def check_function_length(
     return results
 
 
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, bool),
+    "result must be a boolean",
+)
 def _has_allow_many_params(source: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Check if `# allow-many-params:` appears on or above the def line."""
     lines = source.splitlines()

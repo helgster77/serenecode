@@ -23,7 +23,7 @@ from serenecode.ports.dead_code_analyzer import DeadCodeAnalyzer
 
 if TYPE_CHECKING:
     from serenecode.config import SerenecodeConfig
-    from serenecode.source_discovery import SourceFile
+    from serenecode.core.pipeline import SourceFile
 
 
 @icontract.require(lambda file_path: isinstance(file_path, str), "file_path must be a string")

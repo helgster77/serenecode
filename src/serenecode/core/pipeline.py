@@ -122,6 +122,10 @@ def _not_importable_detail_message(sf: SourceFile) -> str:
     lambda level, start_level: start_level <= level,
     "start_level must not exceed level",
 )
+@icontract.require(
+    lambda _KWARGS: not isinstance(_KWARGS.get("max_workers"), int) or _KWARGS["max_workers"] >= 1,
+    "max_workers must be at least 1",
+)
 @icontract.ensure(
     lambda level, result: result.level_requested == level,
     "result must report the correct requested level",
@@ -154,8 +158,10 @@ def run_pipeline(
         An aggregated CheckResult across all executed levels.
     """
     if pc is None:
+        raw_workers = kwargs.pop("max_workers", 4)
+        workers = raw_workers if isinstance(raw_workers, int) else 4
         pc = PipelineConfig(
-            max_workers=min(int(kwargs.pop("max_workers", 4)), 32),  # type: ignore[arg-type]
+            max_workers=max(1, min(workers, 32)),
             **{k: v for k, v in kwargs.items() if k in PipelineConfig.__dataclass_fields__},  # type: ignore[arg-type]
         )
     return _run_pipeline_impl(source_files, level, start_level, config, pc)
@@ -239,6 +245,9 @@ def _run_pipeline_impl(
     )
 
 
+@icontract.require(lambda level: is_valid_verification_level(level), "level must be between 1 and 6")
+@icontract.require(lambda achieved_level: 0 <= achieved_level <= 6, "achieved_level must be within the pipeline range")
+@icontract.ensure(lambda level, result: result.level_requested == level, "result must report the correct requested level")
 def _make_early_return(
     all_results: list[FunctionResult],
     level: int,
@@ -255,6 +264,10 @@ def _make_early_return(
     )
 
 
+@icontract.require(lambda source_files: source_files is not None, "source_files must be provided")
+@icontract.require(lambda config: config.template_name in ("default", "strict", "minimal"), "config must have a valid template")
+@icontract.require(lambda pc, emit: pc is not None and emit is not None, "pc and emit must be provided")
+@icontract.ensure(lambda result: result is not None, "result must not be None")
 def _run_level_1_full(
     source_files: tuple[SourceFile, ...],
     config: SerenecodeConfig,
@@ -281,6 +294,9 @@ def _run_level_1_full(
     return results
 
 
+@icontract.require(lambda source_files: source_files is not None, "source_files must be provided")
+@icontract.require(lambda pc, emit: pc is not None and emit is not None, "pc and emit must be provided")
+@icontract.ensure(lambda result: result is not None, "result must not be None")
 def _run_spec_checks(
     source_files: tuple[SourceFile, ...],
     pc: PipelineConfig,
@@ -307,6 +323,10 @@ def _run_spec_checks(
     return results
 
 
+@icontract.require(lambda source_files: source_files is not None, "source_files must be provided")
+@icontract.require(lambda config: config.template_name in ("default", "strict", "minimal"), "config must have a valid template")
+@icontract.require(lambda emit: emit is not None, "emit callback must be provided")
+@icontract.ensure(lambda result: result is not None, "result must not be None")
 def _run_module_health_checks(
     source_files: tuple[SourceFile, ...],
     config: SerenecodeConfig,
@@ -329,6 +349,9 @@ def _run_module_health_checks(
     return results
 
 
+@icontract.require(lambda source_files: source_files is not None, "source_files must be provided")
+@icontract.require(lambda pc, emit: pc is not None and emit is not None, "pc and emit must be provided")
+@icontract.ensure(lambda result: len(result) == 4, "must configure levels 2 through 5")
 def _backend_level_configs(
     source_files: tuple[SourceFile, ...],
     pc: PipelineConfig,
@@ -806,7 +829,10 @@ def _run_level_5(
     total = len(verifiable)
     _safe_emit(f"  Verifying {total} modules ({max_workers} workers)...")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # The precondition demands max_workers >= 1, but contract enforcement
+    # can be disabled process-wide (CrossHair patches icontract), so stay
+    # total: the executor itself must never see a non-positive value.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
         futures = {
             executor.submit(_verify_one_module, sf, symbolic_checker): sf
             for sf in verifiable
@@ -823,6 +849,8 @@ def _run_level_5(
     return results
 
 
+@icontract.require(lambda source_files: source_files is not None, "source_files must be provided")
+@icontract.ensure(lambda source_files, result: len(result[0]) + len(result[1]) == len(source_files), "every source file is partitioned exactly once")
 def _partition_importable(
     source_files: tuple[SourceFile, ...],
 ) -> tuple[list[SourceFile], list[FunctionResult]]:
@@ -847,6 +875,9 @@ def _partition_importable(
     return verifiable, results
 
 
+@icontract.require(lambda sf: sf is not None, "sf must be provided")
+@icontract.require(lambda symbolic_checker: symbolic_checker is not None, "symbolic_checker must be provided")
+@icontract.ensure(lambda sf, result: result[0] is sf and (result[1] is None or result[2] is None), "result carries sf with at most one of findings or error")
 def _verify_one_module(
     sf: SourceFile,
     symbolic_checker: SymbolicChecker,
@@ -863,6 +894,10 @@ def _verify_one_module(
         return (sf, None, exc)
 
 
+@icontract.require(lambda results: results is not None, "results must not be None")
+@icontract.require(lambda sf, safe_emit: sf is not None and safe_emit is not None, "sf and safe_emit must be provided")
+@icontract.require(lambda completed, total: 1 <= completed <= total, "completed must be within 1..total")
+@icontract.ensure(lambda result: result is None, "procedure returns None")
 def _process_symbolic_result(
     results: list[FunctionResult],
     sf: SourceFile,

@@ -12,6 +12,7 @@ generation and is exempt from full contract requirements.
 from __future__ import annotations
 
 import ast
+from typing import TYPE_CHECKING
 
 import icontract
 
@@ -21,9 +22,12 @@ from serenecode.ports.coverage_analyzer import (
     MockDependency,
 )
 
-# Import _FunctionCoverage from the adapter so _generate_suggestions can
-# accept it.  This is a private type shared between sibling adapter modules.
-from serenecode.adapters.coverage_adapter import _FunctionCoverage
+# _FunctionCoverage is only referenced in annotations. Import it under
+# TYPE_CHECKING so the sibling adapter modules do not form a runtime
+# import cycle — a plain import here fails whenever this module is
+# imported before coverage_adapter (e.g. during symbolic verification).
+if TYPE_CHECKING:
+    from serenecode.adapters.coverage_adapter import _FunctionCoverage
 
 # I/O modules that always require mocking in tests
 _IO_MODULES = frozenset({

@@ -14,22 +14,26 @@ import textwrap
 from typing import cast
 
 from serenecode.checker.structural import (
+    check_exception_types,
+    check_loop_invariants,
+)
+from serenecode.checker.structural_helpers import (
     _decorator_descriptions_are_literals,
     _decorator_has_description,
     _has_meaningful_params,
     _has_no_invariant_comment,
-    _has_non_object_base,
     _has_property_decorator,
-    _has_shell_true_kwarg,
     _is_enum_class,
     _is_exception_class,
-    _is_init_with_only_assignments,
     _is_protocol_class,
-    _is_tautological_isinstance,
     _is_trivial_handler_stmt,
-    check_exception_types,
-    check_loop_invariants,
     get_decorator_name,
+)
+from serenecode.checker.structural_quality import (
+    _has_non_object_base,
+    _has_shell_true_kwarg,
+    _is_init_with_only_assignments,
+    _is_tautological_isinstance,
 )
 from serenecode.config import default_config, strict_config
 

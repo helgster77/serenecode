@@ -266,6 +266,7 @@ class InitResult:
     claude_md_created: bool
     claude_md_updated: bool
     template_used: str
+    serenecode_md_existed: bool = False
     spec_mode: str = "generate"
     spec_md_placeholder_created: bool = False
     spec_source_placeholder_created: bool = False
@@ -342,8 +343,8 @@ def generate_claude_md_section(
     "serenecode_section must be a non-empty string",
 )
 @icontract.ensure(
-    lambda serenecode_section, result: serenecode_section in result,
-    "result must contain the serenecode section",
+    lambda serenecode_section, result: serenecode_section in result or "## Serenecode" in result,
+    "result must contain the new serenecode section or a pre-existing one",
 )
 def merge_claude_md(existing_content: str | None, serenecode_section: str) -> str:
     """Merge the Serenecode section into existing CLAUDE.md content.
@@ -472,6 +473,7 @@ def initialize_project(
         claude_md_created=claude_md_created,
         claude_md_updated=claude_md_updated,
         template_used=template,
+        serenecode_md_existed=serenecode_exists,
         spec_mode=spec_mode,
         spec_md_placeholder_created=spec_md_placeholder_created,
         spec_source_placeholder_created=spec_source_placeholder_created,

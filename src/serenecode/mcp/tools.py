@@ -10,19 +10,22 @@ full structural verification.
 
 from __future__ import annotations
 
+import ast
 import os
 from dataclasses import dataclass, field
+from typing import Callable
 
 import icontract
 
 from serenecode.adapters.local_fs import LocalFileReader
 from serenecode.checker.structural import check_structural
 from serenecode.config import (
+    ModuleHealthConfig,
     SerenecodeConfig,
     default_config,
     parse_serenecode_md,
 )
-from serenecode.core.exceptions import UnsafeCodeExecutionError
+from serenecode.core.exceptions import ToolNotInstalledError, UnsafeCodeExecutionError
 from serenecode.core.pipeline import SourceFile, run_pipeline
 from serenecode.mcp.schemas import (
     CheckResponse,
@@ -194,7 +197,7 @@ def _wire_adapters(level: int) -> dict[str, object]:
         try:
             from serenecode.adapters.coverage_adapter import CoverageAnalyzerAdapter
             coverage_analyzer = CoverageAnalyzerAdapter(allow_code_execution=True)
-        except ImportError:
+        except (ImportError, ToolNotInstalledError):
             pass
 
     if level >= 4:
@@ -793,7 +796,24 @@ def tool_module_health(path: str) -> dict[str, object]:
     return _format_health_response(abs_path, line_count, metrics, mh, split_suggestions)
 
 
-def _collect_health_metrics(tree: object, count_params: object) -> dict[str, object]:
+@icontract.require(
+    lambda tree: isinstance(tree, ast.Module),
+    "tree must be a parsed ast.Module",
+)
+@icontract.require(
+    lambda count_params: callable(count_params),
+    "count_params must be a callable",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, dict)
+    and "function_count" in result
+    and "largest_function" in result,
+    "result must be a metrics dict with function_count and largest_function",
+)
+def _collect_health_metrics(
+    tree: ast.Module,
+    count_params: Callable[[ast.FunctionDef | ast.AsyncFunctionDef], int],
+) -> dict[str, object]:
     """Walk AST and collect function/class metrics."""
     import ast as _ast
 
@@ -832,9 +852,30 @@ def _collect_health_metrics(tree: object, count_params: object) -> dict[str, obj
     }
 
 
+@icontract.require(
+    lambda abs_path: isinstance(abs_path, str) and len(abs_path) > 0,
+    "abs_path must be a non-empty string",
+)
+@icontract.require(
+    lambda line_count: isinstance(line_count, int) and line_count >= 0,
+    "line_count must be a non-negative int",
+)
+@icontract.require(
+    lambda metrics: isinstance(metrics, dict) and "largest_function" in metrics,
+    "metrics must be a dict produced by _collect_health_metrics",
+)
+@icontract.require(lambda mh: mh is not None, "mh config must be provided")
+@icontract.require(
+    lambda split_suggestions: isinstance(split_suggestions, list),
+    "split_suggestions must be a list",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, dict) and "file" in result and "status" in result,
+    "result must be a response dict with file and status keys",
+)
 def _format_health_response(
     abs_path: str, line_count: int, metrics: dict[str, object],
-    mh: object, split_suggestions: list[object],
+    mh: ModuleHealthConfig, split_suggestions: list[str],
 ) -> dict[str, object]:
     """Build the tool_module_health response dict."""
     def _status(value: int, warn: int, error: int) -> str:

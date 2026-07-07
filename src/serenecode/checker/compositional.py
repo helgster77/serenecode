@@ -330,6 +330,8 @@ def check_interface_compliance(
     return results
 
 
+@icontract.require(lambda modules: isinstance(modules, list), "modules must be a list")
+@icontract.ensure(lambda result: isinstance(result, list) and all(isinstance(item, tuple) for item in result), "result must be a list of tuples")
 def _collect_port_protocols(
     modules: list[ModuleInfo],
 ) -> list[tuple[str, ProtocolInfo]]:
@@ -343,6 +345,8 @@ def _collect_port_protocols(
     return protocols
 
 
+@icontract.require(lambda modules: isinstance(modules, list), "modules must be a list")
+@icontract.ensure(lambda result: isinstance(result, list) and all(isinstance(item, tuple) for item in result), "result must be a list of tuples")
 def _collect_adapter_classes_with_files(
     modules: list[ModuleInfo],
 ) -> list[tuple[str, ClassInfo]]:
@@ -356,6 +360,13 @@ def _collect_adapter_classes_with_files(
     return adapter_classes
 
 
+@icontract.require(lambda adapter_file: isinstance(adapter_file, str), "adapter_file must be a string")
+@icontract.require(lambda adapter_cls: isinstance(adapter_cls, ClassInfo), "adapter_cls must be a ClassInfo")
+@icontract.require(lambda proto: isinstance(proto, ProtocolInfo), "proto must be a ProtocolInfo")
+@icontract.ensure(
+    lambda result: isinstance(result, list) and all(isinstance(item, FunctionResult) for item in result),
+    "result must be a list of FunctionResult",
+)
 def _check_adapter_vs_protocol(
     adapter_file: str,
     adapter_cls: ClassInfo,
@@ -581,6 +592,11 @@ def check_contract_completeness(
     return results
 
 
+@icontract.require(lambda mod: isinstance(mod, ModuleInfo), "mod must be a ModuleInfo")
+@icontract.ensure(
+    lambda result: isinstance(result, list) and all(isinstance(item, FunctionResult) for item in result),
+    "result must be a list of FunctionResult",
+)
 def _check_function_contracts_completeness(
     mod: ModuleInfo,
     config: SerenecodeConfig,
@@ -615,6 +631,11 @@ def _check_function_contracts_completeness(
     return results
 
 
+@icontract.require(lambda mod: isinstance(mod, ModuleInfo), "mod must be a ModuleInfo")
+@icontract.ensure(
+    lambda result: isinstance(result, list) and all(isinstance(item, FunctionResult) for item in result),
+    "result must be a list of FunctionResult",
+)
 def _check_class_invariants_completeness(
     mod: ModuleInfo,
     config: SerenecodeConfig,
@@ -641,6 +662,9 @@ def _check_class_invariants_completeness(
     return results
 
 
+@icontract.require(lambda results: isinstance(results, list), "results must be a list")
+@icontract.require(lambda mod: isinstance(mod, ModuleInfo), "mod must be a ModuleInfo")
+@icontract.ensure(lambda result: result is None, "result must be None")
 def _check_module_size_info(
     results: list[FunctionResult],
     mod: ModuleInfo,

@@ -321,12 +321,14 @@ def _parse_counterexample(message: str) -> dict[str, object] | None:
 )
 @icontract.require(lambda stdout: isinstance(stdout, str), "stdout must be a string")
 @icontract.require(lambda stderr: isinstance(stderr, str), "stderr must be a string")
+@icontract.require(lambda returncode: isinstance(returncode, int), "returncode must be an int")
 @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def _parse_cli_output(
     module_path: str,
     stdout: str,
     stderr: str,
     function_name: str = "<unknown>",
+    returncode: int = 0,
 ) -> list[SymbolicFinding]:
     """Parse CrossHair CLI output into findings.
 
@@ -334,6 +336,10 @@ def _parse_cli_output(
         module_path: Module that was verified.
         stdout: CLI stdout.
         stderr: CLI stderr.
+        function_name: Function the CLI run targeted.
+        returncode: CLI process exit code. Empty output is only treated
+            as a successful verification when the process exited 0 —
+            a silently crashed run must not be reported as verified.
 
     Returns:
         List of findings parsed from CLI output.
@@ -341,6 +347,16 @@ def _parse_cli_output(
     findings: list[SymbolicFinding] = []
 
     if not stdout.strip() and not stderr.strip():
+        if returncode != 0:
+            return [SymbolicFinding(
+                function_name=function_name,
+                module_path=module_path,
+                outcome="error",
+                message=(
+                    f"CrossHair exited with code {returncode} and no output "
+                    f"while verifying '{function_name}'"
+                ),
+            )]
         return [SymbolicFinding(
             function_name=function_name,
             module_path=module_path,

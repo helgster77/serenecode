@@ -12,32 +12,36 @@ import textwrap
 import pytest
 
 from serenecode.checker.structural import (
-    IcontractNames,
-    _find_tautological_contracts,
-    _is_test_module,
-    _is_tautological_lambda,
-    _decorator_descriptions_are_literals,
-    check_bare_asserts_outside_tests,
     check_class_invariants,
     check_contracts,
-    check_dangerous_calls,
     check_docstrings,
     check_exception_types,
     check_imports,
     check_loop_invariants,
-    check_mutable_default_arguments,
-    check_naming_conventions,
     check_no_any_in_core,
-    check_no_assertions_in_tests,
-    check_print_in_core,
     check_silent_exception_handling,
     check_structural,
+    check_type_annotations,
+)
+from serenecode.checker.structural_helpers import (
+    IcontractNames,
+    _decorator_descriptions_are_literals,
+    _find_tautological_contracts,
+    _is_tautological_lambda,
+    resolve_icontract_aliases,
+)
+from serenecode.checker.structural_quality import (
+    _is_test_module,
+    check_bare_asserts_outside_tests,
+    check_dangerous_calls,
+    check_mutable_default_arguments,
+    check_naming_conventions,
+    check_no_assertions_in_tests,
+    check_print_in_core,
     check_stub_residue,
     check_tautological_isinstance_postcondition,
     check_todo_comments,
-    check_type_annotations,
     check_unused_parameters,
-    resolve_icontract_aliases,
 )
 from serenecode.config import default_config, minimal_config, strict_config
 from serenecode.models import CheckStatus

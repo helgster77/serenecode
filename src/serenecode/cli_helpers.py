@@ -14,12 +14,21 @@ import click
 import icontract
 
 from serenecode.adapters.local_fs import LocalFileReader
+from serenecode.config import SerenecodeConfig
+from serenecode.core.pipeline import SourceFile
 from serenecode.contracts.predicates import (
     is_non_empty_string,
+    is_positive_int,
     is_valid_exit_code,
+    is_valid_verification_level,
 )
+from serenecode.core.exceptions import ToolNotInstalledError
 from serenecode.models import CheckResult, ExitCode
+from serenecode.ports.coverage_analyzer import CoverageAnalyzer
 from serenecode.ports.dead_code_analyzer import DeadCodeAnalyzer
+from serenecode.ports.property_tester import PropertyTester
+from serenecode.ports.symbolic_checker import SymbolicChecker
+from serenecode.ports.type_checker import TypeChecker
 from serenecode.source_discovery import (
     determine_context_root,
     discover_narrative_spec_paths,
@@ -243,11 +252,28 @@ def _maybe_make_dead_code_analyzer() -> DeadCodeAnalyzer | None:
         return UnavailableDeadCodeAnalyzer("vulture is not installed")
 
 
+@icontract.require(
+    lambda config_search_root: is_non_empty_string(config_search_root),
+    "config_search_root must be a non-empty string",
+)
+@icontract.require(lambda reader: reader is not None, "reader must be provided")
+@icontract.require(
+    lambda skip_module_health: isinstance(skip_module_health, bool),
+    "skip_module_health must be a bool",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, SerenecodeConfig),
+    "result must be a SerenecodeConfig",
+)
+@icontract.ensure(
+    lambda skip_module_health, result: not skip_module_health or not result.module_health.enabled,
+    "module health must be disabled when skip_module_health is set",
+)
 def _load_check_config(
     config_search_root: str,
     reader: LocalFileReader,
     skip_module_health: bool,
-) -> object:
+) -> SerenecodeConfig:
     """Load SerenecodeConfig from SERENECODE.md or return default."""
     from serenecode.config import parse_serenecode_md, default_config
     from serenecode.source_discovery import find_serenecode_md
@@ -269,11 +295,32 @@ def _load_check_config(
     return config
 
 
+@icontract.require(
+    lambda level: level is None or is_valid_verification_level(level),
+    "level must be between 1 and 6 when provided",
+)
+@icontract.require(
+    lambda structural: isinstance(structural, bool),
+    "structural must be a bool",
+)
+@icontract.require(lambda verify: isinstance(verify, bool), "verify must be a bool")
+@icontract.require(lambda config: config is not None, "config must be provided")
+@icontract.ensure(
+    lambda result: isinstance(result, tuple)
+    and len(result) == 2
+    and is_valid_verification_level(result[0])
+    and result[1] in (1, 3),
+    "result must be an (effective_level, start_level) pair of valid levels",
+)
+@icontract.ensure(
+    lambda result: result[1] <= result[0],
+    "start_level must not exceed effective_level",
+)
 def _resolve_effective_level(
     level: int | None,
     structural: bool,
     verify: bool,
-    config: object,
+    config: SerenecodeConfig,
 ) -> tuple[int, int]:
     """Determine effective level and start_level from CLI flags.
 
@@ -283,7 +330,7 @@ def _resolve_effective_level(
     if structural:
         return 1, 1
 
-    recommended = getattr(config, "recommended_level", 4)
+    recommended = config.recommended_level
     if level is not None:
         effective_level = level
         if verify:
@@ -297,12 +344,30 @@ def _resolve_effective_level(
     return effective_level, start_level
 
 
+@icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
+@icontract.require(
+    lambda module_search_root: is_non_empty_string(module_search_root),
+    "module_search_root must be a non-empty string",
+)
+@icontract.require(
+    lambda spec_path: spec_path is None or is_non_empty_string(spec_path),
+    "spec_path must be None or a non-empty string",
+)
+@icontract.require(lambda reader: reader is not None, "reader must be provided")
+@icontract.ensure(
+    lambda result: isinstance(result, tuple) and len(result) == 4,
+    "result must be a (source_files, test_stems, spec_content, test_sources) tuple",
+)
+@icontract.ensure(
+    lambda result: len(result[0]) > 0,
+    "result must contain at least one source file (empty discovery exits early)",
+)
 def _discover_sources_and_spec(
     path: str,
     module_search_root: str,
     spec_path: str | None,
     reader: LocalFileReader,
-) -> tuple[object, frozenset[str], str | None, tuple[tuple[str, str], ...]]:
+) -> tuple[tuple[SourceFile, ...], frozenset[str], str | None, tuple[tuple[str, str], ...]]:
     """Discover source files, test stems, and spec content.
 
     Returns:
@@ -364,22 +429,52 @@ def _discover_sources_and_spec(
     return source_files, test_stems, spec_content, test_sources
 
 
+@icontract.require(
+    lambda level: is_valid_verification_level(level),
+    "level must be between 1 and 6",
+)
+@icontract.require(
+    lambda per_condition_timeout: is_positive_int(per_condition_timeout),
+    "per_condition_timeout must be at least 1",
+)
+@icontract.require(
+    lambda per_path_timeout: is_positive_int(per_path_timeout),
+    "per_path_timeout must be at least 1",
+)
+@icontract.require(
+    lambda module_timeout: is_positive_int(module_timeout),
+    "module_timeout must be at least 1",
+)
+@icontract.require(
+    lambda coverage_timeout: is_positive_int(coverage_timeout),
+    "coverage_timeout must be at least 1",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, tuple) and len(result) == 5,
+    "result must be a 5-tuple of adapters (each possibly None)",
+)
 def _wire_adapters(
     level: int,
     per_condition_timeout: int,
     per_path_timeout: int,
     module_timeout: int,
     coverage_timeout: int,
-) -> tuple[object, object, object, object, object]:
+) -> tuple[
+    TypeChecker | None,
+    CoverageAnalyzer | None,
+    PropertyTester | None,
+    SymbolicChecker | None,
+    DeadCodeAnalyzer | None,
+]:
     """Wire up adapters for levels 2-5 and dead code.
 
     Returns:
         (type_checker, coverage_analyzer, property_tester, symbolic_checker, dead_code_analyzer)
     """
-    type_checker = None
-    coverage_analyzer = None
-    property_tester = None
-    symbolic_checker = None
+    type_checker: TypeChecker | None = None
+    coverage_analyzer: CoverageAnalyzer | None = None
+    property_tester: PropertyTester | None = None
+    symbolic_checker: SymbolicChecker | None = None
 
     if level >= 2:
         try:
@@ -395,7 +490,7 @@ def _wire_adapters(
                 allow_code_execution=True,
                 test_timeout=coverage_timeout,
             )
-        except ImportError:
+        except (ImportError, ToolNotInstalledError):
             click.echo("Warning: coverage not available for Level 3 checks.", err=True)
 
     if level >= 4:
@@ -417,9 +512,10 @@ def _wire_adapters(
         except ImportError:
             click.echo("Warning: CrossHair not available for Level 5 checks.", err=True)
 
+    dead_code_analyzer: DeadCodeAnalyzer | None
     try:
         from serenecode.adapters.vulture_adapter import VultureDeadCodeAnalyzer
-        dead_code_analyzer: object = VultureDeadCodeAnalyzer()
+        dead_code_analyzer = VultureDeadCodeAnalyzer()
     except ImportError:
         click.echo("Warning: vulture not available for dead-code analysis.", err=True)
         dead_code_analyzer = None

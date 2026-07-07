@@ -64,14 +64,8 @@ from serenecode.checker.structural_quality import (
     check_naming_conventions,
 )
 
-@icontract.require(
-    lambda tree: isinstance(tree, ast.Module),
-    "tree must be an ast.Module",
-)
-@icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
-)
+@icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def check_contracts(
     tree: ast.Module,
     config: SerenecodeConfig,
@@ -109,6 +103,8 @@ def check_contracts(
 
     return results
 
+@icontract.require(lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)), "node must be a function definition")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def _check_single_function_contracts(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     config: SerenecodeConfig,
@@ -568,18 +564,9 @@ def check_docstrings(
     return results
 
 
-@icontract.require(
-    lambda source: isinstance(source, str),
-    "source must be a string",
-)
-@icontract.require(
-    lambda tree: isinstance(tree, ast.Module),
-    "tree must be an ast.Module",
-)
-@icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
-)
+@icontract.require(lambda source: isinstance(source, str), "source must be a string")
+@icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def check_loop_invariants(
     source: str,
     tree: ast.Module,
@@ -619,6 +606,9 @@ def check_loop_invariants(
     return results
 
 
+@icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
+@icontract.require(lambda comments: isinstance(comments, dict), "comments must be a dict")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def _check_loop_invariant_comments(
     tree: ast.Module,
     comments: dict[int, str],
@@ -653,6 +643,9 @@ def _check_loop_invariant_comments(
     return results
 
 
+@icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
+@icontract.require(lambda comments: isinstance(comments, dict), "comments must be a dict")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def _check_recursion_variant_comments(
     tree: ast.Module,
     comments: dict[int, str],
@@ -691,6 +684,11 @@ def _check_recursion_variant_comments(
     return results
 
 
+@icontract.require(lambda comments: isinstance(comments, dict), "comments must be a dict")
+@icontract.require(lambda target_line: isinstance(target_line, int) and target_line >= 1, "target_line must be >= 1")
+@icontract.require(lambda keywords: isinstance(keywords, tuple), "keywords must be a tuple")
+@icontract.require(lambda window: isinstance(window, int) and window >= 1, "window must be >= 1")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
 def _has_nearby_comment(
     comments: dict[int, str],
     target_line: int,
@@ -706,14 +704,8 @@ def _has_nearby_comment(
     return False
 
 
-@icontract.require(
-    lambda tree: isinstance(tree, ast.Module),
-    "tree must be an ast.Module",
-)
-@icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
-)
+@icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def check_exception_types(
     tree: ast.Module,
     config: SerenecodeConfig,
@@ -968,6 +960,9 @@ def check_structural(
     )
 
 
+@icontract.require(lambda source: isinstance(source, str), "source must be a string")
+@icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def _run_all_structural_checks(
     source: str,
     tree: ast.Module,
