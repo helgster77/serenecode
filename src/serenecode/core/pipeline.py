@@ -140,7 +140,7 @@ def run_pipeline(
 ) -> CheckResult:
     """Run the verification pipeline up to the specified level.
 
-    Implements: REQ-028, REQ-029, REQ-030, INT-001
+    Implements: REQ-028, REQ-029, REQ-030
 
     Executes levels sequentially (1->2->3->4->5->6). If early_termination
     is True (default), stops at the first level with failures.
@@ -332,7 +332,10 @@ def _run_module_health_checks(
     config: SerenecodeConfig,
     emit: Callable[[str], None],
 ) -> list[FunctionResult]:
-    """Run all module health sub-checks."""
+    """Run all module health sub-checks.
+
+    Implements: INT-001
+    """
     from serenecode.core.module_health import (
         check_class_method_count,
         check_file_length,
@@ -844,6 +847,7 @@ def _run_level_5(
             sf, findings, error = future.result()
             _process_symbolic_result(
                 results, sf, findings, error, completed, total, _safe_emit,
+                transform_symbolic_results,
             )
 
     return results
@@ -897,6 +901,7 @@ def _verify_one_module(
 @icontract.require(lambda results: results is not None, "results must not be None")
 @icontract.require(lambda sf, safe_emit: sf is not None and safe_emit is not None, "sf and safe_emit must be provided")
 @icontract.require(lambda completed, total: 1 <= completed <= total, "completed must be within 1..total")
+@icontract.require(lambda transform: callable(transform), "transform must be callable")
 @icontract.ensure(lambda result: result is None, "procedure returns None")
 def _process_symbolic_result(
     results: list[FunctionResult],
@@ -906,10 +911,15 @@ def _process_symbolic_result(
     completed: int,
     total: int,
     safe_emit: Callable[[str], None],
+    transform: Callable[[list[SymbolicFinding], str, float], CheckResult],
 ) -> None:
-    """Process one completed symbolic verification future."""
-    from serenecode.checker.symbolic import transform_symbolic_results
+    """Process one completed symbolic verification future.
 
+    ``transform`` is bound by the caller BEFORE the worker pool starts:
+    importing serenecode modules here would race against the symbolic
+    checker's worker threads, whose fresh-source loader snapshots and
+    restores sys.modules while verifying each module.
+    """
     module_name = sf.importable_module
     if error is not None:
         safe_emit(f"  [{completed}/{total}] Skipped {module_name}: {error}")
@@ -930,7 +940,7 @@ def _process_symbolic_result(
         ))
     elif findings is not None:
         safe_emit(f"  [{completed}/{total}] Done {module_name}")
-        check_result = transform_symbolic_results(findings, sf.file_path, 0.0)
+        check_result = transform(findings, sf.file_path, 0.0)
         results.extend(check_result.results)
 
 
