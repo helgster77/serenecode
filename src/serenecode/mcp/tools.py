@@ -17,6 +17,7 @@ from typing import Callable
 
 import icontract
 
+from serenecode.adapters import wire_adapters
 from serenecode.adapters.local_fs import LocalFileReader
 from serenecode.checker.structural import check_structural
 from serenecode.config import (
@@ -25,7 +26,7 @@ from serenecode.config import (
     default_config,
     parse_serenecode_md,
 )
-from serenecode.core.exceptions import ToolNotInstalledError, UnsafeCodeExecutionError
+from serenecode.core.exceptions import UnsafeCodeExecutionError
 from serenecode.core.pipeline import SourceFile, run_pipeline
 from serenecode.mcp.schemas import (
     CheckResponse,
@@ -33,7 +34,6 @@ from serenecode.mcp.schemas import (
     to_check_response,
 )
 from serenecode.models import CheckResult
-from serenecode.ports.dead_code_analyzer import DeadCodeAnalyzer
 from serenecode.source_discovery import (
     build_source_files,
     determine_context_root,
@@ -179,48 +179,16 @@ def _build_pipeline_for_file(
     "result is a dict of adapter handles (some may be None)",
 )
 def _wire_adapters(level: int) -> dict[str, object]:
-    """Wire up the adapter set for the requested level (mirrors `_run_check`)."""
-    type_checker = None
-    coverage_analyzer = None
-    property_tester = None
-    symbolic_checker = None
-    dead_code_analyzer: DeadCodeAnalyzer | None = None
+    """Wire up the adapter set for the requested level (mirrors `_run_check`).
 
-    if level >= 2:
-        try:
-            from serenecode.adapters.mypy_adapter import MypyTypeChecker
-            type_checker = MypyTypeChecker()
-        except ImportError:
-            pass
-
-    if level >= 3:
-        try:
-            from serenecode.adapters.coverage_adapter import CoverageAnalyzerAdapter
-            coverage_analyzer = CoverageAnalyzerAdapter(allow_code_execution=True)
-        except (ImportError, ToolNotInstalledError):
-            pass
-
-    if level >= 4:
-        try:
-            from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
-            property_tester = HypothesisPropertyTester(allow_code_execution=True)
-        except ImportError:
-            pass
-
-    if level >= 5:
-        try:
-            from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
-            symbolic_checker = CrossHairSymbolicChecker(allow_code_execution=True)
-        except ImportError:
-            pass
-
-    try:
-        from serenecode.adapters.vulture_adapter import VultureDeadCodeAnalyzer
-        dead_code_analyzer = VultureDeadCodeAnalyzer()
-    except ImportError:
-        from serenecode.adapters.unavailable_dead_code_adapter import UnavailableDeadCodeAnalyzer
-        dead_code_analyzer = UnavailableDeadCodeAnalyzer("vulture is not installed")
-
+    Thin MCP shim over the shared `serenecode.adapters.wire_adapters`:
+    silent on unavailable backends, and wires the unavailable-dead-code
+    placeholder so vulture's absence surfaces as SKIPPED findings.
+    """
+    (type_checker, coverage_analyzer, property_tester,
+     symbolic_checker, dead_code_analyzer) = wire_adapters(
+        level, dead_code_placeholder=True,
+    )
     return {
         "type_checker": type_checker,
         "coverage_analyzer": coverage_analyzer,

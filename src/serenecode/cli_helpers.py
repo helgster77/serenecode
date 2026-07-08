@@ -13,6 +13,7 @@ from typing import Callable
 import click
 import icontract
 
+from serenecode.adapters import wire_adapters
 from serenecode.adapters.local_fs import LocalFileReader
 from serenecode.config import SerenecodeConfig
 from serenecode.core.pipeline import SourceFile
@@ -22,7 +23,6 @@ from serenecode.contracts.predicates import (
     is_valid_exit_code,
     is_valid_verification_level,
 )
-from serenecode.core.exceptions import ToolNotInstalledError
 from serenecode.models import CheckResult, ExitCode
 from serenecode.ports.coverage_analyzer import CoverageAnalyzer
 from serenecode.ports.dead_code_analyzer import DeadCodeAnalyzer
@@ -466,61 +466,21 @@ def _wire_adapters(
     SymbolicChecker | None,
     DeadCodeAnalyzer | None,
 ]:
-    """Wire up adapters for levels 2-5 and dead code.
+    """Wire up adapters for levels 2-5 and dead code, warning on stderr.
+
+    Thin CLI shim over the shared `serenecode.adapters.wire_adapters`.
 
     Returns:
         (type_checker, coverage_analyzer, property_tester, symbolic_checker, dead_code_analyzer)
     """
-    type_checker: TypeChecker | None = None
-    coverage_analyzer: CoverageAnalyzer | None = None
-    property_tester: PropertyTester | None = None
-    symbolic_checker: SymbolicChecker | None = None
-
-    if level >= 2:
-        try:
-            from serenecode.adapters.mypy_adapter import MypyTypeChecker
-            type_checker = MypyTypeChecker()
-        except ImportError:
-            click.echo("Warning: mypy not available for Level 2 checks.", err=True)
-
-    if level >= 3:
-        try:
-            from serenecode.adapters.coverage_adapter import CoverageAnalyzerAdapter
-            coverage_analyzer = CoverageAnalyzerAdapter(
-                allow_code_execution=True,
-                test_timeout=coverage_timeout,
-            )
-        except (ImportError, ToolNotInstalledError):
-            click.echo("Warning: coverage not available for Level 3 checks.", err=True)
-
-    if level >= 4:
-        try:
-            from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
-            property_tester = HypothesisPropertyTester(allow_code_execution=True)
-        except ImportError:
-            click.echo("Warning: Hypothesis not available for Level 4 checks.", err=True)
-
-    if level >= 5:
-        try:
-            from serenecode.adapters.crosshair_adapter import CrossHairSymbolicChecker
-            symbolic_checker = CrossHairSymbolicChecker(
-                per_condition_timeout=per_condition_timeout,
-                per_path_timeout=per_path_timeout,
-                module_timeout=module_timeout,
-                allow_code_execution=True,
-            )
-        except ImportError:
-            click.echo("Warning: CrossHair not available for Level 5 checks.", err=True)
-
-    dead_code_analyzer: DeadCodeAnalyzer | None
-    try:
-        from serenecode.adapters.vulture_adapter import VultureDeadCodeAnalyzer
-        dead_code_analyzer = VultureDeadCodeAnalyzer()
-    except ImportError:
-        click.echo("Warning: vulture not available for dead-code analysis.", err=True)
-        dead_code_analyzer = None
-
-    return type_checker, coverage_analyzer, property_tester, symbolic_checker, dead_code_analyzer
+    return wire_adapters(
+        level,
+        per_condition_timeout=per_condition_timeout,
+        per_path_timeout=per_path_timeout,
+        module_timeout=module_timeout,
+        coverage_timeout=coverage_timeout,
+        on_unavailable=lambda message: click.echo(f"Warning: {message}", err=True),
+    )
 
 
 @icontract.require(lambda check_result: check_result is not None, "result must be provided")
