@@ -128,13 +128,13 @@ def _strategy_for_generic_type(
         return st.sampled_from(args)
     if origin is list and args:
         inner = _get_strategy_for_annotation_with_seen(args[0], seen_classes)
-        return st.lists(inner, min_size=0, max_size=20) if inner else None
+        return st.lists(inner, min_size=0, max_size=20) if inner is not None else None
     if origin is set and args:
         inner = _get_strategy_for_annotation_with_seen(args[0], seen_classes)
-        return st.sets(inner, max_size=20) if inner else None
+        return st.sets(inner, max_size=20) if inner is not None else None
     if origin is frozenset and args:
         inner = _get_strategy_for_annotation_with_seen(args[0], seen_classes)
-        return st.frozensets(inner, max_size=20) if inner else None
+        return st.frozensets(inner, max_size=20) if inner is not None else None
     if origin is tuple and args:
         return _strategy_for_tuple_type(args, seen_classes)
     if origin is dict and args and len(args) == 2:
@@ -157,7 +157,7 @@ def _strategy_for_tuple_type(
     """Return strategy for tuple types."""
     if len(args) == 2 and args[1] is Ellipsis:
         inner = _get_strategy_for_annotation_with_seen(args[0], seen_classes)
-        return st.lists(inner, min_size=0, max_size=8).map(tuple) if inner else None
+        return st.lists(inner, min_size=0, max_size=8).map(tuple) if inner is not None else None
     inner_strats = []
     # Loop invariant: inner_strats contains strategies for args[0..i]
     for arg in args:
