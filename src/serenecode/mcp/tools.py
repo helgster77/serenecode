@@ -755,7 +755,7 @@ def tool_module_health(path: str) -> dict[str, object]:
     # silent-except: syntax errors should return a structured error with partial metrics
     try:
         tree = _ast.parse(source)
-    except SyntaxError as exc:
+    except (SyntaxError, ValueError) as exc:
         return {"file": abs_path, "error": f"Syntax error: {exc}", "metrics": {"line_count": line_count}}
 
     metrics = _collect_health_metrics(tree, count_non_receiver_params)

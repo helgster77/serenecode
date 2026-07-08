@@ -282,7 +282,7 @@ def check_function_length(
         # silent-except: unparseable files are handled by L1 structural; skip here
         try:
             tree = ast.parse(sf.source)
-        except SyntaxError:
+        except (SyntaxError, ValueError):
             continue
 
         for func in _collect_func_nodes(tree):
@@ -428,7 +428,7 @@ def check_parameter_count(
         # silent-except: unparseable files are handled by L1 structural; skip here
         try:
             tree = ast.parse(sf.source)
-        except SyntaxError:
+        except (SyntaxError, ValueError):
             continue
 
         for func in _collect_func_nodes(tree):
@@ -514,7 +514,7 @@ def check_class_method_count(
         # silent-except: unparseable files are handled by L1 structural; skip here
         try:
             tree = ast.parse(sf.source)
-        except SyntaxError:
+        except (SyntaxError, ValueError):
             continue
 
         for node in ast.iter_child_nodes(tree):

@@ -930,7 +930,7 @@ def _extract_docstring_references(
     # silent-except: traceability is best-effort over arbitrary user sources; unparseable files yield no refs
     try:
         tree = ast.parse(source)
-    except (SyntaxError, TypeError):
+    except (SyntaxError, TypeError, ValueError):
         return []
 
     results: list[tuple[str, str, int]] = []

@@ -177,14 +177,8 @@ def _check_single_function_contracts(
 
     return details
 
-@icontract.require(
-    lambda tree: isinstance(tree, ast.Module),
-    "tree must be an ast.Module",
-)
-@icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
-)
+@icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def check_class_invariants(
     tree: ast.Module,
     config: SerenecodeConfig,
@@ -904,15 +898,19 @@ def check_structural(
     """
     start_time = time.monotonic()
 
-    # Parse the source
+    # Parse the source. Pythons < 3.12 report null bytes as ValueError.
     try:
         tree = ast.parse(source)
-    except SyntaxError as exc:
+    except (SyntaxError, ValueError) as exc:
         elapsed = time.monotonic() - start_time
+        if isinstance(exc, SyntaxError):
+            err_line, err_msg = max(1, exc.lineno or 1), str(exc.msg)
+        else:
+            err_line, err_msg = 1, str(exc)
         error_result = FunctionResult(
             function="<module>",
             file=file_path,
-            line=max(1, exc.lineno or 1),
+            line=err_line,
             level_requested=1,
             level_achieved=0,
             status=CheckStatus.FAILED,
@@ -920,7 +918,7 @@ def check_structural(
                 level=VerificationLevel.STRUCTURAL,
                 tool="structural",
                 finding_type="error",
-                message=f"Syntax error: {exc.msg}",
+                message=f"Syntax error: {err_msg}",
             ),),
         )
         return make_check_result(

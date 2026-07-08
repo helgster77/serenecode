@@ -295,6 +295,18 @@ def _temporary_module_refresh(prefixes: tuple[str, ...]) -> Iterator[None]:
             if _should_refresh_module(name, prefixes):
                 del sys.modules[name]
         sys.modules.update(snapshot)
+        # Re-bind parent package attributes. A fresh import inside the
+        # refresh window re-points parent.child at the fresh module
+        # object; without this, package attributes diverge from
+        # sys.modules after restore (e.g. mock.patch dotted lookups
+        # then fail with AttributeError on the parent package).
+        # Loop invariant: parents of snapshot entries[0..i] re-bound.
+        for name, module in snapshot.items():
+            parent_name, _, child_name = name.rpartition(".")
+            if parent_name:
+                parent = sys.modules.get(parent_name)
+                if parent is not None:
+                    setattr(parent, child_name, module)
 
 
 @icontract.require(lambda module_name: is_non_empty_string(module_name), "module_name must be a non-empty string")

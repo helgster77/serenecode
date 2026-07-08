@@ -74,7 +74,7 @@ def _generate_suggestions(
     lines = source.splitlines()
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except (SyntaxError, ValueError):
         return ()
 
     # Group contiguous uncovered lines into blocks

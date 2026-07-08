@@ -2017,6 +2017,21 @@ class TestCheckStructuralOrchestrator:
         assert len(result.results) == 1
         assert "syntax" in result.results[0].details[0].message.lower()
 
+    def test_parse_value_error_handled(self) -> None:
+        """Pythons < 3.12 raise ValueError (not SyntaxError) for null bytes
+        in source; the checker must report it as a finding, not crash."""
+        from unittest import mock
+
+        with mock.patch(
+            "serenecode.checker.structural.ast.parse",
+            side_effect=ValueError("source code string cannot contain null bytes"),
+        ):
+            result = check_structural("x = 1\n", default_config(), file_path="test.py")
+        assert result.passed is False
+        assert len(result.results) == 1
+        assert result.results[0].line == 1
+        assert "null bytes" in result.results[0].details[0].message
+
     def test_exempt_module_is_reported_as_exempt(self) -> None:
         """Exempt modules produce EXEMPT results but do not count as passed."""
         source = "x = 1"  # no docstring, no contracts, etc.

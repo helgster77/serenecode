@@ -400,7 +400,7 @@ def _discover_functions(source: str) -> list[_FunctionNode]:
     """
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except (SyntaxError, ValueError):
         return []
 
     functions: list[_FunctionNode] = []
