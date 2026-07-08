@@ -501,15 +501,17 @@ def _generate_test_code(
     for dec in mock_decorators:
         parts.append(dec)
 
-    params = ", ".join(mock_params) if mock_params else ""
+    # Stacked @patch decorators inject mocks bottom-up: the decorator
+    # closest to the def supplies the first parameter, so the parameter
+    # list is the reverse of the decorator order.
+    params = ", ".join(reversed(mock_params)) if mock_params else ""
     parts.append(f"def test_{test_name}_line_{block[0]}({params}):")
     parts.append(f'    """Cover {context}."""')
 
     # Setup mocks
     # Loop invariant: mock setup lines added for mock_params[0..i]
-    for i, dep in enumerate(deps):
-        if dep.mock_necessary and i < len(mock_params):
-            parts.append(f"    {mock_params[i]}.return_value = None  # TODO: configure mock return value")
+    for mock_var in mock_params:
+        parts.append(f"    {mock_var}.return_value = None  # TODO: configure mock return value")
 
     # Call
     if class_name:

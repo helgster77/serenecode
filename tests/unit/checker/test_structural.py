@@ -515,6 +515,56 @@ class TestCheckNoAnyInCore:
         results = check_no_any_in_core(tree, config, "core/engine.py", "test.py")
         assert len(results) == 0
 
+    def test_qualified_typing_any_fails(self) -> None:
+        source = textwrap.dedent("""\
+            import typing
+
+            def process(data: typing.Any) -> int:
+                return 0
+        """)
+        tree = ast.parse(source)
+        config = default_config()
+        results = check_no_any_in_core(tree, config, "core/engine.py", "test.py")
+        assert len(results) == 1
+
+    def test_aliased_typing_any_fails(self) -> None:
+        source = textwrap.dedent("""\
+            import typing as t
+
+            def process(data: t.Any) -> int:
+                return 0
+        """)
+        tree = ast.parse(source)
+        config = default_config()
+        results = check_no_any_in_core(tree, config, "core/engine.py", "test.py")
+        assert len(results) == 1
+
+    def test_any_attribute_on_non_typing_name_passes(self) -> None:
+        source = textwrap.dedent("""\
+            import enum
+
+            class Level(enum.Enum):
+                Any = 1
+
+            def process() -> Level:
+                return Level.Any
+        """)
+        tree = ast.parse(source)
+        config = default_config()
+        results = check_no_any_in_core(tree, config, "core/engine.py", "test.py")
+        assert len(results) == 0
+
+    def test_variable_assignment_named_any_passes(self) -> None:
+        source = textwrap.dedent("""\
+            def process() -> int:
+                Any = 1
+                return 0
+        """)
+        tree = ast.parse(source)
+        config = default_config()
+        results = check_no_any_in_core(tree, config, "core/engine.py", "test.py")
+        assert len(results) == 0
+
 
 class TestCheckImports:
     """Tests for import checking in core modules."""

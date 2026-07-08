@@ -99,3 +99,21 @@ class TestHasAllowManyParams:
         node = _first_function(source)
         assert node.lineno == 1
         assert _has_allow_many_params(source, node) is False
+
+    def test_marker_without_reason_returns_false(self) -> None:
+        source = (
+            "# allow-many-params:\n"
+            "def wide(a, b, c, d, e, f):\n"
+            "    pass\n"
+        )
+        node = _first_function(source)
+        assert _has_allow_many_params(source, node) is False
+
+    def test_marker_inside_string_literal_returns_false(self) -> None:
+        source = (
+            'MARKER = "allow-many-params: not a comment"\n'
+            "def wide(a, b, c, d, e, f):\n"
+            "    pass\n"
+        )
+        node = _first_function(source)
+        assert _has_allow_many_params(source, node) is False

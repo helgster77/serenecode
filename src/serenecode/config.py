@@ -779,7 +779,7 @@ def _matches_rule(content: str, pattern: str, default: bool) -> bool:
 @icontract.ensure(lambda result: result is None or isinstance(result, tuple), "result must be a tuple or None")
 def _extract_forbidden_exception_types(content: str) -> tuple[str, ...] | None:
     """Extract explicitly forbidden exception type names from SERENECODE.md content."""
-    line_match = re.search(r"(?:Never raise bare|never bare)([^\n]+)", content)
+    line_match = re.search(r"(?:never raise bare|never bare)([^\n]+)", content, re.IGNORECASE)
     if line_match is None:
         return None
 

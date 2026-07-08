@@ -309,7 +309,6 @@ def check_type_annotations(
     # Loop invariant: results contains annotation findings for checkable_functions[0..i]
     for node in checkable_functions:
         details: list[Detail] = []
-        args = node.args
         params_to_check = _non_receiver_parameters(node)
 
         # Loop invariant: details contains missing annotations for params[0..j]
@@ -347,14 +346,8 @@ def check_type_annotations(
     return results
 
 
-@icontract.require(
-    lambda tree: isinstance(tree, ast.Module),
-    "tree must be an ast.Module",
-)
-@icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
-)
+@icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def check_no_any_in_core(
     tree: ast.Module,
     config: SerenecodeConfig,
@@ -378,11 +371,29 @@ def check_no_any_in_core(
     if not is_core_module(module_path, config):
         return []
 
+    # Aliases under which the typing modules are imported, so the
+    # qualified forms (typing.Any, t.Any, ...) are caught too.
+    typing_aliases = {
+        alias.asname or alias.name
+        for imp in ast.walk(tree) if isinstance(imp, ast.Import)
+        for alias in imp.names if alias.name in ("typing", "typing_extensions")
+    }
+
     results: list[FunctionResult] = []
 
     # Loop invariant: results contains Any-usage findings for nodes[0..i]
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id == "Any":
+        if not isinstance(node, (ast.Name, ast.Attribute)):
+            continue
+        bare_any = (
+            isinstance(node, ast.Name) and node.id == "Any"
+            and isinstance(node.ctx, ast.Load)
+        )
+        qualified_any = (
+            isinstance(node, ast.Attribute) and node.attr == "Any"
+            and isinstance(node.value, ast.Name) and node.value.id in typing_aliases
+        )
+        if bare_any or qualified_any:
             results.append(FunctionResult(
                 function="<module>",
                 file=file_path,
@@ -402,14 +413,8 @@ def check_no_any_in_core(
     return results
 
 
-@icontract.require(
-    lambda tree: isinstance(tree, ast.Module),
-    "tree must be an ast.Module",
-)
-@icontract.ensure(
-    lambda result: isinstance(result, list),
-    "result must be a list",
-)
+@icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
+@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def check_imports(
     tree: ast.Module,
     config: SerenecodeConfig,
