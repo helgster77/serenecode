@@ -46,7 +46,7 @@ class TestReportCommand:
         runner = CliRunner()
         result = runner.invoke(main, ["report", str(tmp_path), "--format", "json", "--allow-code-execution"])
         assert result.exit_code == 0
-        parsed = json.loads(result.output)
+        parsed = json.loads(result.stdout)
         assert "version" in parsed
         assert "summary" in parsed
         assert "results" in parsed
@@ -115,7 +115,7 @@ def func(x: int, y: int) -> int:
         _write_sample_source(tmp_path)
         runner = CliRunner()
         result = runner.invoke(main, ["report", str(tmp_path), "--format", "json", "--allow-code-execution"])
-        parsed = json.loads(result.output)
+        parsed = json.loads(result.stdout)
         # Validate schema fields from spec Section 4.3
         assert isinstance(parsed["version"], str)
         assert isinstance(parsed["timestamp"], str)

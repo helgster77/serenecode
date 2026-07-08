@@ -12,6 +12,7 @@ generation and is exempt from full contract requirements.
 from __future__ import annotations
 
 import ast
+from typing import TYPE_CHECKING
 
 import icontract
 
@@ -21,9 +22,12 @@ from serenecode.ports.coverage_analyzer import (
     MockDependency,
 )
 
-# Import _FunctionCoverage from the adapter so _generate_suggestions can
-# accept it.  This is a private type shared between sibling adapter modules.
-from serenecode.adapters.coverage_adapter import _FunctionCoverage
+# _FunctionCoverage is only referenced in annotations. Import it under
+# TYPE_CHECKING so the sibling adapter modules do not form a runtime
+# import cycle — a plain import here fails whenever this module is
+# imported before coverage_adapter (e.g. during symbolic verification).
+if TYPE_CHECKING:
+    from serenecode.adapters.coverage_adapter import _FunctionCoverage
 
 # I/O modules that always require mocking in tests
 _IO_MODULES = frozenset({
@@ -497,15 +501,17 @@ def _generate_test_code(
     for dec in mock_decorators:
         parts.append(dec)
 
-    params = ", ".join(mock_params) if mock_params else ""
+    # Stacked @patch decorators inject mocks bottom-up: the decorator
+    # closest to the def supplies the first parameter, so the parameter
+    # list is the reverse of the decorator order.
+    params = ", ".join(reversed(mock_params)) if mock_params else ""
     parts.append(f"def test_{test_name}_line_{block[0]}({params}):")
     parts.append(f'    """Cover {context}."""')
 
     # Setup mocks
     # Loop invariant: mock setup lines added for mock_params[0..i]
-    for i, dep in enumerate(deps):
-        if dep.mock_necessary and i < len(mock_params):
-            parts.append(f"    {mock_params[i]}.return_value = None  # TODO: configure mock return value")
+    for mock_var in mock_params:
+        parts.append(f"    {mock_var}.return_value = None  # TODO: configure mock return value")
 
     # Call
     if class_name:

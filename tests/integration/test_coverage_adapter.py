@@ -431,6 +431,35 @@ class TestGenerateTestCode:
         code = _generate_test_code("_helper", None, "mod", [1], "line 1", [])
         assert "def test_helper_line_1" in code
 
+    def test_stacked_patches_bind_params_bottom_up(self) -> None:
+        """Stacked @patch decorators inject mocks bottom-up, so the parameter
+        order must be the reverse of the decorator order."""
+        deps = [
+            MockDependency(
+                name="open", import_module="builtins", is_external=False,
+                mock_necessary=True, reason="file system I/O",
+            ),
+            MockDependency(
+                name="json", import_module="json", is_external=False,
+                mock_necessary=False, reason="internal",
+            ),
+            MockDependency(
+                name="post", import_module="requests", is_external=True,
+                mock_necessary=True, reason="network I/O",
+            ),
+        ]
+        code = _generate_test_code("load", None, "pkg.loader", [3], "line 3", deps)
+        lines = code.splitlines()
+        decorators = [ln for ln in lines if ln.startswith("@patch(")]
+        assert decorators == ["@patch('pkg.loader.open')", "@patch('pkg.loader.post')"]
+        # Bottom decorator (post) supplies the first parameter.
+        assert "def test_load_line_3(mock_post, mock_open):" in code
+        # Non-necessary deps get no setup line; both mocked deps get one each.
+        setup_lines = [ln for ln in lines if ".return_value = None" in ln]
+        assert len(setup_lines) == 2
+        assert any("mock_open" in ln for ln in setup_lines)
+        assert any("mock_post" in ln for ln in setup_lines)
+
 
 class TestGetCallName:
     """Tests for AST call name extraction."""

@@ -223,15 +223,15 @@ Each template in `content.py` (default, strict, minimal) includes a "Module Heal
 ## INT-001: Pipeline integration flow
 
 Kind: call
-Source: run_pipeline
+Source: _run_module_health_checks
 Target: check_file_length
 
-**Components:** `run_pipeline` (pipeline.py), `_check_file_length`, `_check_function_length`, `_check_parameter_count`, `_check_class_method_count`, `ModuleHealthConfig` (config.py)
+**Components:** `run_pipeline` / `_run_module_health_checks` (pipeline.py), `check_file_length`, `check_function_length`, `check_parameter_count`, `check_class_method_count` (module_health.py), `ModuleHealthConfig` (config.py)
 
 **Flow:**
 1. `run_pipeline` enters Level 1 block.
 2. After structural checks + dead-code analysis, checks `config.module_health.enabled`.
-3. If enabled, calls all four `_check_*` functions, passing `source_files` and `config`.
+3. If enabled, delegates to `_run_module_health_checks`, which calls all four `check_*` functions, passing `source_files` and `config`.
 4. Each function iterates source files, skips test files, parses AST as needed, applies thresholds.
 5. Results (FAILED or EXEMPT advisory) are appended to `level_1_results`.
 6. Early termination triggers if any FAILED result exists.
@@ -242,18 +242,18 @@ Target: check_file_length
 
 Kind: call
 Source: make_check_result
-Target: ADVISORY_FINDING_TYPES
+Target: result_is_advisory
 
-**Components:** `make_check_result` (models.py), `format_human` / `format_html` (reporter.py), `to_check_response` (schemas.py), `ADVISORY_FINDING_TYPES` (models.py)
+**Components:** `make_check_result` / `result_is_advisory` (models.py), `format_human` / `format_html` (reporter.py), `to_check_response` (schemas.py), `ADVISORY_FINDING_TYPES` (models.py)
 
 **Flow:**
 1. Module health checks emit `FunctionResult` with `status=EXEMPT` and `finding_type in ADVISORY_FINDING_TYPES`.
-2. `make_check_result` counts these as `advisory_count` via set membership check.
+2. `make_check_result` counts these as `advisory_count` by calling `result_is_advisory`, which applies the shared `ADVISORY_FINDING_TYPES` set.
 3. Reporter classifies them as advisory (visible, distinct from plain exempt) via same set.
 4. MCP schemas include them in wire findings via same set.
 5. CLI `--fail-on-advisory` triggers exit 11 when `advisory_count > 0`.
 
-**Invariant:** `advisory_count` is always consistent across all three consumers because they share the single `ADVISORY_FINDING_TYPES` constant.
+**Invariant:** `advisory_count` is always consistent across all consumers because classification derives from the single `ADVISORY_FINDING_TYPES` constant.
 
 ## INT-003: CLI config override for --skip-module-health
 

@@ -21,14 +21,16 @@ from serenecode.mcp.tools import (
     tool_check_file,
     tool_check_function,
     tool_dead_code,
+    tool_suggest_contracts,
+    tool_verify_fixed,
+)
+from serenecode.mcp.tools_spec import (
     tool_integration_status,
     tool_list_integrations,
     tool_list_reqs,
     tool_orphans,
     tool_req_status,
-    tool_suggest_contracts,
     tool_validate_spec,
-    tool_verify_fixed,
 )
 
 

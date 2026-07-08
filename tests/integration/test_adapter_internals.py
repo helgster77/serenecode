@@ -487,7 +487,7 @@ class TestCrossHairAdapterInternals:
 
         assert _uses_result_model_annotation(CheckResult) is True
 
-    def test_external_detail_annotation_is_reported_as_skipped(self, tmp_path: Path) -> None:
+    def test_external_detail_annotation_is_reported_as_excluded(self, tmp_path: Path) -> None:
         from serenecode.adapters.hypothesis_adapter import HypothesisPropertyTester
 
         module_file = tmp_path / "detail_case.py"
@@ -510,7 +510,7 @@ def render(item: myapp.Detail) -> int:
 
         assert len(findings) == 1
         assert findings[0].function_name == "render"
-        assert findings[0].finding_type == "skipped"
+        assert findings[0].finding_type == "excluded"
 
     def test_discover_cli_targets_use_file_line_targets_for_standalone_files(self, tmp_path: Path) -> None:
         from serenecode.adapters.crosshair_adapter import _discover_cli_targets

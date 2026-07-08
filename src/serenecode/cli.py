@@ -23,7 +23,7 @@ from serenecode.contracts.predicates import (
 )
 from serenecode.core.pipeline import run_pipeline
 from serenecode.init import initialize_project
-from serenecode.models import ExitCode
+from serenecode.models import CheckResult, ExitCode
 from serenecode.reporter import format_html, format_human, format_json
 from serenecode.source_discovery import (
     build_source_files,
@@ -438,8 +438,25 @@ def check(  # allow-many-params: Click requires one parameter per CLI flag
     _output_and_exit(final_result, output_format, wall_start, fail_on_advisory)
 
 
+@icontract.require(
+    lambda final_result: final_result is not None,
+    "final_result must be provided",
+)
+@icontract.require(
+    lambda output_format: output_format in {"human", "json"},
+    "output_format must be human or json",
+)
+@icontract.require(
+    lambda wall_start: isinstance(wall_start, (int, float)),
+    "wall_start must be a monotonic timestamp",
+)
+@icontract.require(
+    lambda fail_on_advisory: isinstance(fail_on_advisory, bool),
+    "fail_on_advisory must be a bool",
+)
+@icontract.ensure(lambda result: result is None, "CLI commands return None")
 def _output_and_exit(
-    final_result: object,
+    final_result: CheckResult,
     output_format: str,
     wall_start: float,
     fail_on_advisory: bool,

@@ -14,7 +14,14 @@ from datetime import datetime, timezone
 
 import icontract
 
-from serenecode.models import ADVISORY_FINDING_TYPES, CheckResult, CheckStatus, FunctionResult
+from serenecode.models import (
+    ADVISORY_FINDING_TYPES,
+    CheckResult,
+    CheckStatus,
+    CheckSummary,
+    Detail,
+    FunctionResult,
+)
 
 __all__ = [
     "format_human",
@@ -197,6 +204,14 @@ def format_html(check_result: CheckResult) -> str:
 </html>"""
 
 
+@icontract.require(
+    lambda check_result: check_result.level_requested >= 1,
+    "check_result must have a valid requested level",
+)
+@icontract.ensure(
+    lambda check_result, result: sum(len(v) for v in result.values()) == len(check_result.results),
+    "every function result must appear in exactly one file group",
+)
 def _group_results_by_file(
     check_result: CheckResult,
 ) -> dict[str, list[FunctionResult]]:
@@ -208,6 +223,9 @@ def _group_results_by_file(
     return by_file
 
 
+@icontract.require(lambda lines: isinstance(lines, list), "lines must be a list")
+@icontract.require(lambda by_file: isinstance(by_file, dict), "by_file must be a dict")
+@icontract.ensure(lambda result: result is None, "mutates lines in place and returns None")
 def _format_human_file_sections(
     lines: list[str],
     by_file: dict[str, list[FunctionResult]],
@@ -253,6 +271,12 @@ def _format_human_file_sections(
         lines.append("")
 
 
+@icontract.require(lambda lines: isinstance(lines, list), "lines must be a list")
+@icontract.require(
+    lambda func_results: isinstance(func_results, list),
+    "func_results must be a list",
+)
+@icontract.ensure(lambda result: result is None, "mutates lines in place and returns None")
 def _format_human_func_results(
     lines: list[str],
     func_results: list[FunctionResult],
@@ -285,7 +309,13 @@ def _format_human_func_results(
                 lines.append(f"           counterexample: {detail.counterexample}")
 
 
-def _format_human_summary(lines: list[str], summary: object) -> None:
+@icontract.require(lambda lines: isinstance(lines, list), "lines must be a list")
+@icontract.require(
+    lambda summary: summary.total_functions >= 0,
+    "summary must have a non-negative function count",
+)
+@icontract.ensure(lambda result: result is None, "mutates lines in place and returns None")
+def _format_human_summary(lines: list[str], summary: CheckSummary) -> None:
     """Append summary section and MCP hint to lines."""
     lines.append("-" * 50)
     summary_parts = [
@@ -313,6 +343,11 @@ def _format_human_summary(lines: list[str], summary: object) -> None:
     lines.append(_MCP_EDITOR_HINT)
 
 
+@icontract.require(lambda by_file: isinstance(by_file, dict), "by_file must be a dict")
+@icontract.ensure(
+    lambda by_file, result: isinstance(result, str) and (not by_file or "file-section" in result),
+    "result must be an HTML string with a section per file",
+)
 def _build_html_file_sections(
     by_file: dict[str, list[FunctionResult]],
 ) -> str:
@@ -339,6 +374,14 @@ def _build_html_file_sections(
     return "\n".join(file_sections)
 
 
+@icontract.require(
+    lambda func_results: isinstance(func_results, list),
+    "func_results must be a list",
+)
+@icontract.ensure(
+    lambda func_results, result: isinstance(result, list) and len(result) <= len(func_results),
+    "result must contain at most one row per function result",
+)
 def _build_html_rows(func_results: list[FunctionResult]) -> list[str]:
     """Build HTML table rows for a file's function results."""
     rows: list[str] = []
@@ -367,7 +410,12 @@ def _build_html_rows(func_results: list[FunctionResult]) -> list[str]:
     return rows
 
 
-def _build_html_detail(details: tuple) -> str:
+@icontract.require(lambda details: isinstance(details, tuple), "details must be a tuple")
+@icontract.ensure(
+    lambda details, result: isinstance(result, str) and (not details or "detail" in result),
+    "result must be an HTML string with a detail div per entry",
+)
+def _build_html_detail(details: tuple[Detail, ...]) -> str:
     """Build HTML for a function result's detail entries."""
     detail_parts: list[str] = []
     # Loop invariant: detail_parts contains detail HTML for details[0..k]

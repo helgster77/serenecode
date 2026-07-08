@@ -11,18 +11,27 @@ is received as structured SourceFile objects with pre-read content.
 from __future__ import annotations
 
 import ast
+from typing import TYPE_CHECKING, Callable
 
 import icontract
 
 from serenecode.checker.compositional_parsing import (
     ClassInfo,
     FunctionInfo,
+    MethodSignature,
     ModuleInfo,
     ProtocolInfo,
     _get_call_target_name,
     _module_path_has_segment,
     _normalize_module_name,
 )
+
+if TYPE_CHECKING:
+    from serenecode.checker.spec_traceability import IntegrationPoint
+
+# Signature-compatibility predicate injected to avoid a circular import
+# with serenecode.checker.compositional at module load time.
+_SigCompatFn = Callable[[MethodSignature, MethodSignature], list[str]]
 from serenecode.config import SerenecodeConfig, is_core_module, is_exempt_module
 from serenecode.contracts.predicates import is_non_empty_string
 from serenecode.models import (
@@ -80,6 +89,13 @@ def check_assume_guarantee(
     return results
 
 
+@icontract.require(lambda mod: isinstance(mod, ModuleInfo), "mod must be a ModuleInfo")
+@icontract.require(lambda import_map: isinstance(import_map, dict), "import_map must be a dictionary")
+@icontract.require(lambda module_functions: isinstance(module_functions, dict), "module_functions must be a dictionary")
+@icontract.ensure(
+    lambda result: isinstance(result, list) and all(isinstance(item, FunctionResult) for item in result),
+    "result must be a list of FunctionResult",
+)
 def _check_assume_guarantee_for_module(
     mod: ModuleInfo,
     import_map: dict[str, dict[str, tuple[str, str | None]]],
@@ -344,6 +360,14 @@ def check_data_flow(
     return results
 
 
+@icontract.require(lambda mod: isinstance(mod, ModuleInfo), "mod must be a ModuleInfo")
+@icontract.require(lambda all_modules: isinstance(all_modules, list), "all_modules must be a list")
+@icontract.require(lambda import_map: isinstance(import_map, dict), "import_map must be a dictionary")
+@icontract.require(lambda module_functions: isinstance(module_functions, dict), "module_functions must be a dictionary")
+@icontract.ensure(
+    lambda result: isinstance(result, list) and all(isinstance(item, FunctionResult) for item in result),
+    "result must be a list of FunctionResult",
+)
 def _check_data_flow_for_module(
     mod: ModuleInfo,
     all_modules: list[ModuleInfo],
@@ -479,6 +503,12 @@ def check_system_invariants(
     return results
 
 
+@icontract.require(lambda modules: isinstance(modules, list), "modules must be a list")
+@icontract.ensure(
+    lambda result: isinstance(result, tuple) and len(result) == 2
+    and isinstance(result[0], dict) and isinstance(result[1], list),
+    "result must be a (protocols dict, findings list) tuple",
+)
 def _collect_port_protocols(
     modules: list[ModuleInfo],
 ) -> tuple[dict[str, tuple[str, ProtocolInfo]], list[FunctionResult]]:
@@ -512,6 +542,11 @@ def _collect_port_protocols(
     return all_protocols, findings
 
 
+@icontract.require(lambda modules: isinstance(modules, list), "modules must be a list")
+@icontract.ensure(
+    lambda result: isinstance(result, list) and all(isinstance(item, ClassInfo) for item in result),
+    "result must be a list of ClassInfo",
+)
 def _collect_adapter_classes(modules: list[ModuleInfo]) -> list[ClassInfo]:
     """Collect all classes from adapter modules."""
     adapter_classes: list[ClassInfo] = []
@@ -522,10 +557,17 @@ def _collect_adapter_classes(modules: list[ModuleInfo]) -> list[ClassInfo]:
     return adapter_classes
 
 
+@icontract.require(lambda all_protocols: isinstance(all_protocols, dict), "all_protocols must be a dictionary")
+@icontract.require(lambda adapter_classes: isinstance(adapter_classes, list), "adapter_classes must be a list")
+@icontract.require(lambda class_likely_implements: callable(class_likely_implements), "class_likely_implements must be callable")
+@icontract.ensure(
+    lambda result: isinstance(result, list) and all(isinstance(item, FunctionResult) for item in result),
+    "result must be a list of FunctionResult",
+)
 def _check_protocol_implementations(
     all_protocols: dict[str, tuple[str, ProtocolInfo]],
     adapter_classes: list[ClassInfo],
-    class_likely_implements: object,
+    class_likely_implements: Callable[[ClassInfo, ProtocolInfo], bool],
 ) -> list[FunctionResult]:
     """Check every Protocol has at least one likely implementation."""
     results: list[FunctionResult] = []
@@ -548,6 +590,11 @@ def _check_protocol_implementations(
     return results
 
 
+@icontract.require(lambda modules: isinstance(modules, list), "modules must be a list")
+@icontract.ensure(
+    lambda result: isinstance(result, list) and all(isinstance(item, FunctionResult) for item in result),
+    "result must be a list of FunctionResult",
+)
 def _check_forbidden_core_imports(
     modules: list[ModuleInfo],
     config: SerenecodeConfig,
@@ -648,9 +695,12 @@ def check_declared_integrations(
     return results
 
 
+@icontract.require(lambda sources: isinstance(sources, (list, tuple)), "sources must be a list or tuple")
+@icontract.require(lambda extract_implementations: callable(extract_implementations), "extract_implementations must be callable")
+@icontract.ensure(lambda result: isinstance(result, dict), "result must be a dictionary")
 def _collect_int_refs(
     sources: list[tuple[str, str, str]] | tuple[tuple[str, str, str], ...],
-    extract_implementations: object,
+    extract_implementations: Callable[[str], list[tuple[str, str, int]]],
 ) -> dict[str, list[tuple[str, str, int]]]:
     """Collect INT implementation references from all sources."""
     implementation_refs: dict[str, list[tuple[str, str, int]]] = {}
@@ -664,13 +714,20 @@ def _collect_int_refs(
     return implementation_refs
 
 
+@icontract.require(lambda point: point is not None, "point must be provided")
+@icontract.require(lambda implementation_refs: isinstance(implementation_refs, dict), "implementation_refs must be a dict")
+@icontract.require(lambda source_map: isinstance(source_map, dict), "source_map must be a dict")
+@icontract.require(lambda class_map: isinstance(class_map, dict), "class_map must be a dict")
+@icontract.require(lambda protocol_map: isinstance(protocol_map, dict), "protocol_map must be a dict")
+@icontract.require(lambda check_sig_compat: callable(check_sig_compat), "check_sig_compat must be callable")
+@icontract.ensure(lambda result: result is None or isinstance(result, FunctionResult), "result must be a FunctionResult or None")
 def _check_single_integration_point(
-    point: object,
+    point: IntegrationPoint,
     implementation_refs: dict[str, list[tuple[str, str, int]]],
     source_map: dict[str, str],
     class_map: dict[tuple[str, str], ClassInfo],
     protocol_map: dict[str, ProtocolInfo],
-    check_sig_compat: object,
+    check_sig_compat: _SigCompatFn,
 ) -> FunctionResult | None:
     """Check one integration point. Returns None if satisfied."""
     refs = implementation_refs.get(point.identifier, [])
@@ -731,7 +788,7 @@ def _check_single_integration_point(
 @icontract.require(lambda source_map: isinstance(source_map, dict), "source_map must be a dict")
 @icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
 def _call_integration_is_satisfied(
-    point: object,
+    point: IntegrationPoint,
     refs: list[tuple[str, str, int]],
     source_map: dict[str, str],
 ) -> bool:
@@ -765,11 +822,11 @@ def _call_integration_is_satisfied(
 @icontract.require(lambda protocol_map: isinstance(protocol_map, dict), "protocol_map must be a dict")
 @icontract.ensure(lambda result: result is None or isinstance(result, str), "result must be str or None")
 def _implements_integration_issue(
-    point: object,
+    point: IntegrationPoint,
     refs: list[tuple[str, str, int]],
     class_map: dict[tuple[str, str], ClassInfo],
     protocol_map: dict[str, ProtocolInfo],
-    check_signature_compatibility: object | None = None,
+    check_signature_compatibility: _SigCompatFn | None = None,
 ) -> str | None:
     """Return None if an implements integration is satisfied, else a short issue."""
     source_names = {segment for segment in str(getattr(point, "source")).split(".") if segment}
@@ -815,7 +872,7 @@ def _implements_integration_issue(
 def _protocol_signature_issue(
     class_info: ClassInfo,
     protocol: ProtocolInfo,
-    check_signature_compatibility: object | None = None,
+    check_signature_compatibility: _SigCompatFn | None = None,
 ) -> str | None:
     """Return None if a class structurally matches a protocol, else a short issue."""
     if check_signature_compatibility is None:

@@ -16,22 +16,24 @@ import icontract
 import pytest
 
 from serenecode.adapters.hypothesis_adapter import (
-    _can_construct_class,
     _extract_counterexample,
     _find_nested_violation,
-    _get_strategy_for_annotation_with_seen,
-    _is_placeholder_value,
     _is_result_model_module,
     _is_result_model_object,
-    _parse_literal_collection,
     _result_model_public_names,
+    _string_annotation_uses_result_model,
+    _uses_result_model_annotation,
+)
+from serenecode.adapters.hypothesis_strategies import (
+    _can_construct_class,
+    _get_strategy_for_annotation_with_seen,
+    _is_placeholder_value,
+    _parse_literal_collection,
     _sample_value_for_annotation,
     _strategy_for_class,
     _strategy_for_example_model_type,
     _strategy_for_model_type,
     _strategy_for_protocol,
-    _string_annotation_uses_result_model,
-    _uses_result_model_annotation,
 )
 
 

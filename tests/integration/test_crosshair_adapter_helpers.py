@@ -667,6 +667,13 @@ class TestParseCliOutput:
         assert len(result) == 1
         assert "verified" in result[0].outcome
 
+    def test_empty_output_nonzero_exit_is_error_not_verified(self) -> None:
+        """A crashed CLI run with no output must not be reported as verified."""
+        result = _parse_cli_output("mod.py", "", "", function_name="f", returncode=2)
+        assert len(result) == 1
+        assert result[0].outcome == "error"
+        assert "exited with code 2" in result[0].message
+
     def test_counterexample_line(self) -> None:
         """Branch (lines 1006-1013): regex matches CrossHair error format."""
         stdout = "mod.py:42: error: postcondition violated"

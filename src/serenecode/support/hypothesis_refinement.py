@@ -25,6 +25,10 @@ except ImportError:
 _KNOWN_PREDICATES: dict[str, Callable[[], SearchStrategy]] = {}
 
 
+@icontract.ensure(
+    lambda result: isinstance(result, dict) and len(result) > 0,
+    "result must be a non-empty dict",
+)
 def _init_known_predicates() -> dict[str, Callable[[], SearchStrategy]]:
     """Lazily build the known-predicate lookup."""
     return {
@@ -92,6 +96,10 @@ def _try_refine_from_condition(
     _try_filter_fallback(condition, param_name, strategies, annotations)
 
 
+@icontract.require(lambda condition: callable(condition), "condition must be callable")
+@icontract.require(lambda source: isinstance(source, str), "source must be a string")
+@icontract.require(lambda param_name: isinstance(param_name, str), "param_name must be a string")
+@icontract.ensure(lambda result: isinstance(result, str), "result must be a string")
 def _expand_predicate_source(
     condition: Callable[..., bool], source: str, param_name: str,
 ) -> str:
@@ -110,6 +118,11 @@ def _expand_predicate_source(
     return effective
 
 
+@icontract.require(lambda condition: callable(condition), "condition must be callable")
+@icontract.require(lambda source: isinstance(source, str), "source must be a string")
+@icontract.require(lambda param_name: isinstance(param_name, str), "param_name must be a string")
+@icontract.require(lambda strategies: isinstance(strategies, dict), "strategies must be a dict")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
 def _try_known_predicate(
     condition: Callable[..., bool], source: str, param_name: str,
     strategies: dict[str, SearchStrategy],
@@ -126,6 +139,13 @@ def _try_known_predicate(
     return False
 
 
+@icontract.require(
+    lambda effective_source: isinstance(effective_source, str),
+    "effective_source must be a string",
+)
+@icontract.require(lambda param_name: isinstance(param_name, str), "param_name must be a string")
+@icontract.require(lambda strategies: isinstance(strategies, dict), "strategies must be a dict")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
 def _try_membership_pattern(
     effective_source: str, param_name: str, strategies: dict[str, SearchStrategy],
 ) -> bool:
@@ -140,6 +160,11 @@ def _try_membership_pattern(
     return False
 
 
+@icontract.require(lambda source: isinstance(source, str), "source must be a string")
+@icontract.require(lambda param_name: isinstance(param_name, str), "param_name must be a string")
+@icontract.require(lambda strategies: isinstance(strategies, dict), "strategies must be a dict")
+@icontract.require(lambda annotations: isinstance(annotations, dict), "annotations must be a dict")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
 def _try_numeric_bounds(
     source: str, param_name: str, strategies: dict[str, SearchStrategy],
     annotations: dict[str, object],
@@ -172,6 +197,11 @@ def _try_numeric_bounds(
     return True
 
 
+@icontract.require(lambda condition: callable(condition), "condition must be callable")
+@icontract.require(lambda param_name: isinstance(param_name, str), "param_name must be a string")
+@icontract.require(lambda strategies: isinstance(strategies, dict), "strategies must be a dict")
+@icontract.require(lambda annotations: isinstance(annotations, dict), "annotations must be a dict")
+@icontract.ensure(lambda result: result is None, "refinement happens in place")
 def _try_filter_fallback(
     condition: Callable[..., bool], param_name: str,
     strategies: dict[str, SearchStrategy], annotations: dict[str, object],

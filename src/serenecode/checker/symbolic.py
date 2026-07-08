@@ -60,6 +60,18 @@ def transform_symbolic_results(
     )
 
 
+@icontract.require(
+    lambda finding: isinstance(finding, SymbolicFinding),
+    "finding must be a SymbolicFinding",
+)
+@icontract.require(
+    lambda file_path: isinstance(file_path, str),
+    "file_path must be a string",
+)
+@icontract.ensure(
+    lambda finding, result: result.function == finding.function_name,
+    "result must be attributed to the finding's function",
+)
 def _transform_single_finding(
     finding: SymbolicFinding,
     file_path: str,
@@ -73,6 +85,14 @@ def _transform_single_finding(
     )
 
 
+@icontract.require(
+    lambda finding: isinstance(finding, SymbolicFinding),
+    "finding must be a SymbolicFinding",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, tuple) and len(result) == 3,
+    "result must be a (status, level, detail) triple",
+)
 def _classify_symbolic_finding(
     finding: SymbolicFinding,
 ) -> tuple[CheckStatus, int, Detail]:

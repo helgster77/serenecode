@@ -288,6 +288,23 @@ class CheckResult:
 
 
 @icontract.require(
+    lambda func_result: isinstance(func_result, FunctionResult),
+    "func_result must be a FunctionResult",
+)
+@icontract.ensure(
+    lambda func_result, result: result == any(
+        detail.finding_type in ADVISORY_FINDING_TYPES for detail in func_result.details
+    ),
+    "result must reflect whether any detail has an advisory finding type",
+)
+def result_is_advisory(func_result: FunctionResult) -> bool:
+    """Return True when a result carries an advisory finding type."""
+    return any(
+        detail.finding_type in ADVISORY_FINDING_TYPES for detail in func_result.details
+    )
+
+
+@icontract.require(
     lambda results: isinstance(results, tuple),
     "results must be a tuple",
 )
@@ -333,7 +350,7 @@ def make_check_result(
     for r in results:
         if r.status == CheckStatus.EXEMPT:
             exempt_count += 1
-            if any(detail.finding_type in ADVISORY_FINDING_TYPES for detail in r.details):
+            if result_is_advisory(r):
                 advisory_count += 1
             continue
         has_non_exempt = True

@@ -12,32 +12,36 @@ import textwrap
 import pytest
 
 from serenecode.checker.structural import (
-    IcontractNames,
-    _find_tautological_contracts,
-    _is_test_module,
-    _is_tautological_lambda,
-    _decorator_descriptions_are_literals,
-    check_bare_asserts_outside_tests,
     check_class_invariants,
     check_contracts,
-    check_dangerous_calls,
     check_docstrings,
     check_exception_types,
     check_imports,
     check_loop_invariants,
-    check_mutable_default_arguments,
-    check_naming_conventions,
     check_no_any_in_core,
-    check_no_assertions_in_tests,
-    check_print_in_core,
     check_silent_exception_handling,
     check_structural,
+    check_type_annotations,
+)
+from serenecode.checker.structural_helpers import (
+    IcontractNames,
+    _decorator_descriptions_are_literals,
+    _find_tautological_contracts,
+    _is_tautological_lambda,
+    resolve_icontract_aliases,
+)
+from serenecode.checker.structural_quality import (
+    _is_test_module,
+    check_bare_asserts_outside_tests,
+    check_dangerous_calls,
+    check_mutable_default_arguments,
+    check_naming_conventions,
+    check_no_assertions_in_tests,
+    check_print_in_core,
     check_stub_residue,
     check_tautological_isinstance_postcondition,
     check_todo_comments,
-    check_type_annotations,
     check_unused_parameters,
-    resolve_icontract_aliases,
 )
 from serenecode.config import default_config, minimal_config, strict_config
 from serenecode.models import CheckStatus
@@ -505,6 +509,56 @@ class TestCheckNoAnyInCore:
         source = textwrap.dedent("""\
             def process(data: str) -> str:
                 return data
+        """)
+        tree = ast.parse(source)
+        config = default_config()
+        results = check_no_any_in_core(tree, config, "core/engine.py", "test.py")
+        assert len(results) == 0
+
+    def test_qualified_typing_any_fails(self) -> None:
+        source = textwrap.dedent("""\
+            import typing
+
+            def process(data: typing.Any) -> int:
+                return 0
+        """)
+        tree = ast.parse(source)
+        config = default_config()
+        results = check_no_any_in_core(tree, config, "core/engine.py", "test.py")
+        assert len(results) == 1
+
+    def test_aliased_typing_any_fails(self) -> None:
+        source = textwrap.dedent("""\
+            import typing as t
+
+            def process(data: t.Any) -> int:
+                return 0
+        """)
+        tree = ast.parse(source)
+        config = default_config()
+        results = check_no_any_in_core(tree, config, "core/engine.py", "test.py")
+        assert len(results) == 1
+
+    def test_any_attribute_on_non_typing_name_passes(self) -> None:
+        source = textwrap.dedent("""\
+            import enum
+
+            class Level(enum.Enum):
+                Any = 1
+
+            def process() -> Level:
+                return Level.Any
+        """)
+        tree = ast.parse(source)
+        config = default_config()
+        results = check_no_any_in_core(tree, config, "core/engine.py", "test.py")
+        assert len(results) == 0
+
+    def test_variable_assignment_named_any_passes(self) -> None:
+        source = textwrap.dedent("""\
+            def process() -> int:
+                Any = 1
+                return 0
         """)
         tree = ast.parse(source)
         config = default_config()

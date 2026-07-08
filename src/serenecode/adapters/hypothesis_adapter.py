@@ -523,10 +523,16 @@ class HypothesisPropertyTester:
         strategies = _build_strategies_from_signature(func)
 
         if strategies is None:
+            # Same category as the static parameter filter above: the
+            # function's parameter types cannot be generated, so it is
+            # excluded from this level — visible, but not blocking.
             return PropertyFinding(
                 function_name=func_name, module_path=module_path,
-                passed=True, finding_type="skipped",
-                message=f"Cannot derive strategies for '{func_name}' — unsupported parameter types",
+                passed=True, finding_type="excluded",
+                message=(
+                    f"Function '{func_name}' excluded from property testing "
+                    "(cannot derive strategies — unsupported parameter types)"
+                ),
             )
 
         try:
@@ -600,6 +606,10 @@ class HypothesisPropertyTester:
 
 
 @icontract.require(lambda exc: isinstance(exc, BaseException), "exc must be an exception")
+@icontract.ensure(
+    lambda result: isinstance(result, PropertyFinding),
+    "result must be a PropertyFinding",
+)
 def _handle_violation(
     func_name: str,
     module_path: str,
@@ -623,6 +633,19 @@ def _handle_violation(
     return _build_postcondition_finding(func_name, module_path, exc)
 
 
+@icontract.require(
+    lambda func_name: is_non_empty_string(func_name),
+    "func_name must be a non-empty string",
+)
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(lambda exc: isinstance(exc, Exception), "exc must be an exception")
+@icontract.ensure(
+    lambda result: isinstance(result, PropertyFinding),
+    "result must be a PropertyFinding",
+)
 def _handle_generic_exception(
     func_name: str,
     module_path: str,
@@ -640,6 +663,22 @@ def _handle_generic_exception(
     )
 
 
+@icontract.require(
+    lambda func_name: is_non_empty_string(func_name),
+    "func_name must be a non-empty string",
+)
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda exc: isinstance(exc, icontract.ViolationError),
+    "exc must be a ViolationError",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, PropertyFinding),
+    "result must be a PropertyFinding",
+)
 def _build_postcondition_finding(
     func_name: str,
     module_path: str,
@@ -666,6 +705,7 @@ def _build_postcondition_finding(
     )
 
 
+@icontract.require(lambda exc: isinstance(exc, BaseException), "exc must be an exception")
 @icontract.ensure(
     lambda result: result is None or isinstance(result, icontract.ViolationError),
     "result must be a ViolationError or None",

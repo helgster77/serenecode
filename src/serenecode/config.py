@@ -516,14 +516,8 @@ def config_for_template(template_name: str) -> SerenecodeConfig:
     return configs[template_name]()
 
 
-@icontract.require(
-    lambda content: isinstance(content, str),
-    "content must be a string",
-)
-@icontract.ensure(
-    lambda result: result.template_name in ("default", "strict", "minimal"),
-    "parsed config must have a valid template name",
-)
+@icontract.require(lambda content: isinstance(content, str), "content must be a string")
+@icontract.ensure(lambda result: result.template_name in ("default", "strict", "minimal"), "parsed config must have a valid template name")
 def parse_serenecode_md(content: str) -> SerenecodeConfig:
     """Parse a SERENECODE.md file content into a SerenecodeConfig.
 
@@ -544,14 +538,8 @@ def parse_serenecode_md(content: str) -> SerenecodeConfig:
     return _apply_content_overrides(content, config, exempt_paths)
 
 
-@icontract.require(
-    lambda content: content is not None,
-    "content must be provided",
-)
-@icontract.ensure(
-    lambda config, result: result.naming_conventions == config.naming_conventions,
-    "naming conventions are preserved through overrides",
-)
+@icontract.require(lambda content: content is not None, "content must be provided")
+@icontract.ensure(lambda config, result: result.naming_conventions == config.naming_conventions, "naming conventions are preserved through overrides")
 def _apply_content_overrides(
     content: str,
     config: SerenecodeConfig,
@@ -589,6 +577,8 @@ def _apply_content_overrides(
     )
 
 
+@icontract.require(lambda content: isinstance(content, str), "content must be a string")
+@icontract.ensure(lambda config, result: result.require_on_public_functions == config.contract_requirements.require_on_public_functions, "public-function contract requirement is preserved")
 def _override_contract_config(content: str, config: SerenecodeConfig) -> ContractConfig:
     """Derive ContractConfig overrides from SERENECODE.md content."""
     return ContractConfig(
@@ -611,6 +601,8 @@ def _override_contract_config(content: str, config: SerenecodeConfig) -> Contrac
     )
 
 
+@icontract.require(lambda content: isinstance(content, str), "content must be a string")
+@icontract.ensure(lambda config, result: result.require_annotations == config.type_requirements.require_annotations, "annotation requirement is preserved through overrides")
 def _override_type_config(content: str, config: SerenecodeConfig) -> TypeConfig:
     """Derive TypeConfig overrides from SERENECODE.md content."""
     return TypeConfig(
@@ -628,6 +620,8 @@ def _override_type_config(content: str, config: SerenecodeConfig) -> TypeConfig:
     )
 
 
+@icontract.require(lambda content: isinstance(content, str), "content must be a string")
+@icontract.ensure(lambda config, result: not config.error_handling_rules.require_domain_exceptions or result.require_domain_exceptions, "domain-exception rule can only be activated, not deactivated")
 def _override_error_handling_config(content: str, config: SerenecodeConfig) -> ErrorHandlingConfig:
     """Derive ErrorHandlingConfig overrides from SERENECODE.md content."""
     require_domain_exceptions = _matches_rule(
@@ -655,6 +649,8 @@ def _override_error_handling_config(content: str, config: SerenecodeConfig) -> E
     )
 
 
+@icontract.require(lambda content: isinstance(content, str), "content must be a string")
+@icontract.ensure(lambda config, result: not config.loop_recursion_rules.require_loop_invariant_comments or result.require_loop_invariant_comments, "loop-invariant rule can only be activated, not deactivated")
 def _override_loop_recursion_config(content: str, config: SerenecodeConfig) -> LoopRecursionConfig:
     """Derive LoopRecursionConfig overrides from SERENECODE.md content."""
     return LoopRecursionConfig(
@@ -671,6 +667,8 @@ def _override_loop_recursion_config(content: str, config: SerenecodeConfig) -> L
     )
 
 
+@icontract.require(lambda config: config is not None, "config must be provided")
+@icontract.ensure(lambda config, result: result.forbidden_imports_in_core == config.architecture_rules.forbidden_imports_in_core, "forbidden core imports are preserved through overrides")
 def _override_architecture_config(
     config: SerenecodeConfig,
     type_requirements: TypeConfig,
@@ -694,6 +692,8 @@ def _override_architecture_config(
     )
 
 
+@icontract.require(lambda content: isinstance(content, str), "content must be a string")
+@icontract.ensure(lambda config, result: not config.code_quality_rules.forbid_stub_residue or result.forbid_stub_residue, "code-quality rules can only be activated, not deactivated")
 def _override_code_quality_config(content: str, config: SerenecodeConfig) -> CodeQualityConfig:
     """Derive CodeQualityConfig overrides from SERENECODE.md content.
 
@@ -779,7 +779,7 @@ def _matches_rule(content: str, pattern: str, default: bool) -> bool:
 @icontract.ensure(lambda result: result is None or isinstance(result, tuple), "result must be a tuple or None")
 def _extract_forbidden_exception_types(content: str) -> tuple[str, ...] | None:
     """Extract explicitly forbidden exception type names from SERENECODE.md content."""
-    line_match = re.search(r"(?:Never raise bare|never bare)([^\n]+)", content)
+    line_match = re.search(r"(?:never raise bare|never bare)([^\n]+)", content, re.IGNORECASE)
     if line_match is None:
         return None
 

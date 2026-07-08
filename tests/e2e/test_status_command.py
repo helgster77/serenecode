@@ -69,7 +69,7 @@ def square(x: float) -> float:
         runner = CliRunner()
         result = runner.invoke(main, ["status", str(tmp_path / "test.py"), "--format", "json"])
         assert result.exit_code == 0
-        parsed = json.loads(result.output)
+        parsed = json.loads(result.stdout)
         assert "version" in parsed
         assert "summary" in parsed
 

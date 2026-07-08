@@ -206,6 +206,19 @@ class CoverageAnalyzerAdapter:
         return coverage_data
 
 
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda search_paths: isinstance(search_paths, tuple),
+    "search_paths must be a tuple",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, tuple) and len(result) == 2
+    and (result[0] is None) == (result[1] is None),
+    "result must be a pair with both elements set or both None",
+)
 def _resolve_module_source(
     module_path: str,
     search_paths: tuple[str, ...],
@@ -228,6 +241,18 @@ def _resolve_module_source(
     return source_file, source
 
 
+@icontract.require(
+    lambda coverage_data: isinstance(coverage_data, dict),
+    "coverage_data must be a dict",
+)
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, CoverageFinding),
+    "result must be a CoverageFinding or None",
+)
 def _check_coverage_error(
     coverage_data: dict[str, Any],
     module_path: str,
@@ -246,6 +271,18 @@ def _check_coverage_error(
     return None
 
 
+@icontract.require(
+    lambda coverage_data: isinstance(coverage_data, dict),
+    "coverage_data must be a dict",
+)
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, CoverageFinding),
+    "result must be a CoverageFinding or None",
+)
 def _check_empty_coverage(
     coverage_data: dict[str, Any],
     module_path: str,
@@ -270,6 +307,27 @@ def _check_empty_coverage(
     return None
 
 
+@icontract.require(
+    lambda function_coverages: isinstance(function_coverages, list),
+    "function_coverages must be a list",
+)
+@icontract.require(
+    lambda source: isinstance(source, str),
+    "source must be a string",
+)
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.require(
+    lambda threshold: isinstance(threshold, (int, float)),
+    "threshold must be numeric",
+)
+@icontract.ensure(
+    lambda function_coverages, result: isinstance(result, list)
+    and len(result) == len(function_coverages),
+    "result must contain one finding per function coverage entry",
+)
 def _build_coverage_findings(
     function_coverages: list[_FunctionCoverage],
     source: str,
@@ -649,6 +707,14 @@ def _map_coverage_to_functions(
     return _map_file_info_to_functions(file_info, functions)
 
 
+@icontract.require(
+    lambda functions: isinstance(functions, list),
+    "functions must be a list",
+)
+@icontract.ensure(
+    lambda functions, result: isinstance(result, list) and len(result) == len(functions),
+    "result must contain one zero-coverage entry per function",
+)
 def _zero_coverage_for_all(functions: list[_FunctionNode]) -> list[_FunctionCoverage]:
     """Return zero-coverage entries for all functions."""
     results: list[_FunctionCoverage] = []
@@ -664,12 +730,24 @@ def _zero_coverage_for_all(functions: list[_FunctionNode]) -> list[_FunctionCove
     return results
 
 
+@icontract.require(
+    lambda coverage_data: isinstance(coverage_data, dict),
+    "coverage_data must be a dict",
+)
+@icontract.require(
+    lambda source_file: isinstance(source_file, str),
+    "source_file must be a string",
+)
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, dict),
+    "result must be a dict or None",
+)
 def _find_file_coverage_data(
     coverage_data: dict[str, Any],
     source_file: str,
 ) -> dict[str, Any] | None:
     """Find the coverage data entry matching source_file."""
-    files_data = coverage_data.get("files", {})
+    files_data: dict[str, dict[str, Any]] = coverage_data.get("files", {})
     # Loop invariant: file_info is set if any key in files_data matches source_file
     for file_key, file_data in files_data.items():
         try:
@@ -686,6 +764,18 @@ def _find_file_coverage_data(
     return None
 
 
+@icontract.require(
+    lambda file_info: isinstance(file_info, dict),
+    "file_info must be a dict",
+)
+@icontract.require(
+    lambda functions: isinstance(functions, list),
+    "functions must be a list",
+)
+@icontract.ensure(
+    lambda functions, result: isinstance(result, list) and len(result) == len(functions),
+    "result must contain one coverage entry per function",
+)
 def _map_file_info_to_functions(
     file_info: dict[str, Any],
     functions: list[_FunctionNode],
