@@ -86,6 +86,8 @@ class CoverageFinding:
     suggestions: tuple[CoverageSuggestion, ...]
     meets_threshold: bool
     message: str
+    finding_type: str | None = None
+    test_exit_code: int | None = None
 
 
 # Protocol classes are exempt from @icontract.invariant — see ports/file_system.py.

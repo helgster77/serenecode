@@ -34,6 +34,8 @@ from serenecode.mcp.schemas import (
     to_check_response,
 )
 from serenecode.models import CheckResult
+from serenecode.mcp.scope import filter_function_result, resolve_function_target, scope_error
+from serenecode.adapters.traceability_context import discover_traceability_sources
 from serenecode.source_discovery import (
     build_source_files,
     determine_context_root,
@@ -199,35 +201,6 @@ def _wire_adapters(level: int) -> dict[str, object]:
 
 
 @icontract.require(
-    lambda check_result: isinstance(check_result, CheckResult),
-    "check_result must be a CheckResult",
-)
-@icontract.require(
-    lambda function_name: isinstance(function_name, str) and len(function_name) > 0,
-    "function_name must be a non-empty string",
-)
-@icontract.ensure(
-    lambda check_result, result: result.level_requested == check_result.level_requested,
-    "filtered result must preserve the requested level",
-)
-def _filter_to_function(check_result: CheckResult, function_name: str) -> CheckResult:
-    """Return a new CheckResult containing only entries for one function name.
-
-    Used by per-function tool calls — the pipeline runs at file granularity
-    and we narrow afterward so the agent sees a focused response.
-    """
-    from serenecode.models import make_check_result
-
-    filtered = tuple(r for r in check_result.results if r.function == function_name)
-    return make_check_result(
-        filtered,
-        level_requested=check_result.level_requested,
-        duration_seconds=check_result.summary.duration_seconds,
-        level_achieved=check_result.level_achieved,
-    )
-
-
-@icontract.require(
     lambda path: isinstance(path, str) and len(path) > 0,
     "path must be a non-empty string",
 )
@@ -315,6 +288,9 @@ def tool_check(path: str = ".", level: int = 1) -> dict[str, object]:
         known_test_stems=test_stems,
         spec_content=spec_content,
         test_sources=test_sources,
+        traceability_sources=(
+            discover_traceability_sources(source_files, reader) if spec_content is not None else None
+        ),
         **adapters,  # type: ignore[arg-type]
     )
     response = to_check_response(result)
@@ -371,6 +347,9 @@ def tool_check_file(path: str, level: int = 1) -> dict[str, object]:
         known_test_stems=test_stems,
         spec_content=spec_content,
         test_sources=test_sources,
+        traceability_sources=(
+            discover_traceability_sources(source_files, reader) if spec_content is not None else None
+        ),
         **adapters,  # type: ignore[arg-type]
     )
     response = to_check_response(result)
@@ -415,8 +394,8 @@ def tool_check_function(
     Args:
         path: Path to the source file containing the function. (Same
             parameter name as `serenecode_check` for consistency.)
-        function: Function name. The first def with this name in the file
-            is what gets reported.
+        function: Qualified function name (for example Class.method), or an
+            unambiguous short name. Missing or ambiguous names fail explicitly.
         level: Verification level (1-6). Levels 3+ require the server to
             have been started with --allow-code-execution.
 
@@ -429,6 +408,12 @@ def tool_check_function(
     _gate_code_execution(level)
     abs_file = os.path.abspath(path)
     config, source_files, project_root = _build_pipeline_for_file(abs_file)
+    try:
+        target = resolve_function_target(source_files[0], function)
+    except (SyntaxError, ValueError) as exc:
+        response = to_check_response(scope_error(abs_file, function, level, str(exc)))
+        _STATE.last_check = response
+        return response_to_dict(response)
     reader = LocalFileReader()
     test_stems = discover_test_file_stems(project_root, reader)
     spec_content, test_sources = _load_spec_inputs(abs_file)
@@ -441,9 +426,12 @@ def tool_check_function(
         known_test_stems=test_stems,
         spec_content=spec_content,
         test_sources=test_sources,
+        traceability_sources=(
+            discover_traceability_sources(source_files, reader) if spec_content is not None else None
+        ),
         **adapters,  # type: ignore[arg-type]
     )
-    filtered = _filter_to_function(result, function)
+    filtered = filter_function_result(result, target)
     response = to_check_response(filtered)
     _STATE.last_check = response
     return response_to_dict(response)
@@ -491,12 +479,13 @@ def tool_verify_fixed(
 
     Returns:
         A dict with keys:
-            - fixed: bool — True if no finding's message contains the substring
+            - fixed: bool — True only if verification passed and the finding is absent
             - remaining_findings: list of finding dicts whose message still matches
             - all_findings: full CheckResponse for the function
     """
     response_dict = tool_check_function(path=path, function=function, level=level)
     findings = response_dict.get("findings", [])
+    valid_findings = isinstance(findings, list)
     if not isinstance(findings, list):
         findings = []
     needle = finding_substring.lower()
@@ -506,7 +495,7 @@ def tool_verify_fixed(
         and needle in f["message"].lower()
     ]
     return {
-        "fixed": len(remaining) == 0,
+        "fixed": valid_findings and response_dict.get("passed") is True and len(remaining) == 0,
         "remaining_findings": remaining,
         "all_findings": response_dict,
     }

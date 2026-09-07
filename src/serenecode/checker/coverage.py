@@ -72,9 +72,16 @@ def transform_coverage_results(
             details.append(Detail(
                 level=VerificationLevel.COVERAGE,
                 tool="coverage",
-                finding_type="insufficient_coverage",
+                finding_type=finding.finding_type or "insufficient_coverage",
                 message=finding.message,
-                suggestion=_build_suggestion(finding),
+                suggestion=(
+                    "Fix the reported test run before relying on its coverage."
+                    if finding.finding_type else _build_suggestion(finding)
+                ),
+                counterexample=(
+                    {"test_exit_code": finding.test_exit_code}
+                    if finding.test_exit_code is not None else None
+                ),
             ))
 
         func_results.append(FunctionResult(

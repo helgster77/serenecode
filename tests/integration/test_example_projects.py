@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from serenecode.adapters.local_fs import LocalFileReader
 from serenecode.config import strict_config
 from serenecode.core.pipeline import run_pipeline
 from serenecode.source_discovery import build_source_files
+from serenecode.models import CheckResult
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
@@ -25,14 +27,21 @@ _BUNDLED_SERENECODE_EXAMPLE_SRC = next(
 )
 
 
+def _failure_details(result: CheckResult) -> str:
+    """Retain actionable failure details without hundreds of successful records."""
+    return json.dumps({
+        "level_achieved": result.level_achieved,
+        "summary": result.summary.to_dict(),
+        "findings": [r.to_dict() for r in result.results if r.status.value in ("failed", "skipped")],
+    }, indent=2)
+
+
 @pytest.mark.slow
 def test_bundled_example_project_passes_strict_level_6() -> None:
     """The bundled reference example should satisfy the strict pipeline.
 
-    Coverage analysis (L3) is skipped because that example's
-    auto-generated dunder methods (frozen dataclass __setattr__ etc.)
-    are discovered but not meaningfully testable. L3 coverage is
-    validated end-to-end in the e2e test suite instead.
+    This exercises L4–L6 only. It does not establish strict structural,
+    type, or coverage compliance. The CLI example check separately runs L1–L6.
     """
     assert _BUNDLED_SERENECODE_EXAMPLE_SRC is not None, "expected *-serenecode under examples/"
     root = str(_BUNDLED_SERENECODE_EXAMPLE_SRC)
@@ -50,7 +59,7 @@ def test_bundled_example_project_passes_strict_level_6() -> None:
         max_workers=4,
     )
 
-    assert result.passed is True
+    assert result.passed is True, _failure_details(result)
     assert result.level_requested == 6
     assert result.level_achieved == 6
     assert result.summary.failed_count == 0
@@ -60,9 +69,9 @@ def test_bundled_example_project_passes_strict_level_6() -> None:
 def test_serenecode_repo_passes_strict_level_6() -> None:
     """The main Serenecode package should satisfy the strict pipeline too.
 
-    Coverage analysis (L3) is skipped for the self-check because running
-    the full pytest suite per module is too slow for CI. The bundled example
-    test above validates coverage analysis works end-to-end.
+    This exercises L4–L6 only. Starting at L4 avoids recursively running
+    pytest under L3 coverage from within pytest. The separate CLI self-check
+    runs L1–L6 with the repository's default configuration.
     """
     root = "src"
     reader = LocalFileReader()
@@ -79,7 +88,7 @@ def test_serenecode_repo_passes_strict_level_6() -> None:
         max_workers=4,
     )
 
-    assert result.passed is True
+    assert result.passed is True, _failure_details(result)
     assert result.level_requested == 6
     assert result.level_achieved == 6
     assert result.summary.failed_count == 0

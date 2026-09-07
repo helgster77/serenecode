@@ -444,7 +444,7 @@ def _level_badge(level: int) -> str:
     """Generate an HTML badge for a verification level.
 
     Args:
-        level: The verification level (0-5).
+        level: The verification level (0-6).
 
     Returns:
         An HTML span element with the level badge.

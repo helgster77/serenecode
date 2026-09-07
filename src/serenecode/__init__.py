@@ -25,6 +25,7 @@ from serenecode.core.pipeline import run_pipeline
 from serenecode.init import InitResult, initialize_project
 from serenecode.models import CheckResult
 from serenecode.ports.dead_code_analyzer import DeadCodeAnalyzer
+from serenecode.adapters.traceability_context import discover_traceability_sources
 from serenecode.source_discovery import (
     build_source_files,
     discover_test_file_stems,
@@ -314,6 +315,9 @@ def _run_check(
         known_test_stems=test_stems,
         spec_content=spec_content,
         test_sources=test_sources,
+        traceability_sources=(
+            discover_traceability_sources(source_files, reader) if spec_content is not None else None
+        ),
     )
 
 

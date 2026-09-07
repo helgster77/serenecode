@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from serenecode.config import default_config, minimal_config
 from serenecode.core.exceptions import ToolNotInstalledError
 from serenecode.core.pipeline import SourceFile, run_pipeline
@@ -484,6 +486,7 @@ class TestPipelineWithMockAdapters:
             start_level=1,
             config=minimal_config(),
             type_checker=_NoIssuesTypeChecker(),
+            coverage_analyzer=_PassingCoverageAnalyzer(),
             property_tester=property_tester,
             symbolic_checker=symbolic_checker,
         )
@@ -509,6 +512,24 @@ class TestPipelineWithMockAdapters:
 
         assert result.passed is False
         assert result.level_achieved == 3
+
+    @pytest.mark.parametrize("start_level", [3, 4, 5])
+    def test_later_stages_cannot_erase_missing_backend_evidence(self, start_level: int) -> None:
+        sf = SourceFile("src/pkg/mod.py", "pkg/mod.py", _make_valid_source(), "pkg.mod")
+        result = run_pipeline(
+            (sf,), level=6, start_level=start_level, config=minimal_config(),
+            coverage_analyzer=_EmptyCoverageAnalyzer(),
+            property_tester=_EmptyPropertyTester(), symbolic_checker=_EmptySymbolicChecker(),
+        )
+        assert result.passed is False
+        assert result.level_achieved == start_level - 1
+        assert result.summary.verdict == "incomplete"
+
+    def test_only_exempt_results_are_not_execution_evidence(self) -> None:
+        from serenecode.core.pipeline import _level_achieved
+
+        result = FunctionResult("square", "mod.py", 1, 4, 3, CheckStatus.EXEMPT)
+        assert not _level_achieved([result], has_source_files=True, require_evidence=True)
 
 
 class TestPipelineLevel3Coverage:

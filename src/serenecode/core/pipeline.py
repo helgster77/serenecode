@@ -69,6 +69,7 @@ class PipelineConfig:
     known_test_stems: frozenset[str] = frozenset()
     spec_content: str | None = None
     test_sources: tuple[tuple[str, str], ...] = ()
+    traceability_sources: tuple[SourceFile, ...] | None = None
 
 
 @icontract.invariant(
@@ -225,15 +226,18 @@ def _run_pipeline_impl(
         all_results.extend(level_results)
         if pc.early_termination and _has_failures(level_results):
             return _make_early_return(all_results, level, start_time, achieved_level)
-        if _level_achieved(level_results, has_source_files, require_evidence=require_evidence):
+        if achieved_level == lv - 1 and _level_achieved(
+            level_results, has_source_files, require_evidence=require_evidence,
+        ):
             achieved_level = lv
 
     # Level 6: Compositional verification
     if start_level <= 6 <= level:
         _emit("Level 6: Compositional verification...")
-        level_6_results = _run_level_6(source_files, config, pc.spec_content)
+        context = pc.traceability_sources if pc.traceability_sources is not None else source_files
+        level_6_results = _run_level_6(context, config, pc.spec_content)
         all_results.extend(level_6_results)
-        if _level_achieved(level_6_results, has_source_files):
+        if achieved_level == 5 and _level_achieved(level_6_results, has_source_files):
             achieved_level = 6
 
     elapsed = time.monotonic() - start_time
@@ -317,7 +321,9 @@ def _run_spec_checks(
 
     emit("  Spec traceability check...")
     spec_result = check_spec_traceability(
-        pc.spec_content, source_files, pc.test_sources,
+        pc.spec_content,
+        pc.traceability_sources if pc.traceability_sources is not None else source_files,
+        pc.test_sources,
     )
     results.extend(spec_result.results)
     return results
@@ -469,9 +475,9 @@ def _level_achieved(
     Args:
         results: Level results to evaluate.
         has_source_files: Whether the pipeline had any source files.
-        require_evidence: If True, empty results with source files
-            means the level is NOT achieved (used for L3/L4/L5 where
-            empty results means no functions were exercised). If False,
+        require_evidence: If True, at least one passing result is required
+            when source files exist (L3/L4/L5). Empty or exclusively exempt
+            results do not demonstrate execution. If False,
             empty results means "no issues found" which counts as a pass
             (used for L1/L2/L6 where the checker examines all files).
 
@@ -482,7 +488,7 @@ def _level_achieved(
         return False
     if not has_source_files:
         return True
-    if require_evidence and not results:
+    if require_evidence and not any(r.status == CheckStatus.PASSED for r in results):
         return False
     return True
 

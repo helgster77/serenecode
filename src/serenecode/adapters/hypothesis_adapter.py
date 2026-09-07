@@ -41,7 +41,7 @@ except ImportError:
 
 
 _TRUST_REQUIRED_MESSAGE = (
-    "Level 3 property testing imports and executes project modules. "
+    "Level 4 property testing imports and executes project modules. "
     "Re-run with allow_code_execution=True only for trusted code."
 )
 _PATH_PARAMETER_NAMES = frozenset({
@@ -540,7 +540,7 @@ class HypothesisPropertyTester:
             return PropertyFinding(
                 function_name=func_name, module_path=module_path,
                 passed=True, finding_type="verified",
-                message=f"Property tests passed for '{func_name}' ({max_examples} examples)",
+                message=f"Property tests passed for '{func_name}' (max_examples={max_examples}; generation budget)",
             )
         except icontract.ViolationError as exc:
             return _handle_violation(func_name, module_path, exc)

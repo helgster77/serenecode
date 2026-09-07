@@ -200,7 +200,11 @@ class FunctionResult:
 )
 @dataclass(frozen=True)
 class CheckSummary:
-    """Summary statistics for a verification run."""
+    """Summary of result records, including module/spec and repeated symbol rows.
+
+    ``total_functions`` is a legacy name, not a distinct-function count.
+    ``advisory_count`` is a subset of ``exempt_count``.
+    """
 
     total_functions: int
     passed_count: int

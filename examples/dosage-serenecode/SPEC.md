@@ -1,6 +1,8 @@
 # Medical Dosage Calculator — Specification
 
-**Purpose:** A small Python module that calculates safe drug dosages for patients.
+**Purpose:** A hypothetical Python example for comparing testing and executable contracts.
+
+**Demonstration only:** These numeric limits and adjustment tiers are invented for this example. They are not a clinical protocol, have no clinical validation, and must not be used to make treatment decisions. `is_safe` names a comparison/lookup result within the example, not a clinical judgment.
 
 **Source:** ../DOSAGE_CALC_SPEC.md
 
@@ -10,16 +12,16 @@
 
 ### REQ-001: Patient model with validated fields
 
-A `Patient` has the following fields, all enforced by class invariants:
+A `Patient` has the following fields. Numeric range constraints are checked by class invariants while contracts are enabled; annotations describe the container types.
 
-- `weight_kg`: body weight in kilograms. Must be > 0. Realistic human range is 0.5 kg (neonates) to 300 kg.
+- `weight_kg`: body weight in kilograms. Must be > 0 and <= 300 kg in this example.
 - `age_years`: age in years. Must be >= 0, max 150.
 - `creatinine_clearance`: CrCl in mL/min, a measure of kidney function. Must be > 0, max 200.
 - `current_medications`: a list of drug identifier strings the patient is currently taking.
 
 ### REQ-002: Drug model with validated fields
 
-A `Drug` has the following fields, all enforced by class invariants:
+A `Drug` has the following fields. The stated numeric and non-empty identifier constraints are checked by class invariants while contracts are enabled; identifier uniqueness is a caller responsibility.
 
 - `drug_id`: a unique string identifier. Must be non-empty.
 - `dose_per_kg`: standard dose in mg per kg of body weight. Must be > 0.
@@ -110,9 +112,9 @@ Given `dose_mg > 0` and `creatinine_clearance > 0`, the result is always > 0 and
 
 ## Daily Safety Check
 
-### REQ-017: Daily total computation is exact
+### REQ-017: Daily total uses the specified multiplication
 
-`check_daily_safety(dose_mg, drug)` computes `daily_total_mg` as `dose_mg * drug.doses_per_day`. This must be exact with no floating-point drift.
+`check_daily_safety(dose_mg, drug)` computes `daily_total_mg` as `dose_mg * drug.doses_per_day`. The result must equal that Python multiplication expression. Binary floating-point rounding, overflow, and underflow still apply; this is not exact decimal arithmetic.
 
 ### REQ-018: Safety determination
 
@@ -154,9 +156,32 @@ The same inputs always produce the same output.
 
 All functions must reject invalid inputs:
 
-- Negative or zero values for weight, age (zero age is valid), creatinine clearance, dose amounts, and concentrations.
+- Non-positive values for weight, creatinine clearance, dose amounts, and concentrations; negative age (zero age is valid).
 - Empty `drug_id`.
 - `doses_per_day` must be a positive integer.
 - `max_daily_dose_mg` must be >= `max_single_dose_mg`.
 
 How invalid inputs are rejected (exceptions, return codes, etc.) is left to the implementation, but rejection must occur before any computation.
+
+
+## Implementation and verification limits (7 September 2026)
+
+The requirements above describe the intended example behavior, not proof of its
+implementation. The implementations use Python floats. The SereneCode renal
+function additionally rejects positive doses for which `dose_mg * 0.25` underflows
+to zero, so REQ-016's positivity guarantee in the structured spec applies only to
+its accepted domain. The plain implementation does not have that precondition.
+Numeric checks do not establish finite, physically meaningful values for every
+field, and the examples do not provide general numeric range safety.
+
+Frozen result/model dataclasses prevent ordinary field reassignment but retain
+mutable lists and sets. Invariants do not prevent in-place container mutations.
+The SereneCode `SafetyResult` constructor checks individual numeric constraints,
+not the full `is_safe`/total relationship; that relationship is checked by the
+`check_daily_safety` postconditions. Contract checks can be disabled.
+
+The local test suites and the SereneCode example's full L6 run passed as recorded
+in the repository's dated verification record. Only `adjust_for_renal_function`
+was exercised by L5; the other three function signatures were exempt. Its
+contracts do not specify every tier multiplier. Passing traceability tags and a
+complete L6 verdict do not establish every sentence in this specification.

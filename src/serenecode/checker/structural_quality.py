@@ -832,7 +832,7 @@ def check_tautological_isinstance_postcondition(
                     message=(
                         f"Function '{node.name}' has tautological postcondition "
                         f"`isinstance(result, {return_type_str})` "
-                        f"(return annotation already guarantees this)"
+                        f"(redundant with the return annotation; does not constrain behavior)"
                     ),
                     suggestion=(
                         "Replace with a meaningful constraint on `result` (range, length, "

@@ -175,6 +175,8 @@ def check_test_existence(
 
     # Loop invariant: results contains test-existence findings for source_files[0..i]
     for sf in source_files:
+        if _is_test_file_path(sf.file_path):
+            continue
         basename = sf.file_path.rsplit("/", 1)[-1] if "/" in sf.file_path else sf.file_path
         if basename == "__init__.py":
             continue

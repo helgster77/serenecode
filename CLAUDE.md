@@ -1,8 +1,8 @@
 ## Serenecode
 
-All code in this project MUST follow the same standards SereneCode ships to users: the embedded templates in `src/serenecode/templates/content.py` (default / strict / minimal) define the conventions the structural checker enforces. Read the relevant template before writing or modifying any code. Every public function must have icontract preconditions and postconditions. Every class with state must have invariants. Follow the architectural patterns specified there.
+All code in this project MUST follow the same standards SereneCode ships to users: the embedded templates in `src/serenecode/templates/content.py` (default / strict / minimal) define the conventions the structural checker enforces. Read the relevant template before writing or modifying any code. Non-exempt public production functions with caller-supplied inputs must have icontract preconditions, and public production functions must have postconditions. Classes with state need meaningful invariants. Test functions follow test-quality rules without production contract, annotation, or docstring requirements. Follow the architectural patterns specified there.
 
-Pre-existing `*_SPEC.md` or PRD files are narrative inputs; only project-root `SPEC.md` with REQ/INT identifiers satisfies SereneCode traceability (`serenecode check --spec`).
+Pre-existing `*_SPEC.md` or PRD files are narrative inputs; project-root `SPEC.md` with REQ/INT identifiers is auto-discovered for traceability; `--spec PATH` can select a structured spec elsewhere.
 
 ### Verification (prefer MCP while editing)
 
@@ -31,10 +31,12 @@ serenecode check src/ --level 6 --allow-code-execution
 
 Each finding includes function name, file path, line number, a message, and a suggestion. The output summary uses four statuses:
 
-- **passed** — verified at the requested level.
+- **passed** — this record passed its own check stage, within that backend’s scope and bounds.
 - **failed** — a violation was found. Read the message and suggestion to fix it.
 - **skipped** — the tool could not run (e.g. tool not installed, module not importable). Investigate why.
-- **exempt** — intentionally excluded from this check level (adapter code, Protocol classes, functions with non-primitive parameters). No action needed unless the function should be verified.
+- **exempt** — excluded from this check stage or reported as a nonblocking advisory. Review the reason and whether deeper evidence is needed. `advisory_count` is included in the exempt count.
+
+`summary.total_functions` counts records, not unique functions. Read the aggregate verdict and achieved level as well as individual records. Function-scoped MCP requests run the file pipeline; L3 can run all project tests. Missing or ambiguous targets fail, and `verify_fixed` requires a passing scoped check. See [verification semantics](docs/VERIFICATION_LEVELS.md) and the dated [verification record](docs/VERIFICATION_STATUS.md).
 
 ### Fixing Failures by Level
 
@@ -42,10 +44,10 @@ Each finding includes function name, file path, line number, a message, and a su
 
 **Level 2 (types)** — mypy type errors. The suggestion includes the mypy error code and a fix direction. Fix the type annotation or the expression.
 
-**Level 3 (coverage)** — Test coverage is below threshold. The output shows:
+**Level 3 (coverage)** — Tests failed, collection/execution failed, or coverage is below threshold. Passing coverage does not excuse failing tests. The output shows:
   - Which functions have insufficient coverage and their exact uncovered lines
   - Suggested test code for each uncovered path
-  - Mock assessment: each dependency is classified as REQUIRED (external I/O — must mock) or OPTIONAL (internal code — consider using the real implementation)
+  - Mock assessment: dependencies receive heuristic REQUIRED/OPTIONAL mock suggestions; review whether a mock or real integration is appropriate
   - If "no tests found", write tests first. Coverage analysis measures existing test quality.
 
 **Level 4 (properties)** — Hypothesis found inputs that violate a postcondition. The counterexample shows the exact failing inputs (e.g. `x=-1, result=-2`). Either:

@@ -16,6 +16,7 @@ import time
 import icontract
 
 from serenecode.config import SerenecodeConfig, is_core_module, is_exempt_module
+from serenecode.core.pipeline_helpers import _is_test_file_path
 from serenecode.models import (
     CheckResult,
     CheckStatus,
@@ -976,12 +977,13 @@ def _run_all_structural_checks(
 ) -> list[FunctionResult]:
     """Run all structural sub-checks and return aggregated results."""
     results: list[FunctionResult] = []
-    results.extend(check_contracts(tree, config, aliases, file_path))
-    results.extend(check_class_invariants(tree, config, aliases, file_path, source))
-    results.extend(check_type_annotations(tree, config, file_path))
+    if not _is_test_file_path(file_path):
+        results.extend(check_contracts(tree, config, aliases, file_path))
+        results.extend(check_class_invariants(tree, config, aliases, file_path, source))
+        results.extend(check_type_annotations(tree, config, file_path))
+        results.extend(check_docstrings(tree, config, file_path))
     results.extend(check_no_any_in_core(tree, config, module_path, file_path))
     results.extend(check_imports(tree, config, module_path, file_path))
-    results.extend(check_docstrings(tree, config, file_path))
     results.extend(check_loop_invariants(source, tree, config, file_path))
     results.extend(check_exception_types(tree, config, module_path, file_path))
     results.extend(check_silent_exception_handling(source, tree, config, file_path))

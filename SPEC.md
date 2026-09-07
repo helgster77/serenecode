@@ -4,19 +4,21 @@
 
 **Source:** Implementation plan derived from codebase exploration (2026-04-13).
 
+**Scope:** This specification covers the module-health feature (36 requirements and 4 integration points), not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
+
 ---
 
 ## Configuration
 
 ### REQ-001: ModuleHealthConfig dataclass
 
-A `ModuleHealthConfig` frozen dataclass with the following fields, all enforced by class invariants:
+A `ModuleHealthConfig` frozen dataclass with the following fields. Class invariants check positive thresholds and warn/error ordering while contracts are enabled; annotations specify field types:
 
 - `enabled`: bool. When False, all module health checks are skipped.
 - `file_length_warn`: int, lines above which a file-length advisory is emitted. Must be > 0.
 - `file_length_error`: int, lines above which a file-length error is emitted. Must be > `file_length_warn`.
-- `function_length_warn`: int, body lines above which a function-length advisory is emitted. Must be > 0.
-- `function_length_error`: int, body lines above which a function-length error is emitted. Must be > `function_length_warn`.
+- `function_length_warn`: int, function-span lines above which a function-length advisory is emitted. Must be > 0.
+- `function_length_error`: int, function-span lines above which a function-length error is emitted. Must be > `function_length_warn`.
 - `parameter_count_warn`: int, non-receiver parameters above which an advisory is emitted. Must be > 0.
 - `parameter_count_error`: int, non-receiver parameters above which an error is emitted. Must be > `parameter_count_warn`.
 - `class_method_count_warn`: int, methods above which a class-size advisory is emitted. Must be > 0.
@@ -63,7 +65,7 @@ The `to_check_response` projection in `schemas.py` must include EXEMPT results w
 
 ### REQ-008: File length check counts total lines
 
-`_check_file_length` counts lines as `len(source.splitlines())` for each source file. Test files (identified by `_is_test_file_path`) are excluded.
+`check_file_length` counts lines as `len(source.splitlines())` for each source file. Test files (identified by `_is_test_file_path`) are excluded.
 
 ### REQ-009: File length error when exceeding error threshold
 
@@ -87,7 +89,7 @@ The `suggestion` field for file-length findings must include concrete refactorin
 
 ### REQ-013: Function length measured by line span
 
-`_check_function_length` measures each function's length as `node.end_lineno - node.lineno + 1` using AST `end_lineno`. Both `FunctionDef` and `AsyncFunctionDef` at module level and as class methods are checked.
+`check_function_length` measures each function's length as `node.end_lineno - node.lineno + 1` using AST `end_lineno`. Both `FunctionDef` and `AsyncFunctionDef` at module level and as class methods are checked.
 
 ### REQ-014: Function length error when exceeding error threshold
 
@@ -107,7 +109,7 @@ The suggestion must mention: extracting comment-delimited sections, pulling nest
 
 ### REQ-017: Parameter count excludes self and cls
 
-`_check_parameter_count` counts non-receiver parameters (excluding `self`/`cls`) for each function. Both positional, keyword-only, `*args`, and `**kwargs` are counted.
+`check_parameter_count` counts non-receiver parameters (excluding `self`/`cls`) for each function. Both positional, keyword-only, `*args`, and `**kwargs` are counted.
 
 ### REQ-018: Parameter count error when exceeding error threshold
 
@@ -127,7 +129,7 @@ The suggestion must mention grouping related parameters into a dataclass, TypedD
 
 ### REQ-021: Class method count includes all def nodes in class body
 
-`_check_class_method_count` counts direct `FunctionDef` and `AsyncFunctionDef` children of each top-level `ClassDef` (not nested classes).
+`check_class_method_count` counts direct `FunctionDef` and `AsyncFunctionDef` children of each top-level `ClassDef` (not nested classes).
 
 ### REQ-022: Class method count error when exceeding error threshold
 
@@ -147,7 +149,7 @@ The suggestion must mention: extracting cohesive groups of methods sharing a pre
 
 ### REQ-025: AST-based split point identification
 
-A helper `_suggest_split_points` analyzes a file's AST and source to identify natural module boundaries:
+A helper `suggest_split_points` analyzes a file's AST and source to identify natural module boundaries:
 
 - Top-level classes with their line span and method count.
 - Groups of top-level functions sharing a common prefix (e.g., `parse_header`, `parse_body` -> `parse_*`).
@@ -155,11 +157,11 @@ A helper `_suggest_split_points` analyzes a file's AST and source to identify na
 
 ### REQ-026: Split suggestions included in file-length findings
 
-When file-length advisory or error findings are emitted, the suggestion field must include the output of `_suggest_split_points` formatted as a bullet list of concrete split candidates with line ranges.
+When file-length advisory or error findings are emitted, the suggestion field must include the output of `suggest_split_points` formatted as concrete split candidates in the suggestion text, using line locations where available.
 
 ### REQ-027: Graceful fallback when no split points found
 
-If `_suggest_split_points` identifies no clear boundaries, the file-length finding falls back to the generic refactoring suggestion without split points.
+If `suggest_split_points` identifies no clear boundaries, the file-length finding falls back to the generic refactoring suggestion without split points.
 
 ---
 
@@ -167,7 +169,7 @@ If `_suggest_split_points` identifies no clear boundaries, the file-length findi
 
 ### REQ-028: Module health checks run in Level 1 pipeline block
 
-All four checks (`_check_file_length`, `_check_function_length`, `_check_parameter_count`, `_check_class_method_count`) are called within the Level 1 block of `run_pipeline`, after dead-code analysis. They are guarded by `config.module_health.enabled`.
+All four checks (`check_file_length`, `check_function_length`, `check_parameter_count`, `check_class_method_count`) are called within the Level 1 block of `run_pipeline`, after dead-code analysis. They are guarded by `config.module_health.enabled`.
 
 ### REQ-029: Module health checks apply at all verification levels
 
@@ -200,7 +202,7 @@ A new MCP tool `tool_module_health(path: str)` reads a single Python file and re
 - `file`: the file path.
 - `metrics`: `line_count`, `function_count`, `class_count`, `largest_function` (name, lines, line), `max_parameters` (name, count, line), `largest_class` (name, method_count, line).
 - `status`: per-metric status (`"ok"`, `"warning"`, `"error"`) derived from `ModuleHealthConfig` thresholds.
-- `split_suggestions`: output of `_suggest_split_points`.
+- `split_suggestions`: output of `suggest_split_points`.
 
 ### REQ-034: serenecode_module_health does not run the verification pipeline
 
@@ -216,7 +218,7 @@ The tool is registered in `build_server()` with a description emphasizing proact
 
 ### REQ-036: Module health documented in all templates
 
-Each template in `content.py` (default, strict, minimal) includes a "Module Health" subsection under Code Quality Standards documenting the four metrics, their warn/error thresholds, the advisory/error behavior, and the `--skip-module-health` flag.
+Each template in `content.py` (default, strict, minimal) includes a "Module Health" section documenting the four metrics, their warn/error thresholds, the advisory/error behavior, and the `--skip-module-health` flag.
 
 ---
 
@@ -277,14 +279,14 @@ Kind: call
 Source: tool_module_health
 Target: _load_config
 
-**Components:** `tool_module_health` (tools.py), `_load_config` (tools.py), `_suggest_split_points` (pipeline.py), `ModuleHealthConfig` (config.py)
+**Components:** `tool_module_health` (tools.py), `_load_config` (tools.py), `suggest_split_points` (core/module_health.py), `ModuleHealthConfig` (config.py)
 
 **Flow:**
 1. Tool receives file path, reads source via `LocalFileReader`.
 2. Loads config via `_load_config` (cached, mtime-aware).
 3. Parses AST, computes metrics (line count, function sizes, parameter counts, class sizes).
 4. Compares each metric against `ModuleHealthConfig` thresholds to derive status.
-5. Calls `_suggest_split_points` on source + AST for split candidates.
+5. Calls `suggest_split_points(source)` for split candidates when the file exceeds the warning threshold.
 6. Returns structured dict with metrics, status, and suggestions.
 
 **Postcondition:** Response always contains all metric fields even when file is empty or has no functions/classes (values are 0 / empty).

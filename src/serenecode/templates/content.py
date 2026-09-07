@@ -16,7 +16,7 @@ _DEFAULT_TEMPLATE = """\
 This file governs how all code in this project must be written. Any AI coding \
 agent MUST read this file in its entirety before writing or modifying any code.
 
-Verified with: `serenecode check src/ --level 4 --allow-code-execution`
+Verification command: `serenecode check src/ --level 4 --allow-code-execution`
 
 Levels 3-6 import and execute project modules. Only use \
 `--allow-code-execution` for trusted code.
@@ -25,7 +25,7 @@ Levels 3-6 import and execute project modules. Only use \
 
 ## Complete Example
 
-This shows every pattern the checker enforces. Follow this exactly:
+This illustrates common patterns. Adapt the contracts and input bounds to the application:
 
 ```python
 \"\"\"Module docstring describing purpose and architecture role.\"\"\"
@@ -43,8 +43,8 @@ class Account:
     balance: float
 
 
-@icontract.require(lambda items: len(items) > 0, "items must not be empty")
-@icontract.ensure(lambda items, result: min(items) <= result <= max(items), "result within range")
+@icontract.require(lambda items: 0 < len(items) <= 100 and all(-1000 <= x <= 1000 for x in items), "1 to 100 items, each between -1000 and 1000")
+@icontract.ensure(lambda items, result: min(items) - 1e-9 <= result <= max(items) + 1e-9, "result within range, allowing rounding tolerance")
 def compute_mean(items: list[float]) -> float:
     \"\"\"Compute the arithmetic mean.\"\"\"
     return sum(items) / len(items)
@@ -56,7 +56,7 @@ def compute_mean(items: list[float]) -> float:
 
 ### Public Functions
 
-Every public function MUST have `@icontract.require` (preconditions) and \
+Every non-exempt public production function MUST have `@icontract.require` (preconditions) and \
 `@icontract.ensure` (postconditions) using icontract decorators.
 
 - Every contract decorator MUST include a human-readable description string \
@@ -71,7 +71,7 @@ contains non-trivial logic.
 
 ### Class Invariants
 
-Every class MUST have at least one `@icontract.invariant` defining its \
+Every class with state MUST have at least one `@icontract.invariant` defining its \
 representation invariant. Invariants must constrain actual state — \
 tautological invariants like `lambda self: True` provide no verification \
 value and should not be used. If a class is truly stateless (e.g. a \
@@ -166,7 +166,7 @@ a new check after each fix.
 
 ## Module Health
 
-Module health checks run on every verification level and flag files, functions, \
+Module health checks run in L1, including normal higher-level runs and flag files, functions, \
 and classes that have grown beyond recommended thresholds. Warnings are advisory \
 (do not block verification). Errors block until fixed.
 
@@ -184,12 +184,16 @@ Skip all module health checks with `--skip-module-health`.
 ## Exemptions
 
 The following are exempt from full contract requirements:
-- `cli.py`, `__init__.py` — Composition roots.
+- `cli.py` — CLI composition root.
+- `__init__.py` — Package composition root.
 - `adapters/` — I/O boundary code.
+- `mcp/` — MCP composition code.
+- `templates/` — Embedded content.
+- `tests/fixtures/` — Test fixtures.
 - `ports/` — Protocol definitions.
-- `templates/`, `tests/fixtures/`, `exceptions.py`
+- `exceptions.py` — Domain exception definitions.
 
-These MUST still have type annotations and test coverage.
+These remain subject to type checking and applicable coverage checks; structural path exemptions also skip annotation rules and test-file-presence checks.
 """
 
 _STRICT_TEMPLATE = """\
@@ -197,9 +201,9 @@ _STRICT_TEMPLATE = """\
 
 This file governs how all code in this project must be written. Any AI coding \
 agent MUST read this file in its entirety before writing or modifying any code. \
-**No exemptions.** Every function — public and private — must have contracts.
+**No preset path exemptions.** Every production function — public and private — must have contracts. Test-specific rules and backend eligibility still apply.
 
-Verified with: `serenecode check src/ --level 6 --allow-code-execution`
+Verification command: `serenecode check src/ --level 6 --allow-code-execution`
 
 Levels 3-6 import and execute project modules. Only use \
 `--allow-code-execution` for trusted code.
@@ -208,7 +212,7 @@ Levels 3-6 import and execute project modules. Only use \
 
 ## Complete Example
 
-This shows every pattern the checker enforces. Follow this exactly:
+This illustrates common patterns. Adapt the contracts and input bounds to the application:
 
 ```python
 \"\"\"Module docstring describing purpose and architecture role.
@@ -229,8 +233,8 @@ class Account:
     balance: float
 
 
-@icontract.require(lambda items: len(items) > 0, "items must not be empty")
-@icontract.ensure(lambda items, result: min(items) <= result <= max(items), "result within range")
+@icontract.require(lambda items: 0 < len(items) <= 100 and all(-1000 <= x <= 1000 for x in items), "1 to 100 items, each between -1000 and 1000")
+@icontract.ensure(lambda items, result: min(items) - 1e-9 <= result <= max(items) + 1e-9, "result within range, allowing rounding tolerance")
 def compute_mean(items: list[float]) -> float:
     \"\"\"Compute the arithmetic mean.\"\"\"
     total = 0.0
@@ -238,11 +242,6 @@ def compute_mean(items: list[float]) -> float:
     for item in items:
         total += item
     return total / len(items)
-
-
-def _validate_positive(value: float) -> bool:
-    \"\"\"Check that a value is positive.\"\"\"
-    return value > 0
 ```
 
 ---
@@ -251,19 +250,20 @@ def _validate_positive(value: float) -> bool:
 
 ### Public Functions
 
-Every public function MUST have `@icontract.require` and `@icontract.ensure` \
+Every non-exempt public production function MUST have `@icontract.require` and `@icontract.ensure` \
 with description strings: `@icontract.require(lambda x: x > 0, "x must be positive")`
 
 Functions with no meaningful parameters may omit `@icontract.require`.
 
 ### Private Functions
 
-Private functions (prefixed with `_`) MUST have contracts for all non-trivial \
-logic. Simple one-liner helpers may omit contracts but MUST have type annotations.
+Private production functions (prefixed with `_`) MUST have contracts and type \
+annotations, including one-line helpers. Functions without caller-supplied \
+inputs may omit preconditions.
 
 ### Class Invariants
 
-Every class MUST have `@icontract.invariant`. Invariants must constrain \
+Every class with state MUST have `@icontract.invariant`. Invariants must constrain \
 actual state — tautological invariants like `lambda self: True` provide no \
 verification value. If a class is truly stateless (Protocol, stateless adapter), \
 omit the invariant and document why.
@@ -275,7 +275,7 @@ omit the invariant and document why.
 - All function signatures MUST have complete type annotations on every \
 parameter kind (including positional-only, keyword-only, variadic, and private \
 helper parameters) and the return type.
-- No use of `Any` anywhere — use `Protocol`, `Union`, or generics.
+- No use of `Any` in core modules — use `Protocol`, `Union`, or generics.
 - Generic types must be fully parameterized (`list[str]` not `list`).
 - Use modern type syntax (Python 3.10+): `X | None` not `Optional[X]`.
 
@@ -333,7 +333,7 @@ they are complementary, not substitutes.
 
 ### Required Tests
 
-- **Every function** — public and private — must have corresponding tests.
+- **Every production function** — public and private — must have corresponding tests.
 - **Core modules**: Unit tests and property-based tests (Hypothesis) for pure functions.
 - **Adapters**: Integration tests covering success and failure paths.
 - **Edge cases**: Boundary conditions and regression tests for every discovered bug.
@@ -349,11 +349,11 @@ contracts hold across a wide range of inputs:
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-@given(items=st.lists(st.floats(allow_nan=False, allow_infinity=False), min_size=1))
+@given(items=st.lists(st.floats(min_value=-1000, max_value=1000, allow_nan=False, allow_infinity=False), min_size=1, max_size=100))
 @settings(max_examples=200, deadline=None)
 def test_compute_mean_satisfies_contracts(items: list[float]) -> None:
     result = compute_mean(items)
-    assert isinstance(result, float)
+    assert min(items) - 1e-9 <= result <= max(items) + 1e-9
 ```
 
 ### Workflow
@@ -389,7 +389,7 @@ findings in parallel when there are many.
 
 ## Module Health
 
-Module health checks run on every verification level. Warnings are advisory. \
+Module health checks run in L1, including normal higher-level runs. Warnings are advisory. \
 Errors block verification. Strict mode uses tighter thresholds.
 
 | Metric              | Warning | Error | What to do                                         |
@@ -403,10 +403,12 @@ Skip all module health checks with `--skip-module-health`.
 
 ---
 
-## No Exemptions
+## No Preset Path Exemptions
 
-Strict mode has NO exempt modules. Every module, including CLI and adapters, \
-must follow all conventions above. Every module must have test coverage.
+Strict mode has no preset path exemptions. Production CLI and adapter modules \
+follow the conventions above. Test files use test-quality rules; they do not \
+require production contracts or tests of tests. Stateless classes, Protocols, \
+explicit suppressions, and backend eligibility rules still have special handling.
 """
 
 _MINIMAL_TEMPLATE = """\
@@ -415,21 +417,21 @@ _MINIMAL_TEMPLATE = """\
 This file defines minimal code conventions for this project. AI coding agents \
 MUST read this before writing any code.
 
-Verified with: `serenecode check src/`
+Verification command: `serenecode check src/`
 
 ---
 
 ## Contract Standards
 
-Every public function MUST have `@icontract.require` (preconditions) and \
+Every non-exempt public production function MUST have `@icontract.require` (preconditions) and \
 `@icontract.ensure` (postconditions). Type annotations on all parameters \
 and return values.
 
 ```python
 import icontract
 
-@icontract.require(lambda items: len(items) > 0)
-@icontract.ensure(lambda items, result: min(items) <= result <= max(items))
+@icontract.require(lambda items: 0 < len(items) <= 100 and all(-1000 <= x <= 1000 for x in items))
+@icontract.ensure(lambda items, result: min(items) - 1e-9 <= result <= max(items) + 1e-9)
 def compute_mean(items: list[float]) -> float:
     return sum(items) / len(items)
 ```
@@ -466,7 +468,7 @@ and parse it programmatically.
 
 ## Module Health
 
-Module health checks run on every verification level. Warnings are advisory. \
+Module health checks run in L1, including normal higher-level runs. Warnings are advisory. \
 Errors block verification. Minimal mode uses relaxed thresholds.
 
 | Metric              | Warning | Error | What to do                                         |
@@ -482,12 +484,16 @@ Skip all module health checks with `--skip-module-health`.
 
 ## Exemptions
 
-- `cli.py` — Thin CLI layer.
+- `cli.py` — CLI composition root.
+- `__init__.py` — Package composition root.
 - `adapters/` — I/O boundary code.
-- `templates/` — Static files.
+- `mcp/` — MCP composition code.
+- `templates/` — Embedded content.
 - `tests/fixtures/` — Test fixtures.
+- `ports/` — Protocol definitions.
+- `exceptions.py` — Domain exception definitions.
 
-Exempt modules must still have test coverage.
+Exempt paths are skipped by structural and test-file-presence checks. Type checking and applicable coverage checks still run.
 """
 
 _SPEC_TRACEABILITY_SECTION = """
@@ -496,9 +502,9 @@ _SPEC_TRACEABILITY_SECTION = """
 ## Spec Traceability
 
 If requirements live in another file (PRD, README, `*_SPEC.md`, etc.), that file is \
-the narrative source — **not** the traceability spec. You must still write or update \
-**SPEC.md** with `REQ-xxx` / `INT-xxx` identifiers. `serenecode check --spec` and \
-traceability tooling apply **only** to SPEC.md. Use a `**Source:** …` line at the \
+the narrative source — **not** the traceability spec. Create or update \
+**SPEC.md** with `REQ-xxx` / `INT-xxx` identifiers. A root SPEC.md is auto-discovered; `serenecode check --spec PATH` can select \
+a structured spec elsewhere. Narrative prose alone does not provide REQ/INT traceability. Use a `**Source:** …` line at the \
 top of SPEC.md pointing to the narrative path(s), or \
 `**Source:** none — this SPEC.md is authoritative`.
 
@@ -562,7 +568,7 @@ has the required fields. Do not proceed to implementation planning until \
 ### Implementation Planning
 
 After the spec is validated, create an implementation plan before writing \
-code. The plan must map every REQ-xxx and every critical `INT-xxx` to:
+code. The plan maps every REQ-xxx and every critical `INT-xxx` to:
 
 - The specific function or class that will implement it.
 - The module it belongs in (e.g. `src/core/orders.py`).
@@ -650,8 +656,9 @@ This checks:
 3. Every INT in the spec has at least one `Implements:` tag in the code.
 4. Every INT in the spec has at least one `Verifies:` tag in the tests.
 5. No orphan references (code/tests referencing non-existent REQs or INTs).
-6. At deeper levels, declared integrations are checked semantically — tags \
-alone are not enough if the integration is not actually present.
+6. At L6, declared integrations are checked against recognized call/type and \
+inheritance structure. This does not prove runtime behavior, ordering, or logical \
+compatibility between contracts. Tags establish references, not test adequacy.
 
 ### Dead Code Review
 
@@ -667,10 +674,69 @@ When dead code is reported:
 Do not consider implementation complete until traceability verification passes.
 """
 
+_VERIFICATION_GUIDANCE = """
+---
+
+## Verification Scope
+
+These are project writing conventions, not a claim that verification has already
+passed. Run the verification command and retain its output. Contract checks hold
+only while enabled; Python optimization or explicit decorator settings can disable
+them. Frozen dataclasses do not freeze contained lists or sets, and invariants do
+not continuously monitor in-place mutations.
+
+Test files receive applicable test-quality checks without production contracts,
+annotations, docstrings, or tests of test files. A passing result record refers to
+its own stage. `summary.total_functions` counts records, not distinct functions;
+`advisory_count` is included in `exempt`. For nonempty source scopes, L3–L5 each
+need at least one passing record and no failed or skipped records. Later stages
+cannot erase an earlier gap. An empty source scope provides no execution evidence.
+
+L3 requires a successful pytest run and adequate coverage. L4 samples a restricted
+input domain with a default budget of up to 100 examples per eligible function.
+L5 searches eligible functions within analysis budgets; no counterexample found
+is not a proof. L6 checks architectural/interface structure and contract presence,
+not logical compatibility of contracts. Strict does not eliminate backend exclusions.
+
+Module health is omitted when L1 is skipped, such as with `--verify`. Thresholds
+are exceeded strictly: equality alone does not trigger a finding. Editing threshold
+tables does not configure overrides; the Markdown parser retains preset numbers.
+
+## Code Quality Standards
+
+Default and Strict enable syntax-based checks for stubs, mutable defaults,
+production assertions, debug printing in core, recognized dangerous calls,
+unfinished-work markers, assertion-free tests, and simple tautological contracts.
+Minimal disables these extra rules by default. Read each finding's suggestion for
+its supported opt-out marker and provide a reason when suppressing a finding.
+A clean check does not establish the absence of equivalent, undetected patterns.
+
+## MCP Integration
+
+Install SereneCode with its `mcp` extra in the project's dependency environment.
+`serenecode doctor` reports package availability and registration hints; it does
+not execute all backends. Register `serenecode mcp` as a stdio server in your client.
+Add `--allow-code-execution` only for trusted projects when L3–L6 are needed.
+
+Use `serenecode_check_file` or `serenecode_check_function` for scoped feedback and
+`serenecode_check` for project checks. Function names may be qualified, such as
+`Calculator.total`; missing or ambiguous names fail. Function requests run the
+file pipeline, and L3 may run the whole test suite. Coverage caching lasts within
+a request, not across edits. Scope does not guarantee a fast execution time.
+
+`serenecode_verify_fixed` confirms a fix only if the message substring is absent
+and the scoped check passes. `serenecode_uncovered`, `serenecode_suggest_test`, and
+`serenecode_suggest_contracts` provide findings or scaffolds to review. Spec tools
+include `serenecode_validate_spec`, `serenecode_list_reqs`,
+`serenecode_list_integrations`, `serenecode_req_status`,
+`serenecode_integration_status`, and `serenecode_orphans`.
+`serenecode_dead_code` and `serenecode_module_health` support maintenance review.
+"""
+
 _TEMPLATES = {
-    "default": _DEFAULT_TEMPLATE,
-    "strict": _STRICT_TEMPLATE,
-    "minimal": _MINIMAL_TEMPLATE,
+    "default": _DEFAULT_TEMPLATE + _VERIFICATION_GUIDANCE,
+    "strict": _STRICT_TEMPLATE + _VERIFICATION_GUIDANCE,
+    "minimal": _MINIMAL_TEMPLATE + _VERIFICATION_GUIDANCE,
 }
 
 

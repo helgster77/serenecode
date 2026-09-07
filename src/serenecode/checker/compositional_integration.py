@@ -1,6 +1,6 @@
 """Integration and system-level checks for compositional analysis.
 
-This module implements assume-guarantee reasoning, data flow verification,
+This module checks cross-module contract presence, data-flow structure,
 system invariant checks, and declared integration validation for the
 Level 6 compositional checker.
 
@@ -43,7 +43,7 @@ from serenecode.models import (
 
 
 # ---------------------------------------------------------------------------
-# Assume-guarantee reasoning
+# Cross-module contract presence
 # ---------------------------------------------------------------------------
 
 
@@ -59,11 +59,11 @@ def check_assume_guarantee(
     modules: list[ModuleInfo],
     config: SerenecodeConfig,
 ) -> list[FunctionResult]:
-    """Check assume-guarantee reasoning across module boundaries.
+    """Check contract presence across module boundaries.
 
     For each cross-module function call, verifies that:
     1. If the callee has preconditions, the caller has postconditions
-       to guarantee them.
+       (their logical compatibility is not checked).
     2. If the callee has preconditions and the caller has parameters,
        the caller has preconditions to constrain its own inputs.
 
@@ -101,7 +101,7 @@ def _check_assume_guarantee_for_module(
     import_map: dict[str, dict[str, tuple[str, str | None]]],
     module_functions: dict[str, dict[str, FunctionInfo]],
 ) -> list[FunctionResult]:
-    """Check assume-guarantee reasoning for one module."""
+    """Check cross-module contract presence for one module."""
     results: list[FunctionResult] = []
     reported_ensure: set[str] = set()
     reported_require: set[str] = set()
@@ -654,11 +654,11 @@ def check_declared_integrations(
     sources: list[tuple[str, str, str]] | tuple[tuple[str, str, str], ...],
     spec_content: str | None,
 ) -> list[FunctionResult]:
-    """Verify that declared INT items are semantically satisfied.
+    """Check declared INT items against recognized AST structure.
 
     This supplements Level 1 traceability with a deeper Level 6 check:
-    tagged integration points must correspond to actual interactions or
-    interface relationships in the implementation.
+    tagged integration points must correspond to recognized calls/types or
+    interface relationships; runtime behavior is not established.
     """
     if spec_content is None or not spec_content.strip():
         return []

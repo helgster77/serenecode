@@ -26,8 +26,8 @@ from serenecode.contracts.predicates import is_non_empty_string
 class SymbolicFinding:
     """A single finding from symbolic verification.
 
-    Represents one of three outcomes: verified (proven correct),
-    counterexample (violation found), or unknown (timeout/unsupported).
+    Outcomes: verified (no counterexample found within analysis bounds),
+    counterexample (violation found), timeout, unsupported, or error.
     """
 
     function_name: str

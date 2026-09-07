@@ -27,7 +27,7 @@ _SPEC_MD_PLACEHOLDER = """\
 
 **Source:** SPEC.source.md
 
-> `serenecode check --spec` and REQ/INT tags apply only to this file. \
+> This is the auto-discovered traceability spec; `--spec PATH` can select another structured spec. \
 Set **Source:** to your narrative spec path(s), or merge requirements into SPEC.source.md.
 
 ---
@@ -56,19 +56,19 @@ Traceability section in SERENECODE.md for the full workflow. The key steps are:
 for critical interactions, INT-xxx entries), rewrite the narrative document \
 into SPEC.md following the "Preparing a SereneCode-Ready Spec" instructions \
 in SERENECODE.md. A PRD or `*_SPEC.md` alone does not satisfy traceability — \
-only SPEC.md does. Validate with `serenecode spec SPEC.md`.
+use structured REQ/INT content. SPEC.md is auto-discovered; `--spec PATH` selects another structured spec. Validate with `serenecode spec SPEC.md`.
 3. Create an implementation plan mapping each REQ and each critical INT to \
 functions, modules, and contracts. Get user approval before writing code.
 4. Implement and tag with `Implements: REQ-xxx` / `Implements: INT-xxx`. \
 Test and tag with `Verifies: REQ-xxx` / `Verifies: INT-xxx`.
 5. Run the full verification command from the Verification section above \
-(with `--spec SPEC.md` if not auto-discovered) to verify traceability and correctness together.
+(with `--spec SPEC.md` if not auto-discovered) to check traceability, contracts, and behavior within the reported scope and bounds.
 """
 
 _TRACEABILITY_REMINDER = """\
 
 Pre-existing `*_SPEC.md` or PRD files are narrative inputs only. Traceability \
-and `serenecode check --spec` apply exclusively to SPEC.md (REQ/INT identifiers).
+uses REQ/INT identifiers in the auto-discovered SPEC.md, or a structured spec selected with `--spec PATH`.
 """
 
 _SPEC_WORKFLOW_GENERATE = """\
@@ -88,7 +88,7 @@ functions, modules, and contracts. Get user approval before writing code.
 4. Implement and tag with `Implements: REQ-xxx` / `Implements: INT-xxx`. \
 Test and tag with `Verifies: REQ-xxx` / `Verifies: INT-xxx`.
 5. Run the full verification command from the Verification section above \
-(with `--spec SPEC.md` if not auto-discovered) to verify traceability and correctness together.
+(with `--spec SPEC.md` if not auto-discovered) to check traceability, contracts, and behavior within the reported scope and bounds.
 """
 
 _CLAUDE_MD_BASE = {
@@ -98,7 +98,7 @@ _CLAUDE_MD_BASE = {
 All code in this project MUST follow the standards defined in SERENECODE.md. \
 Read SERENECODE.md before writing or modifying any code. Every public function \
 with caller-supplied inputs must have icontract preconditions, and every \
-public function must have postconditions. Every class must have invariants. \
+public function must have postconditions. Classes with state need meaningful invariants; stateless classes and Protocols have special handling. Test files follow test-quality rules. \
 Follow the architectural patterns specified in SERENECODE.md.
 
 ### Verification
@@ -144,8 +144,8 @@ until all checks pass.
 
 ### Testing
 
-Write tests alongside code. Every new module must have a corresponding \
-test file. Contracts verify invariants at runtime, but tests verify \
+Write tests alongside code. Every non-exempt production module needs a corresponding \
+test file. Test modules do not require tests of tests. Contracts verify invariants at runtime, but tests verify \
 behavior — both are required.
 
 Run `pytest -q` after writing tests. Do not consider a task complete \
@@ -158,7 +158,7 @@ All code in this project MUST follow the standards defined in SERENECODE.md. \
 Read SERENECODE.md before writing or modifying any code. Every function — \
 public and private — with caller-supplied inputs must have icontract \
 preconditions, and every function must have postconditions. Every class must \
-have invariants. No exemptions.
+have meaningful invariants when they have state. No preset path exemptions; test-specific rules and backend eligibility still apply.
 
 ### Verification
 
@@ -200,7 +200,7 @@ until all checks pass. Do not commit code that fails verification.
 
 ### Testing
 
-You MUST write tests for every function. Do not skip this.
+You MUST write tests for production functions. Do not skip this.
 
 - Unit tests for core functions in `tests/unit/`
 - Integration tests for adapters in `tests/integration/`
@@ -214,7 +214,7 @@ code without passing tests.
 
 All code in this project should follow the conventions in SERENECODE.md. \
 Public functions with caller-supplied inputs must have icontract \
-preconditions, and public functions should have postconditions.
+preconditions, and public functions must have postconditions.
 
 ### Verification
 

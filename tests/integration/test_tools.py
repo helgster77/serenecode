@@ -728,8 +728,8 @@ class TestToolHelpers:
             finding_substring="anything",
             level=1,
         )
-        # When findings isn't a list, fall back to [], remaining is empty → fixed True
-        assert result["fixed"] is True
+        # Malformed evidence must never confirm a fix.
+        assert result["fixed"] is False
 
     def test_suggest_contracts_filters_by_function(self, tmp_path: Path) -> None:
         """Branch (line 558): skip results that don't match the function name."""

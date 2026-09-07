@@ -1,6 +1,8 @@
 # Medical Dosage Calculator — Problem Specification
 
-**Purpose:** A small Python module that calculates safe drug dosages for patients.
+**Purpose:** A hypothetical Python example for comparing testing and executable contracts.
+
+**Demonstration only:** These numeric limits and adjustment tiers are invented for this example. They are not a clinical protocol, have no clinical validation, and must not be used to make treatment decisions. `is_safe` names a comparison/lookup result within the example, not a clinical judgment.
 
 ---
 
@@ -9,7 +11,7 @@
 ### Patient
 
 A patient has:
-- `weight_kg`: body weight in kilograms (must be > 0, realistic human range is 0.5 kg for neonates to 300 kg)
+- `weight_kg`: body weight in kilograms (must be > 0, example upper bound 300 kg; no positive lower bound beyond > 0)
 - `age_years`: age in years (must be >= 0, max 150)
 - `creatinine_clearance`: CrCl in mL/min, a measure of kidney function (must be > 0, max 200)
 - `current_medications`: a list of drug identifiers the patient is currently taking
@@ -90,7 +92,7 @@ Verify that the prescribed dose, when taken at the drug's prescribed frequency, 
 - `utilization_pct`: percentage of the max daily dose being used (`daily_total_mg / max_daily_mg * 100`)
 
 **Properties that must hold:**
-- `daily_total_mg == dose_mg * drug.doses_per_day` (exact, no floating point drift)
+- `daily_total_mg == dose_mg * drug.doses_per_day` (equality to this Python expression; binary floating-point rounding and range limits still apply)
 - `is_safe` is `True` if and only if `daily_total_mg <= max_daily_mg`
 - `utilization_pct >= 0`
 - If `is_safe` is `True`, then `utilization_pct <= 100.0`
@@ -141,9 +143,32 @@ Check whether the drug is safe to prescribe alongside the patient's current medi
 ## Input Validation
 
 All functions must reject invalid inputs. Specifically:
-- Negative or zero values for weight, age, creatinine clearance, dose amounts, concentrations
+- Non-positive values for weight, creatinine clearance, dose amounts, and concentrations; negative age (zero age is valid)
 - Empty drug_id
 - doses_per_day must be a positive integer
 - max_daily_dose_mg must be >= max_single_dose_mg
 
 How invalid inputs are rejected (exceptions, return codes, etc.) is left to the implementation.
+
+
+## Implementation and verification limits (7 September 2026)
+
+The requirements above describe the intended example behavior, not proof of its
+implementation. The implementations use Python floats. The SereneCode renal
+function additionally rejects positive doses for which `dose_mg * 0.25` underflows
+to zero, so REQ-016's positivity guarantee in the structured spec applies only to
+its accepted domain. The plain implementation does not have that precondition.
+Numeric checks do not establish finite, physically meaningful values for every
+field, and the examples do not provide general numeric range safety.
+
+Frozen result/model dataclasses prevent ordinary field reassignment but retain
+mutable lists and sets. Invariants do not prevent in-place container mutations.
+The SereneCode `SafetyResult` constructor checks individual numeric constraints,
+not the full `is_safe`/total relationship; that relationship is checked by the
+`check_daily_safety` postconditions. Contract checks can be disabled.
+
+The local test suites and the SereneCode example's full L6 run passed as recorded
+in the repository's dated verification record. Only `adjust_for_renal_function`
+was exercised by L5; the other three function signatures were exempt. Its
+contracts do not specify every tier multiplier. Passing traceability tags and a
+complete L6 verdict do not establish every sentence in this specification.

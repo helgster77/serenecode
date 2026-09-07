@@ -43,7 +43,7 @@ _TRUST_REQUIRED_MESSAGE = (
 _SPEC_TRACEABILITY_HINT = (
     "If requirements live in another file (e.g. *_SPEC.md, PRD.md), convert it per "
     "\"Preparing a SereneCode-Ready Spec\" in SERENECODE.md and write SPEC.md with "
-    "REQ/INT identifiers and a **Source:** line. Traceability applies only to SPEC.md."
+    "REQ/INT identifiers and a **Source:** line. SPEC.md is auto-discovered; --spec PATH selects another structured spec."
 )
 
 
@@ -129,6 +129,30 @@ def _mcp_extra_installed() -> bool:
     except ImportError:
         return False
     return True
+
+
+@icontract.ensure(lambda result: result is None, "diagnostics print without returning a value")
+def _print_backend_status() -> None:
+    """Report verification dependencies in the interpreter used by child processes."""
+    import importlib.util
+    import sys
+
+    click.echo(f"Verification interpreter: {sys.executable}")
+    packages = (
+        ("mypy", "mypy"), ("coverage", "coverage"), ("pytest", "pytest"),
+        ("pytest_cov", "pytest-cov"), ("hypothesis", "hypothesis"),
+        ("crosshair", "crosshair-tool"), ("vulture", "vulture"),
+    )
+    missing: list[str] = []
+    # Loop invariant: missing lists unavailable dependencies examined so far.
+    for module, package in packages:
+        available = importlib.util.find_spec(module) is not None
+        click.echo(f"  {'OK' if available else 'NOT FOUND'}: {package}")
+        if not available:
+            missing.append(package)
+    if missing:
+        click.echo(f"  Install with this interpreter: python -m pip install {' '.join(missing)}")
+    click.echo("")
 
 
 @icontract.require(
@@ -489,7 +513,7 @@ def _determine_exit_code(check_result: CheckResult) -> int:
     """Determine the CLI exit code from a failed CheckResult.
 
     Uses the verification level of the first failure to determine
-    the appropriate exit code per spec Section 4.2.
+    the appropriate exit code; incomplete results without failures use 10.
 
     Args:
         check_result: A CheckResult with failures.

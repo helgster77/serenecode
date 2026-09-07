@@ -1,4 +1,4 @@
-"""Tests for the Level 3 property-based testing checker."""
+"""Tests for the Level 4 property-based testing checker."""
 
 from __future__ import annotations
 

@@ -936,14 +936,14 @@ def check_compositional(
     This is the main entry point for compositional verification. It
     parses all modules, then runs all compositional checks: dependency
     direction, circular dependencies, interface compliance, contract
-    completeness, assume-guarantee reasoning, data flow verification,
+    presence, cross-module contract structure, data-flow structure,
     and system invariants.
 
     Args:
         sources: Sequence of (source_code, file_path, module_path) tuples.
         config: Active Serenecode configuration.
         spec_content: Optional SPEC.md content used for declared-integration
-            semantic checks.
+            structural checks.
 
     Returns:
         A CheckResult containing all compositional findings.

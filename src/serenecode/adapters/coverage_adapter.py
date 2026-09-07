@@ -175,19 +175,20 @@ class CoverageAnalyzerAdapter:
         coverage_data = self._get_coverage_data(source_file, search_paths)
 
         error_finding = _check_coverage_error(coverage_data, module_path)
-        if error_finding is not None:
+        if error_finding is not None and not coverage_data.get("files"):
             return [error_finding]
         empty_finding = _check_empty_coverage(coverage_data, module_path)
         if empty_finding is not None:
-            return [empty_finding]
+            return [error_finding or empty_finding]
 
         function_coverages = _map_coverage_to_functions(
             coverage_data, functions, source_file,
         )
 
-        return _build_coverage_findings(
+        findings = _build_coverage_findings(
             function_coverages, source, module_path, effective_threshold,
         )
+        return ([error_finding] if error_finding is not None else []) + findings
 
     def _get_coverage_data(
         self,
@@ -267,6 +268,8 @@ def _check_coverage_error(
             uncovered_lines=(), uncovered_branches=(), suggestions=(),
             meets_threshold=False,
             message=f"Coverage analysis failed for '{module_path}': {error_msg}",
+            finding_type=str(coverage_data.get("_error_type", "coverage_error")),
+            test_exit_code=coverage_data.get("_test_exit_code"),
         )
     return None
 
@@ -303,6 +306,7 @@ def _check_empty_coverage(
                 f"No test coverage data for '{module_path}' — "
                 "no tests found. Write tests to enable coverage analysis."
             ),
+            finding_type="no_tests",
         )
     return None
 
@@ -514,6 +518,7 @@ def _run_tests_with_coverage(
         from serenecode.adapters import safe_subprocess_env
 
         extra: dict[str, str] = {}
+        extra["COVERAGE_FILE"] = os.path.join(tmpdir, ".coverage")
         if search_paths:
             existing_pypath = os.environ.get("PYTHONPATH", "")
             existing_parts = set(existing_pypath.split(os.pathsep)) if existing_pypath else set()
@@ -546,11 +551,19 @@ def _run_tests_with_coverage(
         if not os.path.exists(json_file):
             stderr_hint = (proc.stderr or "").strip()[:200]
             return {"_error": f"pytest did not produce coverage data (exit {proc.returncode})"
-                    + (f": {stderr_hint}" if stderr_hint else "")}
+                    + (f": {stderr_hint}" if stderr_hint else ""),
+                    "_error_type": "test_execution_error", "_test_exit_code": proc.returncode}
 
         try:
             with open(json_file, encoding="utf-8") as f:
-                return json.load(f)  # type: ignore[no-any-return]
+                data: dict[str, Any] = json.load(f)
+            data["_project_root"] = project_root
+            data["_test_exit_code"] = proc.returncode
+            if proc.returncode != 0:
+                data["_error_type"] = "test_failure" if proc.returncode == 1 else "test_execution_error"
+                output = "\n".join((proc.stdout.strip(), proc.stderr.strip())).strip()
+                data["_error"] = f"pytest exited with code {proc.returncode}: {output[-2000:]}"
+            return data
         except json.JSONDecodeError as json_err:
             return {"_error": f"coverage JSON is malformed: {json_err}"}
         except OSError as read_err:
@@ -751,11 +764,14 @@ def _find_file_coverage_data(
     # Loop invariant: file_info is set if any key in files_data matches source_file
     for file_key, file_data in files_data.items():
         try:
-            if os.path.exists(file_key) and os.path.exists(source_file):
-                if os.path.samefile(file_key, source_file):
+            report_path = Path(file_key)
+            if not report_path.is_absolute() and coverage_data.get("_project_root"):
+                report_path = Path(coverage_data["_project_root"]) / report_path
+            if report_path.exists() and os.path.exists(source_file):
+                if os.path.samefile(report_path, source_file):
                     return file_data
             else:
-                resolved_key = str(Path(file_key).resolve())
+                resolved_key = str(report_path.resolve())
                 source_resolved = str(Path(source_file).resolve())
                 if resolved_key == source_resolved:
                     return file_data

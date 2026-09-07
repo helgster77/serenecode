@@ -7,7 +7,11 @@ Serenecode is a **local developer tool**. It reads files you point it at and, wh
 | Mode | What happens |
 |------|----------------|
 | **Levels 1–2** (no `--allow-code-execution`) | Parses and type-checks source; does not import project modules for execution-based checks. |
-| **Levels 3–6** or MCP with `--allow-code-execution` | Imports project modules **in-process** (`compile` / `exec`), runs **Hypothesis**, **CrossHair**, **coverage**, and may run **pytest** in a subprocess. This is equivalent to trusting the project as if you ran `pytest` and `python -m` on it. |
+| **Levels 3–6** or MCP with `--allow-code-execution` | Imports project modules **in-process** (`compile` / `exec`), runs **Hypothesis**, **CrossHair**, **coverage**, and runs **pytest** in a subprocess for L3. This is equivalent to trusting the project as if you ran `pytest` and `python -m` on it. |
+
+L1–L2 do not run the execution-based stages, but mypy can load Python plugins
+selected by project configuration. “No `--allow-code-execution`” is not a sandbox
+or a guarantee that arbitrary project configuration is inert.
 
 **Child processes** (mypy, pytest, CrossHair CLI) receive a **filtered environment** (`safe_subprocess_env`): only an allowlisted set of variables from your shell is passed through, plus paths such as `PYTHONPATH`. This reduces accidental leakage of secrets to subprocesses; it is **not** a guarantee against malicious code, which still runs with your user privileges.
 
@@ -27,7 +31,7 @@ Setting **`SERENECODE_DEBUG=1`** prints the **names** of environment keys passed
 
 ## Exit code 11 (`ExitCode.ADVISORY`)
 
-`serenecode check --fail-on-advisory` exits **11** when verification **passed** but **dead-code advisories** remain. Use this in CI if you want a non-zero exit until advisories are triaged.
+`serenecode check --fail-on-advisory` exits **11** when verification **passed** but **advisories** remain (including dead code and module-health warnings). Use this in CI if you want a non-zero exit until advisories are triaged.
 
 ## What Serenecode does not do
 

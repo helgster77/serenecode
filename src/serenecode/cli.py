@@ -25,6 +25,7 @@ from serenecode.core.pipeline import run_pipeline
 from serenecode.init import initialize_project
 from serenecode.models import CheckResult, ExitCode
 from serenecode.reporter import format_html, format_human, format_json
+from serenecode.adapters.traceability_context import discover_traceability_sources
 from serenecode.source_discovery import (
     build_source_files,
     discover_test_file_stems,
@@ -32,6 +33,7 @@ from serenecode.source_discovery import (
 )
 
 from serenecode.cli_helpers import (
+    _print_backend_status,
     _TRUST_REQUIRED_MESSAGE,
     _determine_exit_code,
     _echo_spec_traceability_hints,
@@ -69,7 +71,7 @@ def init(path: str) -> None:
     click.echo("")
     click.echo("  [1] I already have requirements in a document (any name)")
     click.echo("      Narrative PRDs and *_SPEC.md are inputs only. You must still")
-    click.echo("      produce SPEC.md with REQ/INT identifiers — that is the sole")
+    click.echo("      produce SPEC.md with REQ/INT identifiers — the auto-discovered")
     click.echo("      traceability spec for SereneCode.")
     click.echo("")
     click.echo("  [2] I'll write the spec with my coding assistant (recommended)")
@@ -93,7 +95,7 @@ def init(path: str) -> None:
     click.echo("")
     click.echo("  [3] Strict   (Level 6)")
     click.echo("      All of the above + symbolic + compositional verification.")
-    click.echo("      Best for: safety-critical or high-assurance code.")
+    click.echo("      Adds bounded symbolic search and architectural checks; not certification.")
     click.echo("")
     level_choice = click.prompt("Choose", type=click.IntRange(1, 3), default=2)
     template = {1: "minimal", 2: "default", 3: "strict"}[level_choice]
@@ -116,8 +118,7 @@ def init(path: str) -> None:
     # text is informational, not a separate confirmation step.
     click.echo("Note: your choices will be written to SERENECODE.md and become the")
     click.echo("contract between you, your coding assistant, and the verification")
-    click.echo("tool. Serenecode does not support changing them once implementation")
-    click.echo("has started.")
+    click.echo("tool. Revise conventions deliberately and rerun checks when they change.")
     click.echo("")
 
     reader = LocalFileReader()
@@ -207,6 +208,7 @@ def doctor() -> None:
     click.echo("Serenecode doctor")
     click.echo("-----------------")
     click.echo("")
+    _print_backend_status()
     if _mcp_extra_installed():
         click.echo("OK: MCP Python package is available (`mcp` import succeeds).")
     else:
@@ -295,7 +297,7 @@ def mcp(allow_code_execution: bool, project_root: str | None) -> None:
 @click.option("--per-condition-timeout", type=int, default=30, show_default=True, help="Timeout in seconds per condition for symbolic verification (Level 5)")
 @click.option("--per-path-timeout", type=int, default=10, show_default=True, help="Timeout in seconds per execution path for symbolic verification (Level 5)")
 @click.option("--module-timeout", type=int, default=300, show_default=True, help="Timeout in seconds per module for symbolic verification (Level 5)")
-@click.option("--coverage-timeout", type=int, default=600, show_default=True, help="Timeout in seconds for the L3 coverage subprocess (whole pytest run, cached per project)")
+@click.option("--coverage-timeout", type=int, default=600, show_default=True, help="Timeout in seconds for the L3 coverage subprocess (whole pytest run, cached per project within this request)")
 @click.option("--workers", type=int, default=4, show_default=True, help="Number of parallel workers for symbolic verification (Level 5); SERENECODE_MAX_WORKERS overrides when set")
 @click.option("--spec", "spec_path", default=None, help="Path to SPEC.md for traceability checking")
 @click.option(
@@ -433,6 +435,9 @@ def check(  # allow-many-params: Click requires one parameter per CLI flag
         known_test_stems=test_stems,
         spec_content=spec_content,
         test_sources=test_sources,
+        traceability_sources=(
+            discover_traceability_sources(source_files, reader) if spec_content is not None else None
+        ),
     )
 
     _output_and_exit(final_result, output_format, wall_start, fail_on_advisory)
@@ -545,6 +550,9 @@ def status(path: str, output_format: str) -> None:
         dead_code_analyzer=_maybe_make_dead_code_analyzer(),
         spec_content=spec_content,
         test_sources=test_sources,
+        traceability_sources=(
+            discover_traceability_sources(source_files, reader) if spec_content is not None else None
+        ),
     )
 
     if output_format == "json":
@@ -629,6 +637,9 @@ def report(
         dead_code_analyzer=dead_code_analyzer,
         known_test_stems=test_stems,
         spec_content=spec_content, test_sources=test_sources,
+        traceability_sources=(
+            discover_traceability_sources(source_files, reader) if spec_content is not None else None
+        ),
     )
 
     if output_format == "json":

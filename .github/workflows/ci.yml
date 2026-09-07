@@ -23,6 +23,16 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev --extra mcp
 
+      - name: Verify clean wheel installation
+        shell: bash
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/serenecode-wheel"
+          uv venv "$RUNNER_TEMP/serenecode-smoke"
+          for wheel in "$RUNNER_TEMP/serenecode-wheel/"*.whl; do
+            uv pip install --python "$RUNNER_TEMP/serenecode-smoke/bin/python" "${wheel}[mcp]"
+          done
+          "$RUNNER_TEMP/serenecode-smoke/bin/python" tests/smoke/check_installed_wheel.py
+
       - name: mypy (strict)
         run: uv run mypy src examples/dosage-serenecode/src
 

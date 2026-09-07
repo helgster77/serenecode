@@ -130,9 +130,9 @@ def _classify_symbolic_finding(
             finding_type="unsupported",
             message=f"Symbolic verification unsupported for '{finding.function_name}'",
             suggestion=(
-                "This function cannot be symbolically verified — "
-                "it has non-primitive parameter types that the solver cannot generate. "
-                "Ensure it is covered by property-based tests (L3) or explicit unit tests"
+                "This backend excludes this function from symbolic analysis — "
+                "its signature is not supported by the current adapter. "
+                "Ensure it is covered by property-based tests (L4) or explicit unit tests"
             ),
         )
     return CheckStatus.FAILED, 4, Detail(

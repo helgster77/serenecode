@@ -1,0 +1,114 @@
+{
+  "recorded_on": "2026-09-07",
+  "base_commit": "a2fb95fb76dc1699bf5f198d021d14dfcf87a1bd",
+  "scope": "Local working tree with uncommitted fixes and documentation updates; not a released package or a remote CI result.",
+  "environment": {
+    "python": "3.13.12",
+    "platform": "Darwin",
+    "architecture": "arm64",
+    "packages": {
+      "serenecode": "0.5.1",
+      "mypy": "1.19.1",
+      "hypothesis": "6.151.9",
+      "crosshair-tool": "0.0.102",
+      "pytest": "9.0.2",
+      "pytest-cov": "7.1.0",
+      "coverage": "7.13.5",
+      "icontract": "2.7.3"
+    }
+  },
+  "framework": {
+    "command": ".venv/bin/serenecode check src --level 6 --allow-code-execution --format json",
+    "working_directory": ".",
+    "timestamp": "2026-09-07T21:56:33.779249+00:00",
+    "exit_code": 0,
+    "level_requested": 6,
+    "level_achieved": 6,
+    "summary": {
+      "total_functions": 1139,
+      "passed": 800,
+      "failed": 0,
+      "skipped": 0,
+      "exempt": 339,
+      "advisory_count": 101,
+      "verdict": "complete"
+    },
+    "wall_time": "9m 37.7s",
+    "records_by_level": {
+      "1": {
+        "exempt": 136,
+        "passed": 203
+      },
+      "2": {},
+      "3": {
+        "passed": 527
+      },
+      "4": {
+        "exempt": 83,
+        "passed": 53
+      },
+      "5": {
+        "exempt": 120,
+        "passed": 16
+      },
+      "6": {
+        "passed": 1
+      }
+    }
+  },
+  "dosage_example": {
+    "command": "serenecode check src --level 6 --allow-code-execution --format json",
+    "working_directory": "examples/dosage-serenecode",
+    "timestamp": "2026-09-07T21:49:45.037184+00:00",
+    "exit_code": 0,
+    "level_requested": 6,
+    "level_achieved": 6,
+    "summary": {
+      "total_functions": 54,
+      "passed": 47,
+      "failed": 0,
+      "skipped": 0,
+      "exempt": 7,
+      "advisory_count": 4,
+      "verdict": "complete"
+    },
+    "wall_time": "13.0s",
+    "records_by_level": {
+      "1": {
+        "passed": 38,
+        "exempt": 4
+      },
+      "2": {},
+      "3": {
+        "passed": 4
+      },
+      "4": {
+        "passed": 4
+      },
+      "5": {
+        "exempt": 3,
+        "passed": 1
+      },
+      "6": {}
+    }
+  },
+  "pytest_collection_count": 1770,
+  "pytest_collection_note": "Collected tests, not a claim that every collected item passed. The successful L3 run included the full suite; its pytest pass/skip breakdown is not retained in CLI JSON.",
+  "example_tests": {
+    "dosage-regular": 59,
+    "dosage-serenecode": 67
+  },
+  "example_icontract_decorators": {
+    "invariant": 19,
+    "require": 10,
+    "ensure": 13
+  },
+  "strict_mypy_source_files": 63,
+  "focused_tests_passed": 157,
+  "isolated_wheel_l3_passed": true,
+  "wheel_contains_py_typed": true,
+  "generated_presets_match_configuration": true,
+  "checked_in_example_instructions_match_generators": true,
+  "final_copy_tests_passed": 55,
+  "final_copy_note": "After the full run, corrected a reporter level-range docstring, the Hypothesis execution-refusal level label, a test-module docstring, and the ModuleHealthConfig specification wording. Reporter/property tests passed; verification logic was unchanged."
+}

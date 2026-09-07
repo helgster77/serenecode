@@ -133,7 +133,7 @@ def _register_verification_tools(server: FastMCP[Any]) -> None:
         description=(
             "Run the verification pipeline on an entire project root (CI / batch). "
             "Prefer serenecode_check_function or serenecode_check_file during "
-            "interactive editing — full-tree checks are slower and noisier. "
+            "interactive editing — these focus findings, though L3 may still run all project tests. "
             "Returns findings, summary counts, and overall pass/fail. "
             "Levels 3-6 require --allow-code-execution at server startup."
         ),
@@ -142,24 +142,24 @@ def _register_verification_tools(server: FastMCP[Any]) -> None:
         name="serenecode_check_file",
         description=(
             "Run the verification pipeline scoped to a single source file. "
-            "Prefer this over serenecode_check during editing; faster than a "
-            "full-project run."
+            "Use this during editing for focused findings; L3 can still run the "
+            "whole project test suite."
         ),
     )(cast(Any, tool_check_file))
     server.tool(
         name="serenecode_check_function",
         description=(
-            "PRIMARY TOOL FOR EDITING: run the pipeline on one function in one file. "
+            "Resolve a function or qualified method and run its file pipeline. "
             "Use after each edit instead of serenecode_check (full tree). "
-            "Validates contracts, types, coverage, and conventions for that symbol only."
+            "Returns scoped findings and blockers. Missing or ambiguous names fail. L3 may run all project tests."
         ),
     )(cast(Any, tool_check_function))
     server.tool(
         name="serenecode_verify_fixed",
         description=(
             "Re-run the verification on one function and report whether a "
-            "specific finding (matched by message substring) is gone. Use "
-            "after editing to confirm a fix without re-running the full pipeline."
+            "specific finding (matched by message substring) is gone and the scoped check passes. Use "
+            "after editing to confirm a fix; this reruns the file pipeline."
         ),
     )(cast(Any, tool_verify_fixed))
 
