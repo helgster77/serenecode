@@ -34,7 +34,7 @@ Each finding includes function name, file path, line number, a message, and a su
 - **passed** — this record passed its own check stage, within that backend’s scope and bounds.
 - **failed** — a violation was found. Read the message and suggestion to fix it.
 - **skipped** — the tool could not run (e.g. tool not installed, module not importable). Investigate why.
-- **exempt** — excluded from this check stage or reported as a nonblocking advisory. Review the reason and whether deeper evidence is needed. `advisory_count` is included in the exempt count, and the human summary renders it that way — `57 exempt (33 advisory)`.
+- **exempt** — excluded from this check stage or reported as a nonblocking advisory. Review the reason and whether deeper evidence is needed. `advisory_count` is included in the exempt count, and the human summary renders it that way — for example, `57 exempt (33 advisory)`.
 
 `summary.total_functions` counts records, not unique functions. Read the aggregate verdict and achieved level as well as individual records. Function-scoped MCP requests run the file pipeline; L3 can run all project tests. Missing or ambiguous targets fail, and `verify_fixed` requires a passing scoped check. See [verification semantics](docs/VERIFICATION_LEVELS.md) and the dated [verification record](docs/VERIFICATION_STATUS.md).
 

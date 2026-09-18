@@ -9,14 +9,21 @@ commands, timestamps, and tool versions. Refresh this record when the inputs cha
 it is a dated result, not a continuously updated badge.
 
 **Superseded in part.** Every number below was measured on 7 September 2026 and
-still describes that tree. The contract-binding checks and CLI corrections of
-`REQ-037`–`REQ-047` and `INT-005` landed afterwards and changed some of these
-inputs, so the record needs a full re-measurement before its counts can be
-quoted again. Measured after that work, on the same machine: root `SPEC.md`
-validates with **47 requirements and 5 integration points** (was 36 and 4),
-`pytest --collect-only -q` collects **1816 tests** (was 1770), and
-`pytest -q` reports **1816 passed, 16 skipped**. The framework and
-example-project counts in the tables below have not been re-measured.
+still describes that tree. The contract-binding checks and CLI/Level 4
+corrections of `REQ-037`–`REQ-049` and `INT-005` landed afterwards and changed
+some of these inputs, so the record needs a full re-measurement before its
+counts can be quoted again. Measured after that work, on the same machine:
+
+- Root `SPEC.md` validates with **49 requirements and 5 integration points**
+  (was 36 and 4).
+- `pytest --collect-only -q` collects **1852 tests** (was 1770).
+- `pytest -q`: **1836 passed, 16 skipped**, exit 0.
+- `serenecode check src --level 4 --allow-code-execution`: exit **0**,
+  **complete**, 1067 records — 842 passed, 0 failed, 0 skipped, 225 exempt
+  including 103 advisories. Wall time 6m 12.6s.
+
+The L5/L6 stages, the example-project runs, and the mypy and icontract counts
+in the tables below have not been re-measured.
 
 ## Framework
 

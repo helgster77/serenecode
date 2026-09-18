@@ -324,8 +324,8 @@ variables, attributes, imports, and classes are unaffected.
 
 ### REQ-046: exempt summary names its advisory subset
 
-The human summary renders the advisory count inside the exempt figure —
-`57 exempt (33 advisory)` — because advisories are a subset of the exempt
+The human summary renders the advisory count inside the exempt figure — for
+example `57 exempt (33 advisory)` — because advisories are a subset of the exempt
 count rather than a separate bucket. When no advisories are present the
 exempt figure is rendered alone.
 
