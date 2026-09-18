@@ -8,6 +8,34 @@ SereneCode turns the question from "did the model ship code?" to "does it match 
 
 **Current verification evidence:** see the dated [verification record](docs/VERIFICATION_STATUS.md) for commands, results, counts, and scope. These docs describe the source checkout; they do not establish that unpublished fixes are available on PyPI.
 
+## Why this matters for an assistant specifically
+
+An assistant chooses what to look at next, and it is least likely to look
+again at code it has just written and believes is finished. SereneCode
+replaces part of that choice with a located finding — file, line, symbol,
+message, suggested fix — and, through the MCP tools, delivers it inside the
+edit loop rather than after the branch is done.
+
+The categories it points at are ones that stay invisible to the author, human
+or model, because nothing fails when they are wrong:
+
+- A contract decorator stack separated from its `def` by an inserted function.
+  The contract silently re-attaches to the new function; both functions still
+  look contracted, and nothing says otherwise until the wrong path runs with
+  the wrong inputs (REQ-040).
+- A precondition written over `*args`. icontract never binds the variadic
+  tuple, so the condition is evaluated against a single argument and never
+  sees the rest (REQ-038).
+- A traceability tag in a module docstring. It reads in review as the module's
+  record and is read by nothing (REQ-052).
+
+Each of these was missed in real code before it became a check: two of them in
+this repository, one in a project built with SereneCode. That is a claim about
+where the tool points and when it interrupts — **not** a measured claim about
+assistant output quality. There is no benchmark here comparing code written
+with and without SereneCode, and the levels establish only what
+[verification semantics](docs/VERIFICATION_LEVELS.md) says they establish.
+
 ## Recommended workflow
 
 1. Install SereneCode in the environment containing your project's dependencies, then run `serenecode init`.
