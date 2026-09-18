@@ -26,16 +26,18 @@ from serenecode.models import (
     make_check_result,
 )
 
+from serenecode.checker.contract_binding import (
+    _check_single_function_contracts,
+    check_contract_bindings,
+)
+
 from serenecode.checker.structural_helpers import (
     IcontractNames,
     resolve_icontract_aliases,
     has_decorator,
-    _decorator_has_description,
     _find_tautological_contracts,
-    _decorator_descriptions_are_literals,
     _non_receiver_parameters,
     _extract_init_fields,
-    _get_return_annotation_str,
     _is_public_function,
     _has_no_invariant_comment,
     _should_check_function_contracts,
@@ -103,80 +105,6 @@ def check_contracts(
         ))
 
     return results
-
-@icontract.require(lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)), "node must be a function definition")
-@icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
-def _check_single_function_contracts(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
-    config: SerenecodeConfig,
-    aliases: IcontractNames,
-) -> list[Detail]:
-    """Check contracts on a single function node."""
-    details: list[Detail] = []
-    params = _non_receiver_parameters(node)
-    param_names = [p.arg for p in params]
-    has_params = bool(params)
-
-    if has_params and not has_decorator(node, aliases.require_names):
-        param_list = ", ".join(param_names)
-        example_param = param_names[0]
-        details.append(Detail(
-            level=VerificationLevel.STRUCTURAL, tool="structural",
-            finding_type="violation",
-            message=f"Function '{node.name}' missing @icontract.require (precondition)",
-            suggestion=(
-                f"Add precondition for parameters ({param_list}). "
-                f"Example: @icontract.require(lambda {example_param}: "
-                f"{example_param} is not None, \"{example_param} must not be None\")"
-            ),
-        ))
-
-    if not has_decorator(node, aliases.ensure_names):
-        return_hint = _get_return_annotation_str(node)
-        details.append(Detail(
-            level=VerificationLevel.STRUCTURAL, tool="structural",
-            finding_type="violation",
-            message=f"Function '{node.name}' missing @icontract.ensure (postcondition)",
-            suggestion=(
-                f"Add postcondition. Example: @icontract.ensure(lambda result: "
-                f"result is not None, \"result must not be None\")"
-                if return_hint is None
-                else f"Add postcondition for return type '{return_hint}'. "
-                f"Example: @icontract.ensure(lambda result: isinstance(result, {return_hint}), "
-                f"\"result must be {return_hint}\")"
-            ),
-        ))
-
-    if config.contract_requirements.require_description_strings and not details:
-        all_names = aliases.require_names | aliases.ensure_names
-        if not _decorator_has_description(node, all_names):
-            details.append(Detail(
-                level=VerificationLevel.STRUCTURAL, tool="structural",
-                finding_type="violation",
-                message=f"Function '{node.name}' has contract without description string",
-                suggestion="Add a description string as second argument to contract decorator",
-            ))
-        elif not _decorator_descriptions_are_literals(node, all_names):
-            details.append(Detail(
-                level=VerificationLevel.STRUCTURAL, tool="structural",
-                finding_type="violation",
-                message=f"Function '{node.name}' has contract description that is not a string literal",
-                suggestion="Contract descriptions must be string literals, not variables or expressions",
-            ))
-
-    if not details:
-        all_contract_names = aliases.require_names | aliases.ensure_names
-        tautological = _find_tautological_contracts(node, all_contract_names)
-        # Loop invariant: details contains one finding per tautological decorator in [0..i]
-        for taut_name in tautological:
-            details.append(Detail(
-                level=VerificationLevel.STRUCTURAL, tool="structural",
-                finding_type="violation",
-                message=f"Function '{node.name}' has tautological contract '{taut_name}' (condition is always True)",
-                suggestion="Replace with a meaningful condition that constrains behavior",
-            ))
-
-    return details
 
 @icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
 @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
@@ -975,10 +903,14 @@ def _run_all_structural_checks(
     module_path: str,
     file_path: str,
 ) -> list[FunctionResult]:
-    """Run all structural sub-checks and return aggregated results."""
+    """Run all structural sub-checks and return aggregated results.
+
+    Implements: REQ-042
+    """
     results: list[FunctionResult] = []
     if not _is_test_file_path(file_path):
         results.extend(check_contracts(tree, config, aliases, file_path))
+        results.extend(check_contract_bindings(tree, aliases, file_path))
         results.extend(check_class_invariants(tree, config, aliases, file_path, source))
         results.extend(check_type_annotations(tree, config, file_path))
         results.extend(check_docstrings(tree, config, file_path))

@@ -4,7 +4,7 @@
 
 **Source:** Implementation plan derived from codebase exploration (2026-04-13).
 
-**Scope:** This specification covers the module-health feature (36 requirements and 4 integration points), not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
+**Scope:** This specification covers the module-health feature (REQ-001–REQ-036, INT-001–INT-004) and the contract-binding checks of REQ-037–REQ-042 and INT-005, not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
 
 ---
 
@@ -221,6 +221,102 @@ The tool is registered in `build_server()` with a description emphasizing proact
 Each template in `content.py` (default, strict, minimal) includes a "Module Health" section documenting the four metrics, their warn/error thresholds, the advisory/error behavior, and the `--skip-module-health` flag.
 
 ---
+
+---
+
+## Contract Binding Validation
+
+icontract binds a condition's parameters by name at call time, against the
+decorated function's signature. A condition naming something the signature
+cannot supply is therefore not a contract at all: it is silently evaluated
+against the wrong value, or it raises `TypeError` the first time it runs.
+Neither is visible at import time, so Level 1 resolves the binding statically.
+
+### REQ-037: check_contract_bindings resolves conditions against the signature
+
+A `check_contract_bindings(tree, aliases, file_path)` check in
+`checker/contract_binding.py` inspects every `require`/`ensure` decorator whose
+first argument is a lambda, and resolves each of that lambda's mandatory
+parameter names against the decorated function's signature. It runs on every
+function `_iter_checked_functions` yields, including private helpers and
+properties: a contract that exists and cannot be enforced is a defect
+independent of the function's visibility. Findings are reported as
+`FunctionResult` with `status=FAILED` and `finding_type="violation"`.
+
+A mandatory parameter is one without a default. Condition parameters carrying
+a default are excluded, because icontract leaves them at their default and
+that is the established idiom for capturing a constant inside a condition.
+`_ARGS` and `_KWARGS` are always bound by icontract; `result` and `OLD` are
+bound in postconditions only.
+
+### REQ-038: condition over a VAR_POSITIONAL parameter is a violation
+
+When a condition parameter resolves to the decorated function's `*args`
+parameter, a FAILED finding is emitted. icontract never binds the variadic
+tuple: the name receives the first extra positional argument, and the
+condition raises `TypeError` when no extra argument is passed. The message
+must state this, and the suggestion must name icontract's `_ARGS` placeholder
+as the supported way to constrain variadic arguments.
+
+### REQ-039: condition over a VAR_KEYWORD parameter is a violation
+
+When a condition parameter resolves to the decorated function's `**kwargs`
+parameter, a FAILED finding is emitted. icontract binds the keyword mapping to
+`_KWARGS` only, so the condition raises `TypeError` on every call. The
+suggestion must name `_KWARGS`.
+
+### REQ-040: condition parameter absent from the signature is a violation
+
+When a mandatory condition parameter matches no signature parameter and is not
+an icontract-injected name, a FAILED finding is emitted: icontract raises
+`TypeError` when the condition runs. The suggestion must mention both a
+misspelling and a decorator stack separated from its `def`, because an edit
+that inserts a function between a decorator stack and its `def` produces
+exactly this finding.
+
+### REQ-041: postcondition using `result` on a `-> None` function is a violation
+
+When a function's return annotation is `None` and an `ensure` condition
+references `result` anywhere other than as an operand of a comparison against
+`None`, a FAILED finding is emitted. icontract binds `result` to `None`, so
+the condition raises `TypeError` when it runs. `result is None` and
+`result == None` guards are accepted.
+
+### REQ-042: binding check runs inside the Level 1 structural block
+
+`_run_all_structural_checks` calls `check_contract_bindings` alongside
+`check_contracts`, inside the non-test-file branch, so binding findings appear
+at every verification level that runs Level 1 and participate in early
+termination like any other Level 1 failure.
+
+---
+
+## INT-005: Contract binding check integration
+
+Kind: call
+Source: _run_all_structural_checks
+Target: check_contract_bindings
+
+**Components:** `_run_all_structural_checks` (structural.py),
+`check_contract_bindings` / `check_function_contract_bindings`
+(contract_binding.py), `resolve_icontract_aliases` / `_iter_checked_functions`
+(structural_helpers.py)
+
+**Flow:**
+1. `check_structural` resolves icontract aliases for the module.
+2. `_run_all_structural_checks` runs `check_contracts` for contract presence.
+3. It then runs `check_contract_bindings` over the same tree.
+4. `check_contract_bindings` iterates checkable functions and delegates each to
+   `check_function_contract_bindings`, which classifies every mandatory
+   condition parameter against the signature.
+5. Functions with at least one finding are appended as FAILED results.
+
+**Contracts at boundary:** `check_contract_bindings` requires an `ast.Module`
+and resolved `IcontractNames`, and ensures a list of `FunctionResult`.
+
+**Invariant:** A function with no contracts, or with contracts whose every
+mandatory parameter binds to a by-name signature parameter, produces no
+result — the check adds findings, never passing records.
 
 ## INT-001: Pipeline integration flow
 

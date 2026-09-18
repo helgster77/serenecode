@@ -69,6 +69,25 @@ as the second argument: `@icontract.require(lambda x: x > 0, "x must be positive
 Private functions (prefixed with `_`) SHOULD have contracts when the function \
 contains non-trivial logic.
 
+### Contract Binding
+
+icontract binds a condition's parameters by name against the decorated \
+function's signature, so a condition can only name parameters the signature \
+supplies. Level 1 rejects conditions that cannot bind:
+
+- A condition over `*args` or `**kwargs` never sees the variadic tuple or \
+mapping. Use icontract's `_ARGS` / `_KWARGS` placeholders instead, or take an \
+explicit parameter.
+- A condition parameter that matches nothing in the signature raises \
+`TypeError` when it runs — usually a misspelling, or a decorator stack that \
+was separated from its `def` by an inserted function.
+- `@icontract.ensure(lambda result: ...)` on a function annotated `-> None` \
+binds `result` to `None`. Give the function a real return type or restate the \
+postcondition over the parameters.
+
+Condition parameters carrying a default (`lambda result, eps=1e-9: ...`) \
+capture constants and are left alone.
+
 ### Class Invariants
 
 Every class with state MUST have at least one `@icontract.invariant` defining its \
@@ -261,6 +280,25 @@ Private production functions (prefixed with `_`) MUST have contracts and type \
 annotations, including one-line helpers. Functions without caller-supplied \
 inputs may omit preconditions.
 
+### Contract Binding
+
+icontract binds a condition's parameters by name against the decorated \
+function's signature, so a condition can only name parameters the signature \
+supplies. Level 1 rejects conditions that cannot bind:
+
+- A condition over `*args` or `**kwargs` never sees the variadic tuple or \
+mapping. Use icontract's `_ARGS` / `_KWARGS` placeholders instead, or take an \
+explicit parameter.
+- A condition parameter that matches nothing in the signature raises \
+`TypeError` when it runs — usually a misspelling, or a decorator stack that \
+was separated from its `def` by an inserted function.
+- `@icontract.ensure(lambda result: ...)` on a function annotated `-> None` \
+binds `result` to `None`. Give the function a real return type or restate the \
+postcondition over the parameters.
+
+Condition parameters carrying a default (`lambda result, eps=1e-9: ...`) \
+capture constants and are left alone.
+
 ### Class Invariants
 
 Every class with state MUST have `@icontract.invariant`. Invariants must constrain \
@@ -438,6 +476,12 @@ def compute_mean(items: list[float]) -> float:
 
 Functions with no meaningful parameters may omit `@icontract.require` but \
 MUST still have `@icontract.ensure`.
+
+A condition can only name parameters the signature supplies: conditions over \
+`*args` / `**kwargs` (use `_ARGS` / `_KWARGS` instead), conditions naming a \
+parameter that does not exist, and `lambda result: ...` on a function \
+annotated `-> None` are all rejected at Level 1 because icontract cannot \
+bind them.
 
 ---
 

@@ -71,6 +71,12 @@ When adding contracts, write meaningful conditions that constrain behavior:
 @icontract.ensure(lambda result: True, "always passes")
 ```
 
+A condition can only name parameters the decorated signature supplies.
+Level 1 rejects conditions over `*args` / `**kwargs` (use icontract's `_ARGS`
+and `_KWARGS` placeholders instead), conditions naming a parameter that does
+not exist, and `lambda result: ...` on a function annotated `-> None` — none
+of these is enforceable as written.
+
 Protocol classes and stateless adapters do not need `@icontract.invariant`. Add `# no-invariant: <reason>` above the class definition if the class has no state to constrain.
 
 ### Verification Scope
