@@ -9,6 +9,7 @@ from serenecode.checker.spec_traceability import (
     extract_verifications,
 )
 from serenecode.checker.traceability_placement import (
+    _tag_line,
     check_traceability_tag_placement,
 )
 from serenecode.models import CheckStatus
@@ -194,3 +195,21 @@ class TestCommaSeparatedIdentifiers:
         assert {identifier for _, identifier, _ in refs} == {
             "REQ-005", "REQ-006", "INT-002",
         }
+
+
+class TestTagLineFallback:
+    """The reported line degrades gracefully."""
+
+    def test_line_is_found_when_the_marker_is_literal(self) -> None:
+        """The tag's own line is reported.
+
+        Verifies: REQ-052
+        """
+        assert _tag_line('"""Doc.\n\nImplements: REQ-001\n"""\n', "Implements") == 3
+
+    def test_line_falls_back_to_one_when_the_marker_is_not_literal(self) -> None:
+        """A docstring assembled from parts still yields a usable location.
+
+        Verifies: REQ-052
+        """
+        assert _tag_line('"""Doc."""\n', "Implements") == 1
