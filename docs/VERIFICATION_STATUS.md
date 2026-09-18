@@ -5,7 +5,8 @@ fixes and documentation/template corrections. The base commit was
 `a2fb95fb76dc1699bf5f198d021d14dfcf87a1bd`; changes were uncommitted. Package metadata still says
 `0.5.1`. This is not a claim about the published PyPI artifact or remote CI.
 The [machine-readable snapshot](verification-2026-09-07.json) contains the counts,
-commands, timestamps, and tool versions. Refresh this record when the inputs change;
+commands, timestamps, and tool versions **of that run only** — it is a dated
+artifact and does not carry the re-measured numbers noted below. Refresh this record when the inputs change;
 it is a dated result, not a continuously updated badge.
 
 **Superseded in part.** Every number below was measured on 7 September 2026 and

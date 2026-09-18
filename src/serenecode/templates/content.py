@@ -731,6 +731,13 @@ compatibility between contracts. Tags establish references, not test adequacy.
 SereneCode also reports likely dead code as part of baseline verification. \
 These findings are advisory review items, not automatic deletion commands.
 
+Definitions whose callers a name-based scan cannot see are suppressed already: \
+functions carrying a registering decorator (`@app.get`, `@router.post`, \
+`@asynccontextmanager`, …) and methods overriding a base declared in the \
+scanned sources or marked `@override`. They need no `# allow-unused:` marker. \
+A base class from outside the scanned sources cannot be resolved, so mark \
+those overrides with `@override`.
+
 When dead code is reported:
 
 - Ask the user whether the code should be removed.

@@ -40,7 +40,10 @@ Each finding includes function name, file path, line number, a message, and a su
 
 ### Fixing Failures by Level
 
-**Level 1 (structural)** — Missing contracts or annotations. The suggestion names the specific parameters or return type. Add the missing decorator.
+**Level 1 (structural)** — Missing contracts or annotations. The suggestion names the specific parameters or return type. Add the missing decorator. Level 1 also fails on:
+  - A contract that cannot be enforced as written — a condition over `*args`/`**kwargs`, a condition naming a parameter the signature does not have, or `lambda result: ...` on a function annotated `-> None`. Fix the contract; do not delete it.
+  - A precondition that is genuinely unnecessary because the parameter's annotated domain is already fully valid: waive it with `# no-precondition: <reason>`, never with a type-shaped tautology.
+  - An `Implements:`/`Verifies:` tag in a module docstring, which nothing reads. Move it to the implementing or testing symbol.
 
 **Level 2 (types)** — mypy type errors. The suggestion includes the mypy error code and a fix direction. Fix the type annotation or the expression.
 
