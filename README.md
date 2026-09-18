@@ -22,7 +22,7 @@ Function-scoped MCP checks currently run the **file pipeline**, then select find
 
 | Level | Checks | Backend |
 |---|---|---|
-| **L1** | Structural conventions, spec references, test-file presence, code-quality patterns, module health, likely dead code | AST analysis and vulture |
+| **L1** | Structural conventions, contract enforceability, spec references, test-file presence, code-quality patterns, module health, likely dead code | AST analysis and vulture |
 | **L2** | Static type checking | mypy with `--strict` |
 | **L3** | Test outcome and per-function line/branch coverage | pytest, pytest-cov, coverage.py |
 | **L4** | Contracts against generated inputs | Hypothesis |
@@ -33,13 +33,29 @@ Normal runs start at L1. `--structural` requests L1 only; `--verify` starts at L
 
 L3 fails when pytest fails, even if coverage is 100%. Both line and branch coverage must meet the per-function threshold (80% by default). Reports include uncovered paths and suggested tests; mock recommendations are heuristics to review, not requirements that all I/O must be mocked.
 
-L4 uses a default budget of up to 100 generated examples per function. Its built-in strategies cover restricted domains, not every value accepted by a Python type. L5 has default budgets of 30 seconds per condition, 10 seconds per path, and 300 seconds per module. Neither a property-test pass nor “no counterexample found within analysis bounds” is proof of correctness. See [verification semantics](docs/VERIFICATION_LEVELS.md) for strategy domains and target eligibility.
+L4 uses a default budget of up to 100 generated examples per function. Its built-in strategies cover restricted domains, not every value accepted by a Python type; a precondition comparing a numeric parameter against a numeric literal narrows that domain directly, including strict inequalities such as `0.0 < x < 1.0`. When no satisfying input can be generated, the finding is reported as skipped — nothing was verified — rather than as a failure, because that is a limit of the generator and not evidence of a defect. L5 has default budgets of 30 seconds per condition, 10 seconds per path, and 300 seconds per module. Neither a property-test pass nor “no counterexample found within analysis bounds” is proof of correctness. See [verification semantics](docs/VERIFICATION_LEVELS.md) for strategy domains and target eligibility.
 
 L6 checks dependency direction, cycles, explicit Protocol inheritance and signature compatibility, contract presence, and declared integration structure. It does **not** prove that one function's postcondition logically satisfies another's precondition. `REQ`/`INT` tags establish references; a matching `Verifies:` tag does not establish that a test adequately checks the requirement's meaning.
 
 ### Conventions and code quality
 
 The Default and Strict presets enable checks for stub bodies, mutable defaults, bare `assert` outside tests, `print()` in core, recognized dangerous calls, unfinished-work markers, tests without recognized assertions, silent exception handling, and simple tautological postconditions. These are syntax-based checks with documented suppression comments and exemptions; they do not detect every equivalent pattern or constitute a security audit. Minimal disables these additional code-quality rules by default.
+
+L1 also checks that each contract can be enforced as written. icontract binds
+a condition's parameters by name against the decorated signature, so a
+condition over `*args` or `**kwargs`, a condition naming a parameter the
+signature does not have, or `@icontract.ensure(lambda result: ...)` on a
+function annotated `-> None` is reported as a failure rather than counted as a
+satisfied contract. Condition parameters carrying a default are treated as
+captured constants and left alone.
+
+Likely-dead-code advisories are suppressed for definitions whose callers a
+name-based scan cannot see: functions carrying a registering decorator
+(`@app.get`, `@router.post`, `@asynccontextmanager`, …) and methods that
+override a base declared within the scanned sources or marked `@override`.
+Base classes from outside the scanned sources cannot be resolved, so
+`@override` is the way to mark those. Advisories for variables, classes and
+imports are unaffected.
 
 Module health checks run in L1, including normal higher-level runs. Their thresholds are documented in each generated `SERENECODE.md`: exceeding a warning threshold produces an advisory; exceeding an error threshold fails the check. Test files are excluded from module health checks. Use `--skip-module-health` to disable them.
 

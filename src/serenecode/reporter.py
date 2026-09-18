@@ -347,10 +347,10 @@ def _format_human_summary(lines: list[str], summary: CheckSummary) -> None:
         f"{summary.failed_count} failed",
         f"{summary.skipped_count} skipped",
     ]
+    # Advisories are counted only among exempt results, so an advisory count
+    # without an exempt count cannot arise.
     if summary.exempt_count > 0:
         summary_parts.append(_format_exempt_part(summary))
-    elif summary.advisory_count > 0:
-        summary_parts.append(f"{summary.advisory_count} advisory")
     lines.append(", ".join(summary_parts))
     lines.append(f"Duration: {summary.duration_seconds:.3f}s")
 

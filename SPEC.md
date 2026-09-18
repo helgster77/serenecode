@@ -4,7 +4,7 @@
 
 **Source:** Implementation plan derived from codebase exploration (2026-04-13).
 
-**Scope:** This specification covers the module-health feature (REQ-001–REQ-036, INT-001–INT-004) and the contract-enforcement and tooling corrections of REQ-037–REQ-047 and INT-005, not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
+**Scope:** This specification covers the module-health feature (REQ-001–REQ-036, INT-001–INT-004) and the contract-enforcement and tooling corrections of REQ-037–REQ-049 and INT-005, not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
 
 ---
 
@@ -337,6 +337,38 @@ report therefore spells each file one way, whether the finding came from the
 structural checker or the dead-code backend. Matching is textual — a core
 module cannot touch the filesystem — and a path that matches nothing is
 reported unchanged.
+
+### REQ-048: numeric bound refinement reads bounds from the condition AST
+
+`_try_numeric_bounds` derives a Hypothesis strategy by parsing the condition
+lambda's AST rather than matching regexes over its source, so that:
+
+- Bounds are recognised on either side of the parameter (`x > 0`, `0 < x`) and
+  in chained comparisons (`0.0 < x < 1.0`).
+- Decimal literals keep their fractional part: `x >= 0.5` yields a minimum of
+  `0.5`, not `0`.
+- A strict inequality on a `float` parameter becomes an excluded endpoint via
+  `st.floats(exclude_min=…, exclude_max=…)`, not a shift by one. Shifting by
+  one is correct for `int` and is retained there; applied to a float bound it
+  produced a domain disjoint from the contract, so every generated example was
+  filtered out and Level 4 reported an unsatisfiable crash for a correct
+  contract.
+- When the derived bounds admit no value, no strategy is derived and the
+  caller falls back to filtering, rather than handing Hypothesis an empty
+  domain.
+
+Boolean literals are not numeric bounds. Conjoined bounds on the same
+parameter are combined by keeping the tighter one.
+
+### REQ-049: an exhausted generator is reported as unverified, not as a defect
+
+When Hypothesis raises `Unsatisfiable`, Level 4 emits a `skipped` finding
+stating that no input satisfying the preconditions could be generated and that
+nothing was verified. The message must say this is a limit of the derived
+strategy rather than evidence of a defect, and must not suggest weakening the
+contract. Reporting it as `crash` previously produced the opposite advice —
+"add a precondition to reject inputs that cause this crash" — which pressures
+an author to relax a correct contract to satisfy the sampler.
 
 ## INT-005: Contract binding check integration
 

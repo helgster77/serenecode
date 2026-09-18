@@ -126,7 +126,10 @@ def is_suppressed_dead_code(
 
 
 @icontract.require(lambda path: isinstance(path, str), "path must be a string")
-@icontract.ensure(lambda result: isinstance(result, str), "result must be a string")
+@icontract.ensure(
+    lambda result: "\\" not in result and not result.startswith("./"),
+    "result must use forward separators and carry no leading ./",
+)
 def normalize_path(path: str) -> str:
     """Normalize separators and drop a leading './' for path comparison.
 
@@ -192,8 +195,7 @@ def _parse_sources(
 
     # Loop invariant: trees holds parsed modules for sources[0..i]
     for file_path, source in sources:
-        # silent-except: suppression is best-effort; an unparseable file simply
-        # contributes no suppression sites and is reported by other checks.
+        # silent-except: suppression is best-effort; an unparseable file yields no suppression sites and is reported by other checks
         try:
             trees.append((file_path, ast.parse(source)))
         except (SyntaxError, TypeError, ValueError):

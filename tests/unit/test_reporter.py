@@ -355,3 +355,31 @@ class TestExemptSummaryRendering:
         line = self._summary_line(self._plain_exempt("b", 2))
         assert "1 exempt" in line
         assert "advisory" not in line
+
+    def test_many_failures_add_the_parallel_fix_tip(self) -> None:
+        """Five or more findings suggest splitting the work up.
+
+        Verifies: REQ-046
+        """
+        failures = tuple(
+            FunctionResult(
+                function=f"f{index}",
+                file="src/big.py",
+                line=index + 1,
+                level_requested=1,
+                level_achieved=0,
+                status=CheckStatus.FAILED,
+                details=(Detail(
+                    level=VerificationLevel.STRUCTURAL,
+                    tool="structural",
+                    finding_type="violation",
+                    message="missing contract",
+                    suggestion="add one",
+                ),),
+            )
+            for index in range(5)
+        )
+        rendered = format_human(
+            make_check_result(failures, level_requested=1, duration_seconds=0.0)
+        )
+        assert "5 findings to address" in rendered

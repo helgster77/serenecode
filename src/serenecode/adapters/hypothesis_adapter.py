@@ -34,6 +34,7 @@ from serenecode.ports.property_tester import PropertyFinding
 try:
     from hypothesis import given, settings, HealthCheck, Verbosity
     from hypothesis import strategies as st
+    from hypothesis.errors import Unsatisfiable
     from hypothesis.strategies import SearchStrategy
     _HYPOTHESIS_AVAILABLE = True
 except ImportError:
@@ -655,11 +656,56 @@ def _handle_generic_exception(
     violation = _find_nested_violation(exc)
     if violation is not None:
         return _build_postcondition_finding(func_name, module_path, violation)
+    if _HYPOTHESIS_AVAILABLE and isinstance(exc, Unsatisfiable):
+        return _build_unsatisfiable_finding(func_name, module_path)
     return PropertyFinding(
         function_name=func_name, module_path=module_path,
         passed=False, finding_type="crash",
         message=f"Function '{func_name}' crashed during testing: {exc}",
         exception_type=type(exc).__name__, exception_message=str(exc),
+    )
+
+
+@icontract.require(
+    lambda func_name: is_non_empty_string(func_name),
+    "func_name must be a non-empty string",
+)
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: isinstance(result, PropertyFinding),
+    "result must be a PropertyFinding",
+)
+def _build_unsatisfiable_finding(
+    func_name: str,
+    module_path: str,
+) -> PropertyFinding:
+    """Report an exhausted generator as unverified, not as a defect.
+
+    Implements: REQ-049
+
+    Hypothesis raises Unsatisfiable when every generated example was
+    filtered out, which says the derived strategy does not match the
+    preconditions — not that the function is wrong. Reporting it as a crash
+    invited the opposite conclusion, and the suggested remedy ("add a
+    precondition to reject inputs that cause this crash") pushed toward
+    weakening a correct contract to satisfy the sampler.
+    """
+    return PropertyFinding(
+        function_name=func_name, module_path=module_path,
+        passed=True, finding_type="skipped",
+        message=(
+            f"Level 4 could not generate inputs satisfying '{func_name}'s "
+            "preconditions — every generated example was filtered out, so "
+            "nothing was verified. This is a limit of the derived strategy, "
+            "not evidence of a defect: do not weaken the contract to satisfy "
+            "it. Supply a Hypothesis strategy for the parameter, or state the "
+            "domain as a comparison against a numeric literal "
+            "(for example `0.0 < x < 1.0`), which Level 4 turns into a "
+            "generator directly."
+        ),
     )
 
 

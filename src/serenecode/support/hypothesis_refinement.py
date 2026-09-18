@@ -9,7 +9,9 @@ with no serenecode imports and is subject to full structural verification.
 
 from __future__ import annotations
 
+import ast
 import inspect
+import math
 import re
 from typing import Callable
 
@@ -169,32 +171,215 @@ def _try_numeric_bounds(
     source: str, param_name: str, strategies: dict[str, SearchStrategy],
     annotations: dict[str, object],
 ) -> bool:
-    """Match `x > N`, `x >= N` etc -> bounded integers/floats."""
+    """Match comparisons against numeric literals -> bounded integers/floats.
+
+    Implements: REQ-048
+
+    Bounds are read from the condition's AST, so `x > 0`, `0 < x`, and the
+    chained `0.0 < x < 1.0` are all understood, decimal literals keep their
+    fractional part, and a strict inequality becomes an excluded endpoint
+    rather than a shift by one — shifting by one is right for integers and
+    turns a float bound into a domain that excludes the whole contract.
+    """
     annotation = annotations.get(param_name)
     if annotation not in (int, float):
         return False
-    gt_match = re.search(r'>\s*(\d+)', source)
-    ge_match = re.search(r'>=\s*(\d+)', source)
-    lt_match = re.search(r'<\s*(\d+)', source)
-    le_match = re.search(r'<=\s*(\d+)', source)
-    if not (ge_match or gt_match or le_match or lt_match):
+    bounds = _numeric_bounds_from_source(source, param_name)
+    if bounds is None:
         return False
-    min_val = int(ge_match.group(1)) if ge_match else (int(gt_match.group(1)) + 1 if gt_match else None)
-    max_val = int(le_match.group(1)) if le_match else (int(lt_match.group(1)) - 1 if lt_match else None)
-    if min_val is None and max_val is None:
+    lower, upper = bounds
+    if not _bounds_are_satisfiable(lower, upper):
         return False
+
     if annotation is float:
         strategies[param_name] = st.floats(
-            min_value=float(min_val) if min_val is not None else -1e6,
-            max_value=float(max_val) if max_val is not None else 1e6,
+            min_value=lower[0] if lower is not None else -1e6,
+            max_value=upper[0] if upper is not None else 1e6,
+            exclude_min=lower is not None and lower[1],
+            exclude_max=upper is not None and upper[1],
             allow_nan=False, allow_infinity=False,
         )
     else:
         strategies[param_name] = st.integers(
-            min_value=min_val if min_val is not None else -1000,
-            max_value=max_val if max_val is not None else 1000,
+            min_value=_integer_bound(lower, -1000.0, is_lower=True),
+            max_value=_integer_bound(upper, 1000.0, is_lower=False),
         )
     return True
+
+
+@icontract.require(lambda source: isinstance(source, str), "source must be a string")
+@icontract.require(lambda param_name: isinstance(param_name, str), "param_name must be a string")
+@icontract.ensure(
+    lambda result: result is None or (isinstance(result, tuple) and len(result) == 2),
+    "result must be a (lower, upper) pair or None",
+)
+def _numeric_bounds_from_source(
+    source: str, param_name: str,
+) -> tuple[tuple[float, bool] | None, tuple[float, bool] | None] | None:
+    """Extract the tightest numeric bounds a condition places on a parameter.
+
+    Implements: REQ-048
+
+    Args:
+        source: Source text of the condition lambda.
+        param_name: The parameter the bounds must constrain.
+
+    Returns:
+        A `(lower, upper)` pair, each either None or `(value, exclusive)`, or
+        None when the condition places no parsable numeric bound on the
+        parameter.
+    """
+    # silent-except: a condition whose source fragment does not parse yields no bounds
+    try:
+        tree = ast.parse(source.strip(), mode="eval")
+    except (SyntaxError, TypeError, ValueError):
+        return None
+
+    lower: tuple[float, bool] | None = None
+    upper: tuple[float, bool] | None = None
+
+    # Loop invariant: lower/upper hold the tightest bounds seen in nodes[0..i]
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        operands = [node.left] + list(node.comparators)
+        for index, operator in enumerate(node.ops):
+            left, right = operands[index], operands[index + 1]
+            side = _bound_from_operands(left, operator, right, param_name)
+            if side is None:
+                continue
+            is_lower, bound = side
+            if is_lower:
+                lower = _tighter_bound(lower, bound, is_lower=True)
+            else:
+                upper = _tighter_bound(upper, bound, is_lower=False)
+
+    if lower is None and upper is None:
+        return None
+    return (lower, upper)
+
+
+@icontract.require(lambda param_name: isinstance(param_name, str), "param_name must be a string")
+@icontract.ensure(
+    lambda result: result is None or (isinstance(result, tuple) and len(result) == 2),
+    "result must be an (is_lower, bound) pair or None",
+)
+def _bound_from_operands(
+    left: ast.expr, operator: ast.cmpop, right: ast.expr, param_name: str,
+) -> tuple[bool, tuple[float, bool]] | None:
+    """Read one comparison as a bound on `param_name`, in either orientation."""
+    exclusive = isinstance(operator, (ast.Lt, ast.Gt))
+    if not isinstance(operator, (ast.Lt, ast.LtE, ast.Gt, ast.GtE)):
+        return None
+
+    if _is_param(left, param_name):
+        value = _numeric_literal(right)
+        if value is None:
+            return None
+        # `param < N` bounds above; `param > N` bounds below.
+        is_lower = isinstance(operator, (ast.Gt, ast.GtE))
+        return (is_lower, (value, exclusive))
+
+    if _is_param(right, param_name):
+        value = _numeric_literal(left)
+        if value is None:
+            return None
+        # `N < param` bounds below; `N > param` bounds above.
+        is_lower = isinstance(operator, (ast.Lt, ast.LtE))
+        return (is_lower, (value, exclusive))
+
+    return None
+
+
+@icontract.require(lambda param_name: isinstance(param_name, str), "param_name must be a string")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _is_param(node: ast.expr, param_name: str) -> bool:
+    """Return True when the node is a plain reference to the parameter."""
+    return isinstance(node, ast.Name) and node.id == param_name
+
+
+@icontract.require(lambda node: isinstance(node, ast.AST), "node must be an AST node")
+@icontract.ensure(
+    lambda result: result is None or isinstance(result, float),
+    "result must be a float or None",
+)
+def _numeric_literal(node: ast.expr) -> float | None:
+    """Return the value of an int/float literal, including a negated one."""
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        inner = _numeric_literal(node.operand)
+        return None if inner is None else -inner
+    if not isinstance(node, ast.Constant):
+        return None
+    # bool is a subclass of int, but `True` is not a numeric bound.
+    if isinstance(node.value, bool):
+        return None
+    if isinstance(node.value, (int, float)):
+        return float(node.value)
+    return None
+
+
+@icontract.require(lambda is_lower: isinstance(is_lower, bool), "is_lower must be a bool")
+@icontract.ensure(
+    lambda result: isinstance(result, tuple) and len(result) == 2,
+    "result must be a (value, exclusive) pair",
+)
+def _tighter_bound(
+    current: tuple[float, bool] | None,
+    candidate: tuple[float, bool],
+    is_lower: bool,
+) -> tuple[float, bool]:
+    """Keep whichever of two bounds constrains the domain more."""
+    if current is None:
+        return candidate
+    if candidate[0] == current[0]:
+        return (candidate[0], candidate[1] or current[1])
+    if is_lower:
+        return candidate if candidate[0] > current[0] else current
+    return candidate if candidate[0] < current[0] else current
+
+
+@icontract.require(
+    lambda lower: lower is None or (isinstance(lower, tuple) and len(lower) == 2),
+    "lower must be a (value, exclusive) pair or None",
+)
+@icontract.require(
+    lambda upper: upper is None or (isinstance(upper, tuple) and len(upper) == 2),
+    "upper must be a (value, exclusive) pair or None",
+)
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _bounds_are_satisfiable(
+    lower: tuple[float, bool] | None,
+    upper: tuple[float, bool] | None,
+) -> bool:
+    """Return True when some value lies between the bounds.
+
+    Implements: REQ-048
+
+    An empty range would otherwise be handed to Hypothesis as a strategy no
+    draw can satisfy, so the caller falls back to filtering instead.
+    """
+    if lower is None or upper is None:
+        return True
+    if lower[0] < upper[0]:
+        return True
+    return lower[0] == upper[0] and not lower[1] and not upper[1]
+
+
+@icontract.require(lambda fallback: isinstance(fallback, float), "fallback must be a float")
+@icontract.require(lambda is_lower: isinstance(is_lower, bool), "is_lower must be a bool")
+@icontract.ensure(lambda result: isinstance(result, int), "result must be an int")
+def _integer_bound(
+    bound: tuple[float, bool] | None, fallback: float, is_lower: bool,
+) -> int:
+    """Convert a bound to the nearest integer inside the allowed range."""
+    if bound is None:
+        return int(fallback)
+    value, exclusive = bound
+    if is_lower:
+        inclusive = math.ceil(value)
+        return inclusive + 1 if exclusive and inclusive == value else inclusive
+    inclusive = math.floor(value)
+    return inclusive - 1 if exclusive and inclusive == value else inclusive
 
 
 @icontract.require(lambda condition: callable(condition), "condition must be callable")

@@ -252,3 +252,63 @@ def test_resolve_report_path_ignores_empty_known_paths() -> None:
     """
     assert resolve_report_path("/", ("",)) == "/"
     assert resolve_report_path("/a/b.py", ("", "a/b.py")) == "a/b.py"
+
+
+def test_subscripted_base_class_resolves() -> None:
+    """A generic base still names the class it inherits from.
+
+    Verifies: REQ-045
+    """
+    source = textwrap.dedent('''
+        from typing import Generic, TypeVar
+
+        T = TypeVar("T")
+
+
+        class Base(Generic[T]):
+            def handle(self) -> None:
+                return None
+
+
+        class Child(Base[int]):
+            def handle(self) -> None:
+                return None
+    ''')
+    sites = _sites(("generic.py", source))
+    assert is_suppressed_dead_code("generic.py", "handle", 13, "method", sites)
+
+
+def test_dotted_base_class_resolves_by_final_segment() -> None:
+    """`mod.Base` resolves to the class named `Base`.
+
+    Verifies: REQ-045
+    """
+    base = textwrap.dedent('''
+        class Base:
+            def handle(self) -> None:
+                return None
+    ''')
+    child = textwrap.dedent('''
+        import mod
+
+
+        class Child(mod.Base):
+            def handle(self) -> None:
+                return None
+    ''')
+    sites = _sites(("mod.py", base), ("child.py", child))
+    assert is_suppressed_dead_code("child.py", "handle", 6, "method", sites)
+
+
+def test_unnameable_base_expression_is_ignored() -> None:
+    """A computed base contributes no inherited method names.
+
+    Verifies: REQ-045
+    """
+    source = textwrap.dedent('''
+        class Child(make_base()):
+            def handle(self) -> None:
+                return None
+    ''')
+    sites = _sites(("computed.py", source))
+    assert not is_suppressed_dead_code("computed.py", "handle", 3, "method", sites)
