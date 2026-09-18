@@ -88,7 +88,7 @@ def check_contract_bindings(
 ) -> list[FunctionResult]:
     """Check that contract conditions bind to parameters icontract can supply.
 
-    Implements: REQ-037, INT-005
+    Implements: REQ-037
 
     Unlike the contract presence checks, this runs on every function that
     carries a contract — private helpers and properties included — because a

@@ -6,7 +6,7 @@
 
 SereneCode turns the question from "did the model ship code?" to "does it match the spec, the types, and the contracts we agreed on?" It is a Python toolkit and workflow for teams using AI coding assistants: a structured spec (`REQ-xxx`, `INT-xxx`), a project-level `SERENECODE.md` that steers how code is written, and one verification pipeline you can drive **from the MCP server (recommended while editing)** or from the **CLI** (CI, scripts, and full-tree batch runs).
 
-**Current verification evidence:** see the dated [verification record](docs/VERIFICATION_STATUS.md) for commands, results, counts, and scope. These docs describe the source checkout; they do not establish that unpublished fixes are available on PyPI.
+**Current verification evidence:** see the dated [verification record](docs/VERIFICATION_STATUS.md) for commands, results, counts, and scope. Behaviour changes between releases, including checks that can newly fail a project, are in the [changelog](CHANGELOG.md). These docs describe the source checkout; they do not establish that unpublished fixes are available on PyPI.
 
 ## Why this matters for an assistant specifically
 

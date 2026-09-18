@@ -907,7 +907,7 @@ def _run_all_structural_checks(
 ) -> list[FunctionResult]:
     """Run all structural sub-checks and return aggregated results.
 
-    Implements: REQ-042
+    Implements: REQ-042, INT-005
     """
     results: list[FunctionResult] = []
     if not _is_test_file_path(file_path):

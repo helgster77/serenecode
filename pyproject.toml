@@ -1,6 +1,6 @@
 [project]
 name = "serenecode"
-version = "0.5.1"
+version = "0.6.0"
 description = "Verification framework for AI-generated Python — test coverage, property testing, and symbolic execution"
 requires-python = ">=3.10"
 license = "MIT"
@@ -94,5 +94,5 @@ exclude_lines = [
 [dependency-groups]
 dev = [
     "build>=1.4.2",
-    "twine>=6.2.0",
+    "twine>=7.0.0",
 ]
