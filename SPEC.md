@@ -4,7 +4,7 @@
 
 **Source:** Implementation plan derived from codebase exploration (2026-04-13).
 
-**Scope:** This specification covers the module-health feature (REQ-001–REQ-036, INT-001–INT-004) and the contract-enforcement and tooling corrections of REQ-037–REQ-049 and INT-005, not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
+**Scope:** This specification covers the module-health feature (REQ-001–REQ-036, INT-001–INT-004) and the contract-enforcement and tooling corrections of REQ-037–REQ-053 and INT-005, not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
 
 ---
 
@@ -369,6 +369,58 @@ strategy rather than evidence of a defect, and must not suggest weakening the
 contract. Reporting it as `crash` previously produced the opposite advice —
 "add a precondition to reject inputs that cause this crash" — which pressures
 an author to relax a correct contract to satisfy the sampler.
+
+---
+
+## Contract and Coverage Scope
+
+### REQ-050: preconditions can be waived with a documented reason
+
+A function may opt out of the precondition requirement with a
+`# no-precondition: <reason>` comment on the line above its `def` or above
+its topmost decorator, matching the placement and mandatory-reason rules of
+the existing `# allow-unused:` and `# allow-mutable-default:` markers. A
+marker with no reason after the colon waives nothing, so the requirement is
+still reported.
+
+The requirement stays on by default. The marker exists because a parameter
+whose annotated domain is already entirely valid — a `bool`, a closed `Enum` —
+has no precondition to state, and demanding one produces exactly the
+type-shaped tautologies the templates warn against for invariants. Recording
+the reason in the source keeps each waiver reviewable in the diff, and leaves
+`check_tautological_isinstance_postcondition` free to keep rejecting
+`lambda flag: isinstance(flag, bool)` rather than accepting it as compliance.
+
+### REQ-051: Protocol stub bodies are exempt from coverage
+
+`_discover_functions` skips a method of a `typing.Protocol` subclass whose
+body is exactly `...`, optionally preceded by a docstring. No coverage record
+is produced for it at all.
+
+Such a body never executes. What coverage measures for it is whether the
+module was imported: 0% when no test imports it, 100% when one does, and in
+neither case a statement about whether any implementation was exercised. A
+Protocol method with a real body — `raise NotImplementedError`, or any other
+statement — is reachable code and still counts, as does a `...` body in a
+class that is not a Protocol.
+
+### REQ-052: traceability tags in a module docstring are reported
+
+`check_traceability_tag_placement` scans each source and test file's module
+docstring for `Implements:` and `Verifies:` tags and emits a FAILED result
+with `finding_type="misplaced_traceability_tag"`, naming the tag, the
+identifiers it lists, and the docstring it belongs on. Tags are recognised
+only on function and class docstrings, so a tag in a module docstring
+contributes nothing while reading in review as though it does. Without this
+check the sole symptom is `<id> has no implementation and no test`, which
+gives no hint that the tag exists in the wrong docstring a few lines away.
+
+### REQ-053: one tag may list several identifiers
+
+`Implements:` and `Verifies:` accept a comma-separated list of `REQ-xxx` and
+`INT-xxx` identifiers on a single symbol, in any mixture — for example
+`Implements: REQ-001, INT-002`. Each listed identifier is recorded
+separately. The templates document this.
 
 ## INT-005: Contract binding check integration
 

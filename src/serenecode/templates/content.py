@@ -88,6 +88,12 @@ postcondition over the parameters.
 Condition parameters carrying a default (`lambda result, eps=1e-9: ...`) \
 capture constants and are left alone.
 
+When a parameter's annotated domain is already entirely valid — a `bool`, a \
+closed `Enum` — there is no precondition to state, and a type-shaped one \
+verifies nothing. Waive the requirement for that function with a \
+`# no-precondition: <reason>` comment above its `def` or its topmost \
+decorator. The reason is mandatory: a bare marker waives nothing.
+
 ### Class Invariants
 
 Every class with state MUST have at least one `@icontract.invariant` defining its \
@@ -299,6 +305,12 @@ postcondition over the parameters.
 Condition parameters carrying a default (`lambda result, eps=1e-9: ...`) \
 capture constants and are left alone.
 
+When a parameter's annotated domain is already entirely valid — a `bool`, a \
+closed `Enum` — there is no precondition to state, and a type-shaped one \
+verifies nothing. Waive the requirement for that function with a \
+`# no-precondition: <reason>` comment above its `def` or its topmost \
+decorator. The reason is mandatory: a bare marker waives nothing.
+
 ### Class Invariants
 
 Every class with state MUST have `@icontract.invariant`. Invariants must constrain \
@@ -482,6 +494,10 @@ A condition can only name parameters the signature supplies: conditions over \
 parameter that does not exist, and `lambda result: ...` on a function \
 annotated `-> None` are all rejected at Level 1 because icontract cannot \
 bind them.
+
+Waive the precondition requirement for a function whose parameter types are \
+already fully constrained with `# no-precondition: <reason>` above its `def`. \
+The reason is mandatory.
 
 ---
 
@@ -681,6 +697,12 @@ def test_checkout_charges_gateway_before_persisting_order() -> None:
     \"\"\"
     ...
 ```
+
+Tags are read from **function and class docstrings only**. One tag may list \
+several identifiers, separated by commas and mixing `REQ-` and `INT-` freely. \
+A tag written in a *module* docstring is not read and is reported as \
+misplaced — keep a module-level index under a different heading so it does \
+not read as a tag.
 
 ### Verification
 

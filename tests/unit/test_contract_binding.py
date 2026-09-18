@@ -344,3 +344,119 @@ def test_clean_contracts_produce_no_records() -> None:
             return value * 2
     '''))
     assert check_contract_bindings(tree, resolve_icontract_aliases(tree), "s.py") == []
+
+
+def _presence_findings(source: str) -> list[str]:
+    """Return contract-presence messages for a source snippet."""
+    result = check_structural(
+        textwrap.dedent(source), default_config(), file_path="sample.py",
+    )
+    return [
+        detail.message
+        for record in result.results
+        for detail in record.details
+    ]
+
+
+_WAIVABLE = '''
+    """Sample module."""
+
+    from __future__ import annotations
+
+    import icontract
+
+    {marker}
+    @icontract.ensure(lambda result: result in ("ok", "failed"), "known label")
+    def render(succeeded: bool) -> str:
+        """Render a flag.
+
+        Args:
+            succeeded: Whether the step succeeded.
+
+        Returns:
+            A label.
+        """
+        return "ok" if succeeded else "failed"
+'''
+
+
+def test_precondition_can_be_waived_with_a_reason() -> None:
+    """A documented waiver silences the precondition requirement.
+
+    Verifies: REQ-050
+    """
+    messages = _presence_findings(_WAIVABLE.format(
+        marker="# no-precondition: bool is fully constrained by its annotation",
+    ))
+    assert not any("missing @icontract.require" in message for message in messages)
+
+
+def test_waiver_without_a_reason_waives_nothing() -> None:
+    """A bare marker is not a waiver.
+
+    Verifies: REQ-050
+    """
+    messages = _presence_findings(_WAIVABLE.format(marker="# no-precondition:"))
+    assert any("missing @icontract.require" in message for message in messages)
+
+
+def test_unwaived_function_still_needs_a_precondition() -> None:
+    """The requirement stays on by default.
+
+    Verifies: REQ-050
+    """
+    messages = _presence_findings(_WAIVABLE.format(marker=""))
+    assert any("missing @icontract.require" in message for message in messages)
+
+
+def test_waiver_above_the_topmost_decorator_is_honoured() -> None:
+    """The marker may sit above the decorator stack.
+
+    Verifies: REQ-050
+    """
+    messages = _presence_findings('''
+        """Sample module."""
+
+        from __future__ import annotations
+
+        import icontract
+
+        # no-precondition: bool is fully constrained by its annotation
+        @icontract.ensure(lambda result: result in ("ok", "failed"), "known label")
+        def render(succeeded: bool) -> str:
+            """Render a flag.
+
+            Args:
+                succeeded: Whether the step succeeded.
+
+            Returns:
+                A label.
+            """
+            return "ok" if succeeded else "failed"
+    ''')
+    assert not any("missing @icontract.require" in message for message in messages)
+
+
+def test_waiver_does_not_silence_the_postcondition_requirement() -> None:
+    """Only the precondition is waived.
+
+    Verifies: REQ-050
+    """
+    messages = _presence_findings('''
+        """Sample module."""
+
+        from __future__ import annotations
+
+        # no-precondition: bool is fully constrained by its annotation
+        def render(succeeded: bool) -> str:
+            """Render a flag.
+
+            Args:
+                succeeded: Whether the step succeeded.
+
+            Returns:
+                A label.
+            """
+            return "ok" if succeeded else "failed"
+    ''')
+    assert any("missing @icontract.ensure" in message for message in messages)

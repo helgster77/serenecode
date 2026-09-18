@@ -311,6 +311,9 @@ def _run_spec_checks(
         check_spec_traceability,
         validate_spec,
     )
+    from serenecode.checker.traceability_placement import (
+        check_traceability_tag_placement,
+    )
 
     results: list[FunctionResult] = []
     if pc.spec_content is None:
@@ -320,12 +323,19 @@ def _run_spec_checks(
     results.extend(validation_result.results)
 
     emit("  Spec traceability check...")
+    traceability_sources = (
+        pc.traceability_sources if pc.traceability_sources is not None else source_files
+    )
     spec_result = check_spec_traceability(
-        pc.spec_content,
-        pc.traceability_sources if pc.traceability_sources is not None else source_files,
-        pc.test_sources,
+        pc.spec_content, traceability_sources, pc.test_sources,
     )
     results.extend(spec_result.results)
+    results.extend(check_traceability_tag_placement(
+        tuple(
+            (source_file.file_path, source_file.source)
+            for source_file in traceability_sources
+        ) + pc.test_sources,
+    ))
     return results
 
 

@@ -7,7 +7,8 @@ verification. Each check uses a two-threshold model: advisory warning
 
 This is a core module — no I/O imports are permitted.
 
-Implements: REQ-008, REQ-009, REQ-010, REQ-011, REQ-012, REQ-013,
+Requirements implemented here, each tagged on its own symbol below:
+REQ-008, REQ-009, REQ-010, REQ-011, REQ-012, REQ-013,
 REQ-014, REQ-015, REQ-016, REQ-017, REQ-018, REQ-019, REQ-020,
 REQ-021, REQ-022, REQ-023, REQ-024, REQ-025, REQ-026, REQ-027
 """

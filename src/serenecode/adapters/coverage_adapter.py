@@ -25,6 +25,7 @@ from typing import Any
 import icontract
 
 from serenecode.adapters.module_loader import load_python_module
+from serenecode.checker.structural_helpers import _is_protocol_class
 from serenecode.contracts.predicates import is_non_empty_string
 from serenecode.core.exceptions import ToolNotInstalledError, UnsafeCodeExecutionError
 from serenecode.ports.coverage_analyzer import (
@@ -413,6 +414,43 @@ def _discover_functions(source: str) -> list[_FunctionNode]:
 
 
 @icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)),
+    "node must be a function definition",
+)
+@icontract.require(
+    lambda in_protocol: isinstance(in_protocol, bool),
+    "in_protocol must be a bool",
+)
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _is_protocol_stub(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    in_protocol: bool,
+) -> bool:
+    """Return True for a Protocol method whose body is only `...`.
+
+    Implements: REQ-051
+
+    Such a body is never executed: what coverage records for it is whether
+    the module was imported, not whether any implementation was exercised.
+    A body that raises or returns something is real code and still counts.
+    """
+    if not in_protocol:
+        return False
+    body = list(node.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        if isinstance(body[0].value.value, str):
+            body = body[1:]
+    if len(body) != 1:
+        return False
+    statement = body[0]
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and statement.value.value is Ellipsis
+    )
+
+
+@icontract.require(
     lambda node: isinstance(node, ast.AST),
     "node must be an AST node",
 )
@@ -433,18 +471,24 @@ def _walk_for_functions(
     functions: list[_FunctionNode],
     prefix: str,
     class_name: str | None,
+    in_protocol: bool = False,
 ) -> None:
     """Recursively discover function definitions in an AST subtree.
+
+    Implements: REQ-051
 
     Args:
         node: Current AST node to examine.
         functions: Accumulator list for discovered functions.
         prefix: Dotted qualified name prefix from enclosing scopes.
         class_name: Enclosing class name if inside a class, None otherwise.
+        in_protocol: True when the enclosing class is a typing.Protocol.
     """
     # Variant: AST depth decreases with each recursive call
     for child in ast.iter_child_nodes(node):
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if _is_protocol_stub(child, in_protocol):
+                continue
             qualified = f"{prefix}.{child.name}" if prefix else child.name
             functions.append(_FunctionNode(
                 name=child.name,
@@ -459,7 +503,10 @@ def _walk_for_functions(
         elif isinstance(child, ast.ClassDef):
             qualified = f"{prefix}.{child.name}" if prefix else child.name
             # Recurse into class body for methods and nested classes
-            _walk_for_functions(child, functions, prefix=qualified, class_name=child.name)
+            _walk_for_functions(
+                child, functions, prefix=qualified, class_name=child.name,
+                in_protocol=_is_protocol_class(child),
+            )
 
 
 @icontract.require(

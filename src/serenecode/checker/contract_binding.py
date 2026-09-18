@@ -29,8 +29,11 @@ from serenecode.models import (
     VerificationLevel,
 )
 
+from serenecode.checker.structural_quality import _has_opt_out_comment
+
 from serenecode.checker.structural_helpers import (
     IcontractNames,
+    _function_opt_out_lines,
     _decorator_descriptions_are_literals,
     _decorator_has_description,
     _find_tautological_contracts,
@@ -58,6 +61,11 @@ _KIND_POSITIONAL = "positional"
 _KIND_VAR_POSITIONAL = "var_positional"
 _KIND_VAR_KEYWORD = "var_keyword"
 _KIND_UNBOUND = "unbound"
+
+# Opt-out marker that waives the precondition requirement for one function.
+# `_has_opt_out_comment` requires a non-empty reason after the colon, so a bare
+# marker waives nothing.
+_PRECONDITION_OPT_OUT = "no-precondition"
 
 # Comparison operators that make `result is None`-style guards safe on a
 # function annotated ``-> None``.
@@ -423,14 +431,21 @@ def _check_single_function_contracts(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     config: SerenecodeConfig,
     aliases: IcontractNames,
+    source: str = "",
 ) -> list[Detail]:
-    """Check contracts on a single function node."""
+    """Check contracts on a single function node.
+
+    Implements: REQ-050
+    """
     details: list[Detail] = []
     params = _non_receiver_parameters(node)
     param_names = [p.arg for p in params]
     has_params = bool(params)
+    precondition_waived = _has_opt_out_comment(
+        source, _function_opt_out_lines(node), _PRECONDITION_OPT_OUT,
+    )
 
-    if has_params and not has_decorator(node, aliases.require_names):
+    if has_params and not precondition_waived and not has_decorator(node, aliases.require_names):
         param_list = ", ".join(param_names)
         example_param = param_names[0]
         details.append(Detail(

@@ -1,6 +1,7 @@
 """Tests for serenecode_module_health MCP tool.
 
-Verifies: REQ-033, REQ-034
+Requirements verified here, each tagged on its own test below:
+REQ-033, REQ-034
 """
 
 from __future__ import annotations

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import textwrap
+
 import pytest
 
 from serenecode.adapters.coverage_adapter import (
@@ -564,3 +566,113 @@ class TestFindDependenciesInLines:
         deps = _find_dependencies_in_lines(tree, [3], source, "mod.py")
         assert len(deps) == 1
         assert deps[0].mock_necessary is True
+
+
+class TestProtocolStubsAreNotCoverageTargets:
+    """A Protocol's `...` body is not code any test can exercise."""
+
+    @staticmethod
+    def _names(source: str) -> set[str]:
+        return {f.qualified_name for f in _discover_functions(textwrap.dedent(source))}
+
+    def test_protocol_stub_method_is_skipped(self) -> None:
+        """A `...` body on a Protocol produces no coverage record.
+
+        Verifies: REQ-051
+        """
+        names = self._names('''
+            from typing import Protocol
+
+
+            class Reader(Protocol):
+                """Reads text."""
+
+                def read(self, path: str) -> str:
+                    """Read the file at path."""
+                    ...
+        ''')
+        assert names == set()
+
+    def test_stub_without_a_docstring_is_skipped(self) -> None:
+        """The docstring is optional.
+
+        Verifies: REQ-051
+        """
+        names = self._names('''
+            from typing import Protocol
+
+
+            class Reader(Protocol):
+                def read(self, path: str) -> str:
+                    ...
+        ''')
+        assert names == set()
+
+    def test_protocol_method_with_a_real_body_still_counts(self) -> None:
+        """`raise NotImplementedError` is reachable code.
+
+        Verifies: REQ-051
+        """
+        names = self._names('''
+            from typing import Protocol
+
+
+            class Reader(Protocol):
+                """Reads text."""
+
+                def read(self, path: str) -> str:
+                    """Read the file at path."""
+                    raise NotImplementedError
+        ''')
+        assert names == {"Reader.read"}
+
+    def test_stub_outside_a_protocol_still_counts(self) -> None:
+        """A `...` body in an ordinary class is not exempt.
+
+        Verifies: REQ-051
+        """
+        names = self._names('''
+            class Plain:
+                """Ordinary class."""
+
+                def noop(self) -> None:
+                    """Do nothing."""
+                    ...
+        ''')
+        assert names == {"Plain.noop"}
+
+    def test_dotted_protocol_base_is_recognised(self) -> None:
+        """`typing.Protocol` is spelled either way.
+
+        Verifies: REQ-051
+        """
+        names = self._names('''
+            import typing
+
+
+            class Reader(typing.Protocol):
+                """Reads text."""
+
+                def read(self, path: str) -> str:
+                    ...
+        ''')
+        assert names == set()
+
+    def test_multi_statement_protocol_method_still_counts(self) -> None:
+        """Only a body that is exactly `...` is exempt.
+
+        Verifies: REQ-051
+        """
+        names = self._names('''
+            from typing import Protocol
+
+
+            class Reader(Protocol):
+                """Reads text."""
+
+                def read(self, path: str) -> str:
+                    """Read the file at path."""
+                    _ = path
+                    ...
+        ''')
+        assert names == {"Reader.read"}

@@ -412,6 +412,8 @@ def _spec_valid_result(
 def extract_implementations(source: str) -> list[tuple[str, str, int]]:
     """Extract `Implements:` references from function, method, or class docstrings.
 
+    Implements: REQ-053
+
     Args:
         source: Python source code as a string.
 

@@ -47,6 +47,12 @@ use `SerenecodeConfig` in the Python API for explicit thresholds.
 
 The default threshold is 80% for both per-function line and branch coverage.
 Pytest collection errors and test failures block L3 independently of coverage.
+A `typing.Protocol` method whose body is exactly `...` (with or without a
+docstring) is not a coverage target at all: that body never executes, so its
+figure would record whether the module was imported — 0% when nothing imports
+it, 100% when something does — and never whether an implementation was
+exercised. A Protocol method with a real body, and a `...` body in a class
+that is not a Protocol, both still count.
 Install the project's dependencies in the interpreter shown by `serenecode doctor`.
 Doctor discovers backend packages; it does not run each backend as a health check.
 
@@ -89,6 +95,7 @@ runtime ordering, data flow, or requirement behavior.
 
 ## Spec ergonomics
 
+- **Where tags are read:** `Implements:` and `Verifies:` are recognised on function and class docstrings. One tag may list several identifiers, comma-separated, mixing `REQ-` and `INT-`. A tag in a *module* docstring is not read; it is reported as a misplaced tag rather than silently ignored, because the only other symptom is the item being reported as having no implementation and no test.
 - **Narrative vs traceability:** PRDs, `README` sections, and `*_SPEC.md` files are inputs. REQ/INT traceability and `serenecode check --spec` use project-root **SPEC.md** by default; `--spec PATH` explicitly selects a structured spec elsewhere. A structured spec must include a `**Source:** …` line (see the Spec Traceability section in your project's `SERENECODE.md` from `serenecode init`, or the embedded templates in `src/serenecode/templates/content.py`). Run `serenecode doctor` to see whether SPEC.md and narrative-looking files were detected at the project root.
 - Use **one primary target per comma segment**; avoid stuffing unrelated names into a single `Target` line unless you intend AND semantics.
 - Align **dotted names** with how types appear in code (`from pkg import X as Y` is easier to reason about when `Target` uses the same simple name the implementation calls).

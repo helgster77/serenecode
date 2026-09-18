@@ -31,7 +31,7 @@ Function-scoped MCP checks currently run the **file pipeline**, then select find
 
 Normal runs start at L1. `--structural` requests L1 only; `--verify` starts at L3 and omits L1–L2. The Python pipeline can also start at a later stage. A later successful stage cannot erase an earlier incomplete stage in the requested run. For nonempty source scopes, L3–L5 each need at least one passing record, with no failed or skipped records; empty or exclusively exempt stage results do not demonstrate execution.
 
-L3 fails when pytest fails, even if coverage is 100%. Both line and branch coverage must meet the per-function threshold (80% by default). Reports include uncovered paths and suggested tests; mock recommendations are heuristics to review, not requirements that all I/O must be mocked.
+L3 fails when pytest fails, even if coverage is 100%. Both line and branch coverage must meet the per-function threshold (80% by default). A `typing.Protocol` method whose body is exactly `...` is not a coverage target: that body never runs, so the figure would report whether the module was imported rather than whether anything was exercised. A Protocol method with a real body still counts. Reports include uncovered paths and suggested tests; mock recommendations are heuristics to review, not requirements that all I/O must be mocked.
 
 L4 uses a default budget of up to 100 generated examples per function. Its built-in strategies cover restricted domains, not every value accepted by a Python type; a precondition comparing a numeric parameter against a numeric literal narrows that domain directly, including strict inequalities such as `0.0 < x < 1.0`. When no satisfying input can be generated, the finding is reported as skipped — nothing was verified — rather than as a failure, because that is a limit of the generator and not evidence of a defect. L5 has default budgets of 30 seconds per condition, 10 seconds per path, and 300 seconds per module. Neither a property-test pass nor “no counterexample found within analysis bounds” is proof of correctness. See [verification semantics](docs/VERIFICATION_LEVELS.md) for strategy domains and target eligibility.
 
@@ -47,7 +47,11 @@ condition over `*args` or `**kwargs`, a condition naming a parameter the
 signature does not have, or `@icontract.ensure(lambda result: ...)` on a
 function annotated `-> None` is reported as a failure rather than counted as a
 satisfied contract. Condition parameters carrying a default are treated as
-captured constants and left alone.
+captured constants and left alone. Where a parameter's annotated domain is
+already entirely valid — a `bool`, a closed `Enum` — a
+`# no-precondition: <reason>` comment above the `def` or the topmost decorator
+waives the precondition requirement for that function; the reason is
+mandatory, so a bare marker waives nothing.
 
 Likely-dead-code advisories are suppressed for definitions whose callers a
 name-based scan cannot see: functions carrying a registering decorator

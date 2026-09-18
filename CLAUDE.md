@@ -2,7 +2,7 @@
 
 All code in this project MUST follow the same standards SereneCode ships to users: the embedded templates in `src/serenecode/templates/content.py` (default / strict / minimal) define the conventions the structural checker enforces. Read the relevant template before writing or modifying any code. Non-exempt public production functions with caller-supplied inputs must have icontract preconditions, and public production functions must have postconditions. Classes with state need meaningful invariants. Test functions follow test-quality rules without production contract, annotation, or docstring requirements. Follow the architectural patterns specified there.
 
-Pre-existing `*_SPEC.md` or PRD files are narrative inputs; project-root `SPEC.md` with REQ/INT identifiers is auto-discovered for traceability; `--spec PATH` can select a structured spec elsewhere.
+Pre-existing `*_SPEC.md` or PRD files are narrative inputs; project-root `SPEC.md` with REQ/INT identifiers is auto-discovered for traceability; `--spec PATH` can select a structured spec elsewhere. `Implements:` and `Verifies:` tags are read from function and class docstrings only, and one tag may list several comma-separated identifiers; a tag in a module docstring is inert and is reported as misplaced.
 
 ### Verification (prefer MCP while editing)
 
@@ -76,6 +76,10 @@ Level 1 rejects conditions over `*args` / `**kwargs` (use icontract's `_ARGS`
 and `_KWARGS` placeholders instead), conditions naming a parameter that does
 not exist, and `lambda result: ...` on a function annotated `-> None` — none
 of these is enforceable as written.
+
+Where a parameter's annotated domain is already entirely valid, waive the
+precondition with `# no-precondition: <reason>` above the `def` or the topmost
+decorator rather than writing a type-shaped tautology. The reason is mandatory.
 
 Protocol classes and stateless adapters do not need `@icontract.invariant`. Add `# no-invariant: <reason>` above the class definition if the class has no state to constrain.
 

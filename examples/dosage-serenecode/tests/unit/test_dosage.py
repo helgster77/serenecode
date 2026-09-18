@@ -1,6 +1,7 @@
 """Tests for dose calculation and renal adjustment functions.
 
-Verifies: REQ-006, REQ-007, REQ-008, REQ-009, REQ-010,
+Requirements verified here, each tagged on its own test below:
+REQ-006, REQ-007, REQ-008, REQ-009, REQ-010,
           REQ-011, REQ-012, REQ-013, REQ-014, REQ-015, REQ-016
 """
 

@@ -74,6 +74,7 @@ def check_contracts(
     config: SerenecodeConfig,
     aliases: IcontractNames,
     file_path: str,
+    source: str = "",
 ) -> list[FunctionResult]:
     """Check that public functions have icontract require/ensure decorators.
 
@@ -82,6 +83,7 @@ def check_contracts(
         config: Active configuration.
         aliases: Resolved icontract import names.
         file_path: Path to the source file (for reporting).
+        source: Original source code, for opt-out comment lookup.
 
     Returns:
         List of FunctionResult for each function checked.
@@ -96,7 +98,7 @@ def check_contracts(
         if _has_property_decorator(node):
             continue
 
-        details = _check_single_function_contracts(node, config, aliases)
+        details = _check_single_function_contracts(node, config, aliases, source)
         status = CheckStatus.PASSED if not details else CheckStatus.FAILED
         results.append(FunctionResult(
             function=node.name, file=file_path, line=node.lineno,
@@ -909,7 +911,7 @@ def _run_all_structural_checks(
     """
     results: list[FunctionResult] = []
     if not _is_test_file_path(file_path):
-        results.extend(check_contracts(tree, config, aliases, file_path))
+        results.extend(check_contracts(tree, config, aliases, file_path, source))
         results.extend(check_contract_bindings(tree, aliases, file_path))
         results.extend(check_class_invariants(tree, config, aliases, file_path, source))
         results.extend(check_type_annotations(tree, config, file_path))

@@ -1,6 +1,7 @@
 """Tests for daily safety and contraindication check functions.
 
-Verifies: REQ-017, REQ-018, REQ-019, REQ-020, REQ-021, REQ-022, REQ-023, REQ-024
+Requirements verified here, each tagged on its own test below:
+REQ-017, REQ-018, REQ-019, REQ-020, REQ-021, REQ-022, REQ-023, REQ-024
 """
 
 import icontract

@@ -1,6 +1,7 @@
 """Tests for domain models and their invariants.
 
-Verifies: REQ-001, REQ-002, REQ-003, REQ-004, REQ-005, REQ-025
+Requirements verified here, each tagged on its own test below:
+REQ-001, REQ-002, REQ-003, REQ-004, REQ-005, REQ-025
 """
 
 import icontract
