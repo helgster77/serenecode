@@ -4,7 +4,7 @@
 
 **Source:** Implementation plan derived from codebase exploration (2026-04-13).
 
-**Scope:** This specification covers the module-health feature (REQ-001–REQ-036, INT-001–INT-004) and the contract-binding checks of REQ-037–REQ-042 and INT-005, not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
+**Scope:** This specification covers the module-health feature (REQ-001–REQ-036, INT-001–INT-004) and the contract-enforcement and tooling corrections of REQ-037–REQ-047 and INT-005, not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
 
 ---
 
@@ -290,6 +290,53 @@ at every verification level that runs Level 1 and participate in early
 termination like any other Level 1 failure.
 
 ---
+
+## CLI and Output Corrections
+
+### REQ-043: --format json writes only the JSON document to stdout
+
+With `--format json`, stdout carries the JSON document and nothing else:
+progress lines, the wall-time trailer, and every diagnostic go to stderr, so
+that `serenecode check ... --format json` can be piped straight into a JSON
+parser.
+
+### REQ-044: serenecode init runs unattended
+
+`serenecode init` accepts `--level {minimal,default,strict}`,
+`--spec {existing,generate}`, `--mcp/--no-mcp`, and `--yes`. A prompt is
+skipped when its flag is supplied; `--yes` answers every remaining prompt with
+its recommended default. When no prompt remains, `init` completes without
+reading stdin. Overwriting an existing `SERENECODE.md` or `CLAUDE.md` requires
+`--yes`: without it and with no interactive session to ask, the existing file
+is left in place and the reason is printed.
+
+### REQ-045: dead-code advisories are suppressed for unreachable-by-name definitions
+
+A dead-code advisory for a `function` or `method` symbol is suppressed when
+the definition carries a decorator that hands it to something else — any
+decorator outside a small inert allowlist such as `property`, `staticmethod`,
+`abstractmethod` and the icontract decorators — or when the definition
+overrides a method declared by a base class resolvable within the scanned
+source set, or carries `@override`. Suppression is keyed on
+`(file path, symbol name, line)` for every line a backend might attribute to
+the definition: the `def` line and each decorator line. Advisories for
+variables, attributes, imports, and classes are unaffected.
+
+### REQ-046: exempt summary names its advisory subset
+
+The human summary renders the advisory count inside the exempt figure —
+`57 exempt (33 advisory)` — because advisories are a subset of the exempt
+count rather than a separate bucket. When no advisories are present the
+exempt figure is rendered alone.
+
+### REQ-047: dead-code findings use the caller's path spelling
+
+Vulture absolutizes every path it is given, so its findings must be mapped
+back to the matching `SourceFile.file_path` before being reported. A single
+report therefore spells each file one way, whether the finding came from the
+structural checker or the dead-code backend. Matching is textual — a core
+module cannot touch the filesystem — and a path that matches nothing is
+reported unchanged.
 
 ## INT-005: Contract binding check integration
 

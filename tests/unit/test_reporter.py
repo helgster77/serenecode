@@ -298,3 +298,60 @@ class TestFormatHtml:
         output = format_html(result)
         assert "Counterexample" in output
         assert "x" in output
+
+
+class TestExemptSummaryRendering:
+    """The summary must not read as if exempt and advisory were addends."""
+
+    @staticmethod
+    def _summary_line(*results: FunctionResult) -> str:
+        rendered = format_human(make_check_result(results, level_requested=1, duration_seconds=0.0))
+        return next(
+            line for line in rendered.splitlines() if line.startswith(("0 checked", "1 checked", "2 checked"))
+        )
+
+    @staticmethod
+    def _advisory(function: str, line: int) -> FunctionResult:
+        return FunctionResult(
+            function=function,
+            file="src/big.py",
+            line=line,
+            level_requested=1,
+            level_achieved=1,
+            status=CheckStatus.EXEMPT,
+            details=(Detail(
+                level=VerificationLevel.STRUCTURAL,
+                tool="dead_code",
+                finding_type="dead_code",
+                message=f"unused function '{function}'",
+                suggestion="Remove or allowlist it.",
+            ),),
+        )
+
+    @staticmethod
+    def _plain_exempt(function: str, line: int) -> FunctionResult:
+        return FunctionResult(
+            function=function,
+            file="src/ports.py",
+            line=line,
+            level_requested=1,
+            level_achieved=1,
+            status=CheckStatus.EXEMPT,
+        )
+
+    def test_advisories_are_nested_inside_the_exempt_count(self) -> None:
+        """Advisories read as a subset of exempt, not a separate bucket.
+
+        Verifies: REQ-046
+        """
+        line = self._summary_line(self._advisory("a", 1), self._plain_exempt("b", 2))
+        assert "2 exempt (1 advisory)" in line
+
+    def test_exempt_without_advisories_renders_alone(self) -> None:
+        """No parenthetical when there is nothing to qualify.
+
+        Verifies: REQ-046
+        """
+        line = self._summary_line(self._plain_exempt("b", 2))
+        assert "1 exempt" in line
+        assert "advisory" not in line

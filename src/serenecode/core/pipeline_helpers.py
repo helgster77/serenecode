@@ -13,6 +13,11 @@ from typing import TYPE_CHECKING
 import icontract
 
 from serenecode.contracts.predicates import is_non_empty_string
+from serenecode.core.dead_code_filter import (
+    is_suppressed_dead_code,
+    registered_symbol_sites,
+    resolve_report_path,
+)
 from serenecode.models import (
     CheckStatus,
     Detail,
@@ -73,12 +78,27 @@ def run_dead_code_analysis(
             f"Dead-code analysis unavailable: {exc}",
         )]
 
+    suppression_sites = registered_symbol_sites(tuple(
+        (source_file.file_path, source_file.source)
+        for source_file in source_files
+    ))
+    known_paths = tuple(source_file.file_path for source_file in source_files)
+
     results: list[FunctionResult] = []
     # Loop invariant: results contains dead-code findings for findings[0..i]
     for finding in findings:
+        report_path = resolve_report_path(finding.file_path, known_paths)
+        if is_suppressed_dead_code(
+            report_path,
+            finding.symbol_name,
+            finding.line,
+            finding.symbol_type,
+            suppression_sites,
+        ):
+            continue
         results.append(FunctionResult(
             function=finding.symbol_name,
-            file=finding.file_path,
+            file=report_path,
             line=finding.line,
             level_requested=1,
             level_achieved=1,

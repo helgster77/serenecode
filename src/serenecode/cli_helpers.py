@@ -549,3 +549,137 @@ def _determine_exit_code(check_result: CheckResult) -> int:
     if check_result.level_achieved < check_result.level_requested:
         return min(check_result.level_achieved + 1, ExitCode.COMPOSITIONAL)
     return ExitCode.STRUCTURAL  # default to structural
+
+
+# ---------------------------------------------------------------------------
+# init command: prompt resolution
+# ---------------------------------------------------------------------------
+
+
+_INIT_TEMPLATE_BY_CHOICE = {1: "minimal", 2: "default", 3: "strict"}
+
+
+@icontract.require(
+    lambda spec_choice: spec_choice is None or spec_choice in ("existing", "generate"),
+    "spec_choice must be a known spec mode or None",
+)
+@icontract.require(lambda assume_yes: isinstance(assume_yes, bool), "assume_yes must be a bool")
+@icontract.ensure(lambda result: result in ("existing", "generate"), "result must be a spec mode")
+def _resolve_init_spec_mode(spec_choice: str | None, assume_yes: bool) -> str:
+    """Resolve the spec mode from a flag, or prompt for it.
+
+    Implements: REQ-044
+    """
+    if spec_choice is not None:
+        return spec_choice
+    if assume_yes:
+        return "generate"
+
+    click.echo("Will you be building this project from a spec?")
+    click.echo("")
+    click.echo("  [1] I already have requirements in a document (any name)")
+    click.echo("      Narrative PRDs and *_SPEC.md are inputs only. You must still")
+    click.echo("      produce SPEC.md with REQ/INT identifiers — the auto-discovered")
+    click.echo("      traceability spec for SereneCode.")
+    click.echo("")
+    click.echo("  [2] I'll write the spec with my coding assistant (recommended)")
+    click.echo("      Your assistant will help you write SPEC.md with")
+    click.echo("      requirement identifiers, then implement from it.")
+    click.echo("")
+    choice = click.prompt("Choose", type=click.IntRange(1, 2), default=2)
+    click.echo("")
+    return "existing" if choice == 1 else "generate"
+
+
+@icontract.require(
+    lambda level_choice: level_choice is None or level_choice in ("minimal", "default", "strict"),
+    "level_choice must be a known template or None",
+)
+@icontract.require(lambda assume_yes: isinstance(assume_yes, bool), "assume_yes must be a bool")
+@icontract.ensure(
+    lambda result: result in ("minimal", "default", "strict"),
+    "result must be a template name",
+)
+def _resolve_init_template(level_choice: str | None, assume_yes: bool) -> str:
+    """Resolve the template from a flag, or prompt for it.
+
+    Implements: REQ-044
+    """
+    if level_choice is not None:
+        return level_choice
+    if assume_yes:
+        return "default"
+
+    click.echo("What verification level would you like?")
+    click.echo("")
+    click.echo("  [1] Minimal  (Level 2)")
+    click.echo("      Contracts and types only. Fast structural checks.")
+    click.echo("      Best for: prototypes, scripts, small utilities.")
+    click.echo("")
+    click.echo("  [2] Default  (Level 4)")
+    click.echo("      Contracts + types + test coverage + property testing.")
+    click.echo("      Best for: most production projects. (recommended)")
+    click.echo("")
+    click.echo("  [3] Strict   (Level 6)")
+    click.echo("      All of the above + symbolic + compositional verification.")
+    click.echo("      Adds bounded symbolic search and architectural checks; not certification.")
+    click.echo("")
+    choice = click.prompt("Choose", type=click.IntRange(1, 3), default=2)
+    click.echo("")
+    return _INIT_TEMPLATE_BY_CHOICE[choice]
+
+
+@icontract.require(
+    lambda mcp_flag: mcp_flag is None or isinstance(mcp_flag, bool),
+    "mcp_flag must be a bool or None",
+)
+@icontract.require(lambda assume_yes: isinstance(assume_yes, bool), "assume_yes must be a bool")
+@icontract.ensure(lambda result: isinstance(result, bool), "result must be a bool")
+def _resolve_init_mcp_setup(mcp_flag: bool | None, assume_yes: bool) -> bool:
+    """Resolve whether to print MCP setup from a flag, or prompt for it.
+
+    Implements: REQ-044
+    """
+    if mcp_flag is not None:
+        return mcp_flag
+    if assume_yes:
+        return True
+
+    click.echo("Set up the Serenecode MCP server for your AI coding assistant?")
+    click.echo("")
+    click.echo("  The MCP server lets your assistant call Serenecode tools while")
+    click.echo("  it writes code — verifying contracts, running tests, and catching")
+    click.echo("  findings inside its edit loop instead of waiting until the end.")
+    click.echo("  Works with Claude Code, Cursor, Cline, Continue, and any other")
+    click.echo("  MCP client. Highly recommended for AI-driven development.")
+    click.echo("")
+    confirmed = click.confirm("Set up MCP?", default=True)
+    click.echo("")
+    return confirmed
+
+
+@icontract.require(lambda assume_yes: isinstance(assume_yes, bool), "assume_yes must be a bool")
+@icontract.require(lambda interactive: isinstance(interactive, bool), "interactive must be a bool")
+@icontract.ensure(lambda result: result is None or callable(result), "result must be a callback or None")
+def _init_confirm_callback(
+    assume_yes: bool,
+    interactive: bool,
+) -> Callable[[str], bool] | None:
+    """Build the overwrite-confirmation callback for `serenecode init`.
+
+    Implements: REQ-044
+
+    With `--yes`, overwrites are confirmed without asking. When every prompt
+    was answered by a flag there is nobody to ask, so an existing file is
+    left alone and the reason is printed rather than prompting into a pipe.
+    """
+    if assume_yes:
+        return None
+    if interactive:
+        return lambda message: click.confirm(message, default=True)
+
+    def decline(message: str) -> bool:
+        click.echo(f"{message} no — pass --yes to overwrite.")
+        return False
+
+    return decline

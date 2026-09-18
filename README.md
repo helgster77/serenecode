@@ -162,6 +162,9 @@ The CLI, library API, and MCP tools use the same pipeline. JSON output includes 
 
 ```bash
 serenecode init [<path>]                                                # interactive setup
+                [--level minimal|default|strict]                        #   preset, skips the prompt
+                [--spec existing|generate] [--mcp|--no-mcp]             #   remaining answers
+                [--yes]                                                 #   unattended: defaults + overwrite
 serenecode doctor                                                       # backend availability, MCP setup, spec discovery
 serenecode spec <SPEC.md>                                               # validate spec readiness
                 [--format human|json]

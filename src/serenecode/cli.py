@@ -47,6 +47,10 @@ from serenecode.cli_helpers import (
     _load_check_config,
     _resolve_effective_level,
     _discover_sources_and_spec,
+    _init_confirm_callback,
+    _resolve_init_mcp_setup,
+    _resolve_init_spec_mode,
+    _resolve_init_template,
 )
 
 
@@ -58,81 +62,83 @@ def main() -> None:
 
 @main.command()
 @click.argument("path", default=".")
+@click.option(
+    "--level",
+    "level_choice",
+    type=click.Choice(["minimal", "default", "strict"]),
+    default=None,
+    help="Template to install, skipping the verification-level prompt.",
+)
+@click.option(
+    "--spec",
+    "spec_choice",
+    type=click.Choice(["existing", "generate"]),
+    default=None,
+    help=(
+        "Whether requirements already exist ('existing') or will be written "
+        "with a coding assistant ('generate'), skipping the spec prompt."
+    ),
+)
+@click.option(
+    "--mcp/--no-mcp",
+    "mcp_flag",
+    default=None,
+    help="Print (or omit) the MCP setup snippet, skipping the MCP prompt.",
+)
+@click.option(
+    "--yes",
+    "-y",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    help=(
+        "Answer every remaining prompt with its recommended default and "
+        "overwrite an existing SERENECODE.md or CLAUDE.md."
+    ),
+)
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")
 @icontract.ensure(lambda result: result is None, "CLI commands return None")
-def init(path: str) -> None:
-    """Initialize a Serenecode project."""
-    click.echo("")
-    click.echo("Welcome to Serenecode!")
-    click.echo("")
+def init(
+    path: str,
+    level_choice: str | None,
+    spec_choice: str | None,
+    mcp_flag: bool | None,
+    assume_yes: bool,
+) -> None:
+    """Initialize a Serenecode project.
 
-    # Question 1: Spec
-    click.echo("Will you be building this project from a spec?")
-    click.echo("")
-    click.echo("  [1] I already have requirements in a document (any name)")
-    click.echo("      Narrative PRDs and *_SPEC.md are inputs only. You must still")
-    click.echo("      produce SPEC.md with REQ/INT identifiers — the auto-discovered")
-    click.echo("      traceability spec for SereneCode.")
-    click.echo("")
-    click.echo("  [2] I'll write the spec with my coding assistant (recommended)")
-    click.echo("      Your assistant will help you write SPEC.md with")
-    click.echo("      requirement identifiers, then implement from it.")
-    click.echo("")
-    spec_choice = click.prompt("Choose", type=click.IntRange(1, 2), default=2)
-    spec_mode = "existing" if spec_choice == 1 else "generate"
-    click.echo("")
+    Implements: REQ-044
 
-    # Question 2: Level
-    click.echo("What verification level would you like?")
-    click.echo("")
-    click.echo("  [1] Minimal  (Level 2)")
-    click.echo("      Contracts and types only. Fast structural checks.")
-    click.echo("      Best for: prototypes, scripts, small utilities.")
-    click.echo("")
-    click.echo("  [2] Default  (Level 4)")
-    click.echo("      Contracts + types + test coverage + property testing.")
-    click.echo("      Best for: most production projects. (recommended)")
-    click.echo("")
-    click.echo("  [3] Strict   (Level 6)")
-    click.echo("      All of the above + symbolic + compositional verification.")
-    click.echo("      Adds bounded symbolic search and architectural checks; not certification.")
-    click.echo("")
-    level_choice = click.prompt("Choose", type=click.IntRange(1, 3), default=2)
-    template = {1: "minimal", 2: "default", 3: "strict"}[level_choice]
-    click.echo("")
+    Runs unattended when every answer is supplied by a flag, or when --yes
+    selects the recommended default for the answers that are missing.
+    """
+    interactive = not assume_yes and (
+        spec_choice is None or level_choice is None or mcp_flag is None
+    )
+    if interactive:
+        click.echo("")
+        click.echo("Welcome to Serenecode!")
+        click.echo("")
 
-    # Question 3: MCP server
-    click.echo("Set up the Serenecode MCP server for your AI coding assistant?")
-    click.echo("")
-    click.echo("  The MCP server lets your assistant call Serenecode tools while")
-    click.echo("  it writes code — verifying contracts, running tests, and catching")
-    click.echo("  findings inside its edit loop instead of waiting until the end.")
-    click.echo("  Works with Claude Code, Cursor, Cline, Continue, and any other")
-    click.echo("  MCP client. Highly recommended for AI-driven development.")
-    click.echo("")
-    setup_mcp = click.confirm("Set up MCP?", default=True)
-    click.echo("")
+    spec_mode = _resolve_init_spec_mode(spec_choice, assume_yes)
+    template = _resolve_init_template(level_choice, assume_yes)
+    setup_mcp = _resolve_init_mcp_setup(mcp_flag, assume_yes)
 
-    # Final notice before writing files. Existing SERENECODE.md / CLAUDE.md
-    # are protected by the confirm_callback inside initialize_project — this
-    # text is informational, not a separate confirmation step.
-    click.echo("Note: your choices will be written to SERENECODE.md and become the")
-    click.echo("contract between you, your coding assistant, and the verification")
-    click.echo("tool. Revise conventions deliberately and rerun checks when they change.")
-    click.echo("")
-
-    reader = LocalFileReader()
-    writer = LocalFileWriter()
-
-    def confirm(message: str) -> bool:
-        return click.confirm(message, default=True)
+    if interactive:
+        # Final notice before writing files. Existing SERENECODE.md / CLAUDE.md
+        # are protected by the confirm_callback inside initialize_project — this
+        # text is informational, not a separate confirmation step.
+        click.echo("Note: your choices will be written to SERENECODE.md and become the")
+        click.echo("contract between you, your coding assistant, and the verification")
+        click.echo("tool. Revise conventions deliberately and rerun checks when they change.")
+        click.echo("")
 
     result = initialize_project(
         directory=path,
         template=template,
-        file_reader=reader,
-        file_writer=writer,
-        confirm_callback=confirm,
+        file_reader=LocalFileReader(),
+        file_writer=LocalFileWriter(),
+        confirm_callback=_init_confirm_callback(assume_yes, interactive),
         spec_mode=spec_mode,
     )
 
@@ -389,7 +395,7 @@ def check(  # allow-many-params: Click requires one parameter per CLI flag
 ) -> None:
     """Run verification checks on Python source files.
 
-    Implements: REQ-031, REQ-032, INT-003
+    Implements: REQ-031, REQ-032, REQ-043, INT-003
     """
     wall_start = time.monotonic()
     reader = LocalFileReader()

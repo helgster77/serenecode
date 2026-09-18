@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 import icontract
 
+from serenecode.contracts.predicates import is_non_empty_string
 from serenecode.models import (
     ADVISORY_FINDING_TYPES,
     CheckResult,
@@ -309,6 +310,28 @@ def _format_human_func_results(
                 lines.append(f"           counterexample: {detail.counterexample}")
 
 
+@icontract.require(
+    lambda summary: summary.exempt_count > 0,
+    "summary must have at least one exempt result",
+)
+@icontract.ensure(lambda result: is_non_empty_string(result), "result must be a non-empty string")
+def _format_exempt_part(summary: CheckSummary) -> str:
+    """Render the exempt count, naming the advisory subset it contains.
+
+    Implements: REQ-046
+
+    Advisories are a subset of the exempt count, not a separate bucket, so
+    they are rendered inside the exempt figure rather than beside it where
+    the two read as addends.
+    """
+    if summary.advisory_count == 0:
+        return f"{summary.exempt_count} exempt"
+    return (
+        f"{summary.exempt_count} exempt "
+        f"({summary.advisory_count} advisory)"
+    )
+
+
 @icontract.require(lambda lines: isinstance(lines, list), "lines must be a list")
 @icontract.require(
     lambda summary: summary.total_functions >= 0,
@@ -325,8 +348,8 @@ def _format_human_summary(lines: list[str], summary: CheckSummary) -> None:
         f"{summary.skipped_count} skipped",
     ]
     if summary.exempt_count > 0:
-        summary_parts.append(f"{summary.exempt_count} exempt")
-    if summary.advisory_count > 0:
+        summary_parts.append(_format_exempt_part(summary))
+    elif summary.advisory_count > 0:
         summary_parts.append(f"{summary.advisory_count} advisory")
     lines.append(", ".join(summary_parts))
     lines.append(f"Duration: {summary.duration_seconds:.3f}s")
