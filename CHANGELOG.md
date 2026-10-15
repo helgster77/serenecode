@@ -4,6 +4,15 @@ Releases before 0.6.0 are recorded in the repository's
 [commit history](https://github.com/helgster77/serenecode/commits/main) and
 [tags](https://github.com/helgster77/serenecode/tags).
 
+## Unreleased
+
+### Added
+
+- An agent skill at `skills/serenecode/SKILL.md` that packages the
+  spec-first, contract, and verification workflow for SKILL.md-compatible
+  agents. A unit test checks every MCP tool, CLI command, flag, and preset
+  depth that the skill names against the server, the CLI, and the configs.
+
 ## 0.6.0 — 2026-09-18
 
 Level 1 and Level 4 both changed behaviour in ways that can move a project's

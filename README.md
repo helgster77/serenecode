@@ -187,6 +187,23 @@ Function checks accept qualified names such as `Calculator.total`. Missing or am
 
 The server exposes `serenecode://config`, `serenecode://findings/last-run`, `serenecode://exempt-modules`, `serenecode://reqs`, and `serenecode://integrations`. These resources provide session/configuration context; they are not a persistent cache of verified source revisions.
 
+## Agent skill
+
+[`skills/serenecode/SKILL.md`](skills/serenecode/SKILL.md) packages the workflow
+as a SKILL.md skill: checking that the tool is installed, writing the spec first,
+writing enforceable contracts, verifying at each level, and reporting the verdict.
+It is meant for projects that have not yet run `serenecode init`, and for agents
+that load skills rather than `CLAUDE.md`. To install it for Claude Code, copy the
+`skills/serenecode/` folder into `~/.claude/skills/` or the project's
+`.claude/skills/`.
+
+The skill only instructs the agent. The checks still come from the installed
+package, and once `SERENECODE.md` exists its conventions take precedence over
+the skill. The skill describes the latest PyPI release. A unit test fails if it
+names an MCP tool, CLI command, or flag that does not exist, or a preset depth
+that the configs do not use. The test does not compare the skill's prose rules
+with the templates.
+
 ## Python API and results
 
 ```python
