@@ -58,5 +58,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev --extra mcp
 
+      # Level 3 runs the whole suite under coverage in one subprocess. On hosted
+      # runners that has taken 380-485s, and exceeded the 600s default once the
+      # suite ran with contracts enforced, so the budget is raised here.
       - name: SereneCode full self-check (Level 6)
-        run: uv run serenecode check src --level 6 --allow-code-execution
+        run: uv run serenecode check src --level 6 --allow-code-execution --coverage-timeout 1200
