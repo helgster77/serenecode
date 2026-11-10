@@ -27,7 +27,36 @@ counts can be quoted again. Measured after that work, on the same machine:
   the example; this run covers `src` only).
 
 The L5/L6 stages, the example-project runs, and the icontract decorator count
-in the tables below have not been re-measured.
+in the tables below were not re-measured in that pass.
+
+**Re-measured on 10 November 2026**, on an uncommitted working tree based on
+`665e32f` (`0.6.0`) that contains the verdict-soundness work of
+`REQ-054`–`REQ-070`. Same machine, Python 3.13.12:
+
+- Root `SPEC.md` holds **70 requirements and 5 integration points** (was 53
+  and 5).
+- `pytest --collect-only -q` collects **2012 tests** (was 1877).
+- `pytest -q`: **2012 passed**, 0 skipped, exit 0, 5m 30s.
+- `serenecode check src --level 6 --allow-code-execution --format json`: exit
+  **0**, achieved **L6**, **complete**, 1,276 records — 774 passed, 0 failed,
+  0 skipped, 502 exempt including 107 advisories. Wall time 10m 37.4s.
+- `mypy src examples/dosage-serenecode/src`: passed on **68 source files**.
+- `examples/dosage-serenecode`: `pytest -q` 67 passed; the L6 command exited 0,
+  complete, L6, with 47 passed records, 0 failed, 0 skipped, 7 exempt including
+  4 advisories. `examples/dosage-regular`: `pytest -q` 59 passed.
+
+Two things about this run differ in kind from the earlier ones. CrossHair is no
+longer imported into the SereneCode process (`REQ-054`), so icontract contracts
+are enforced during Level 4 inside a Level 5 or Level 6 run and throughout the
+test suite; before, they were switched off in both. And Level 4 input
+generation is unseeded, so a rare counterexample can appear in one run and not
+the next: one such finding (a whitespace-only name accepted by the Level 6
+dataclasses) appeared once in 24 strict Level 4 runs, was fixed, and did not
+recur in 36 further runs. A passing run is evidence within those bounds, not a
+proof that no further rare input exists.
+
+The icontract decorator count and the wheel-installation check below have not
+been re-measured.
 
 ## Framework
 

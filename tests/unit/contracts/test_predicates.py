@@ -14,6 +14,7 @@ from serenecode.contracts.predicates import (
     is_pascal_case,
     is_positive_int,
     is_snake_case,
+    is_test_module_path,
     is_upper_snake_case,
     is_valid_exit_code,
     is_valid_file_path_string,
@@ -177,3 +178,41 @@ class TestIsValidTemplateName:
     @pytest.mark.parametrize("name", ["", "custom", "DEFAULT", "Strict"])
     def test_rejects_invalid_templates(self, name: str) -> None:
         assert is_valid_template_name(name) is False
+
+
+class TestIsTestModulePath:
+    """Tests for the shared test-file predicate.
+
+    Verifies: REQ-055
+    """
+
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "tests/unit/test_calc.py",
+            "tests/helpers.py",
+            "pkg/tests/data.py",
+            "pkg/test_calc.py",
+            "conftest.py",
+            "pkg/conftest.py",
+            "tests\\unit\\foo.py",
+            "./tests/foo.py",
+        ],
+    )
+    def test_accepts_project_relative_test_paths(self, module_path: str) -> None:
+        assert is_test_module_path(module_path) is True
+
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "",
+            ".",
+            "pkg/calc.py",
+            "pkg/testing.py",
+            "pkg/contests/entry.py",
+            "pkg/latest_tests.py",
+            "attests/calc.py",
+        ],
+    )
+    def test_rejects_production_paths(self, module_path: str) -> None:
+        assert is_test_module_path(module_path) is False

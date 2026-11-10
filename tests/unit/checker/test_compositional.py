@@ -1470,3 +1470,137 @@ class TestCheckCompositionalOrchestrator:
     def test_duration_recorded(self) -> None:
         result = check_compositional([], default_config())
         assert result.summary.duration_seconds >= 0
+
+
+class TestCompletenessHonoursLevelOneWaivers:
+    """Level 6 must not re-report what Level 1 deliberately accepts."""
+
+    _CLAMP = textwrap.dedent('''\
+        import icontract
+
+        {marker}
+        @icontract.ensure(lambda order, result: result.total <= order.total, "never grows")
+        def clamp(order: Order) -> Order:
+            return order
+    ''')
+
+    def _completeness_messages(self, marker: str) -> list[str]:
+        info = parse_module_info(self._CLAMP.format(marker=marker), "core/orders.py", "core/orders.py")
+        results = check_contract_completeness([info], default_config())
+        return [detail.message for result in results for detail in result.details]
+
+    def test_waived_precondition_is_not_reported(self) -> None:
+        """Verifies: REQ-065"""
+        messages = self._completeness_messages(
+            "# no-precondition: every Order is valid by its own invariant",
+        )
+        assert messages == []
+
+    def test_unwaived_precondition_is_still_reported(self) -> None:
+        """Verifies: REQ-065"""
+        messages = self._completeness_messages("")
+        assert len(messages) == 1
+        assert "missing @icontract.require" in messages[0]
+
+    def test_class_invariants_follow_the_configuration(self) -> None:
+        """Verifies: REQ-065"""
+        import dataclasses
+
+        info = parse_module_info(
+            "class Basket:\n    def __init__(self) -> None:\n        self.items = []\n",
+            "core/basket.py", "core/basket.py",
+        )
+        required = default_config()
+        not_required = dataclasses.replace(
+            required,
+            contract_requirements=dataclasses.replace(
+                required.contract_requirements, require_on_classes=False,
+            ),
+        )
+
+        with_rule = check_contract_completeness([info], required)
+        without_rule = check_contract_completeness([info], not_required)
+
+        assert any("missing @icontract.invariant" in d.message for r in with_rule for d in r.details)
+        assert not any("invariant" in d.message for r in without_rule for d in r.details)
+
+
+class TestLayerRuleSeesEveryImportForm:
+    """An import creates the dependency wherever the statement is written."""
+
+    def _violations(self, source: str) -> list[str]:
+        info = parse_module_info(source, "src/app/core/engine.py", "core/engine.py")
+        results = check_dependency_direction([info], default_config())
+        return [detail.message for result in results for detail in result.details]
+
+    def test_function_level_import_is_a_violation(self) -> None:
+        """Verifies: REQ-069"""
+        messages = self._violations(
+            "def load():\n    from app.adapters.db import connect\n    return connect\n",
+        )
+        assert any("imports from adapters: 'app.adapters.db'" in message for message in messages)
+
+    def test_guarded_imports_are_violations(self) -> None:
+        """Verifies: REQ-069"""
+        messages = self._violations(textwrap.dedent("""\
+            from typing import TYPE_CHECKING
+
+            if TYPE_CHECKING:
+                from app.adapters.db import Database
+
+            try:
+                import app.adapters.cache
+            except ImportError:
+                pass
+        """))
+        assert any("'app.adapters.db'" in message for message in messages)
+        assert any("'app.adapters.cache'" in message for message in messages)
+
+    def test_importing_the_layer_package_by_name_is_a_violation(self) -> None:
+        """`from .. import adapters` names the layer in the imported name.
+
+        Verifies: REQ-069
+        """
+        messages = self._violations("from .. import adapters\n")
+        assert any("imports from adapters: 'adapters'" in message for message in messages)
+
+    def test_dynamic_import_with_a_literal_is_a_violation(self) -> None:
+        """Verifies: REQ-069"""
+        messages = self._violations(
+            "import importlib\n\n\ndef load():\n    return importlib.import_module('app.adapters.db')\n",
+        )
+        assert any("'app.adapters.db'" in message for message in messages)
+
+    def test_clean_core_module_has_no_violation(self) -> None:
+        """Verifies: REQ-069"""
+        messages = self._violations(
+            "import ast\n\n\ndef load():\n    from app.core import models\n    return models, ast\n",
+        )
+        assert messages == []
+
+
+class TestLevelSixSkipsTestFiles:
+    """Contract presence, assume-guarantee and data flow apply to production code."""
+
+    def test_test_module_needs_no_contracts(self) -> None:
+        """Verifies: REQ-065"""
+        production = parse_module_info(
+            "import icontract\n\n\n"
+            "@icontract.require(lambda count: count >= 0, 'non-negative')\n"
+            "@icontract.ensure(lambda count, result: result > count, 'grows')\n"
+            "def successor(count: int) -> int:\n    return count + 1\n",
+            "calc.py", "calc.py",
+        )
+        test_module = parse_module_info(
+            "from calc import successor\n\n\ndef test_successor() -> None:\n    assert successor(1) == 2\n",
+            "tests/test_calc.py", "tests/test_calc.py",
+        )
+        modules = [production, test_module]
+
+        findings = [
+            *check_contract_completeness(modules, default_config()),
+            *check_assume_guarantee(modules, default_config()),
+            *check_data_flow(modules, default_config()),
+        ]
+
+        assert [r for r in findings if r.status == CheckStatus.FAILED] == []

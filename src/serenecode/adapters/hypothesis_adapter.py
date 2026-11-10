@@ -512,6 +512,8 @@ class HypothesisPropertyTester:
     ) -> PropertyFinding:
         """Test a single function with Hypothesis.
 
+        Implements: REQ-057
+
         Args:
             func_name: Name of the function.
             func: The function to test.
@@ -545,7 +547,12 @@ class HypothesisPropertyTester:
             )
         except icontract.ViolationError as exc:
             return _handle_violation(func_name, module_path, exc)
-        except Exception as exc:
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:
+            # SystemExit and the exception groups Hypothesis raises for several
+            # distinct failures are not Exception subclasses. Letting one escape
+            # would end the run with the target's exit code and no report.
             return _handle_generic_exception(func_name, module_path, exc)
 
     @icontract.require(lambda func: callable(func), "func must be callable")
@@ -642,7 +649,7 @@ def _handle_violation(
     lambda module_path: is_non_empty_string(module_path),
     "module_path must be a non-empty string",
 )
-@icontract.require(lambda exc: isinstance(exc, Exception), "exc must be an exception")
+@icontract.require(lambda exc: isinstance(exc, BaseException), "exc must be an exception")
 @icontract.ensure(
     lambda result: isinstance(result, PropertyFinding),
     "result must be a PropertyFinding",
@@ -650,14 +657,27 @@ def _handle_violation(
 def _handle_generic_exception(
     func_name: str,
     module_path: str,
-    exc: Exception,
+    exc: BaseException,
 ) -> PropertyFinding:
-    """Handle a generic exception that may wrap a ViolationError."""
+    """Handle a generic exception that may wrap a ViolationError.
+
+    Implements: REQ-057
+    """
     violation = _find_nested_violation(exc)
     if violation is not None:
         return _build_postcondition_finding(func_name, module_path, violation)
     if _HYPOTHESIS_AVAILABLE and isinstance(exc, Unsatisfiable):
         return _build_unsatisfiable_finding(func_name, module_path)
+    if not isinstance(exc, Exception):
+        return PropertyFinding(
+            function_name=func_name, module_path=module_path,
+            passed=False, finding_type="crash",
+            message=(
+                f"Function '{func_name}' raised {type(exc).__name__} during testing: {exc!r}. "
+                "Code under verification must not terminate the interpreter."
+            ),
+            exception_type=type(exc).__name__, exception_message=str(exc),
+        )
     return PropertyFinding(
         function_name=func_name, module_path=module_path,
         passed=False, finding_type="crash",

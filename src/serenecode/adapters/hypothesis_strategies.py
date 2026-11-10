@@ -70,7 +70,7 @@ def _get_strategy_for_annotation_with_seen(
     if annotation is type(None):
         return st.none()
 
-    known_strategy = _strategy_for_known_annotation(annotation, seen_classes)
+    known_strategy = _strategy_for_known_annotation(annotation)
     if known_strategy is not None:
         return known_strategy
 
@@ -305,30 +305,24 @@ def _is_example_models_module(module_name: str) -> bool:
     return module_name == "core.models" or module_name.endswith(".core.models")
 
 
-@icontract.require(
-    lambda seen_classes: isinstance(seen_classes, frozenset),
-    "seen_classes must be a frozenset",
-)
+@icontract.require(lambda annotation: annotation is not None, "annotation must be provided")
 @icontract.ensure(
     lambda result: result is None or hasattr(result, "map"),
     "result must be a Hypothesis strategy or None",
 )
-def _strategy_for_known_annotation(
-    annotation: type | object,
-    seen_classes: frozenset[type],
-) -> SearchStrategy | None:
+def _strategy_for_known_annotation(annotation: type | object) -> SearchStrategy | None:
     """Return tailored strategies for Serenecode's own domain types."""
     module_name = getattr(annotation, "__module__", "")
     type_name = getattr(annotation, "__name__", "")
 
     if module_name == "serenecode.config" and type_name == "SerenecodeConfig":
-        from serenecode.config import default_config, minimal_config, strict_config
-
-        return st.sampled_from([
-            default_config(),
-            strict_config(),
-            minimal_config(),
-        ])
+        # Use the factories beside the annotated class. When Serenecode checks
+        # itself that class is a freshly loaded copy, and an instance of this
+        # process's class would fail every isinstance contract on it.
+        namespace = getattr(inspect.unwrap(getattr(annotation, "__init__")), "__globals__", {})
+        factories = [namespace.get(name) for name in ("default_config", "strict_config", "minimal_config")]
+        if all(callable(factory) for factory in factories):
+            return st.sampled_from([cast(Callable[[], object], factory)() for factory in factories])
 
     if module_name == "serenecode.core.pipeline" and type_name == "SourceFile":
         return _strategy_for_source_file()
@@ -338,12 +332,6 @@ def _strategy_for_known_annotation(
 
     if _is_example_models_module(module_name):
         return _strategy_for_example_model_type(annotation, type_name)
-
-    if module_name == "serenecode.checker.structural" and type_name == "IcontractNames":
-        return _strategy_for_icontract_names()
-
-    if module_name == "serenecode.checker.compositional":
-        return _strategy_for_compositional_type(type_name, seen_classes)
 
     return None
 
@@ -612,8 +600,8 @@ def _strategy_for_source_file() -> SearchStrategy:
 
     return st.builds(
         SourceFile,
-        file_path=st.text(min_size=1, max_size=80),
-        module_path=st.text(min_size=1, max_size=80),
+        file_path=st.text(min_size=1, max_size=80).filter(lambda value: bool(value.strip()) and "\x00" not in value),
+        module_path=st.text(min_size=1, max_size=80).filter(lambda value: bool(value.strip()) and "\x00" not in value),
         source=st.text(min_size=0, max_size=200),
         importable_module=st.one_of(
             st.none(),
@@ -628,129 +616,6 @@ def _strategy_for_source_file() -> SearchStrategy:
             max_size=4,
         ).map(tuple),
     )
-
-
-@icontract.ensure(
-    lambda result: hasattr(result, "map"),
-    "result must be a Hypothesis strategy",
-)
-def _strategy_for_icontract_names() -> SearchStrategy:
-    """Build valid icontract alias sets for structural helper tests."""
-    from serenecode.checker.structural_helpers import IcontractNames
-
-    names = st.lists(
-        st.sampled_from([
-            "require",
-            "ensure",
-            "invariant",
-            "icontract.require",
-            "icontract.ensure",
-            "icontract.invariant",
-        ]),
-        unique=True,
-        max_size=3,
-    ).map(frozenset)
-
-    return st.builds(
-        IcontractNames,
-        module_alias=st.one_of(st.none(), st.text(min_size=1, max_size=12)),
-        require_names=names,
-        ensure_names=names,
-        invariant_names=names,
-    )
-
-
-@icontract.require(
-    lambda type_name: is_non_empty_string(type_name),
-    "type_name must be a non-empty string",
-)
-@icontract.require(
-    lambda seen_classes: isinstance(seen_classes, frozenset),
-    "seen_classes must be a frozenset",
-)
-@icontract.ensure(
-    lambda result: result is None or hasattr(result, "map"),
-    "result must be a Hypothesis strategy or None",
-)
-def _strategy_for_compositional_type(
-    type_name: str,
-    seen_classes: frozenset[type],
-) -> SearchStrategy | None:
-    """Return strategies for compositional-analysis dataclasses."""
-    from serenecode.checker.compositional import (
-        ClassInfo,
-        FunctionInfo,
-        MethodSignature,
-        ModuleInfo,
-        ParameterInfo,
-        ProtocolInfo,
-    )
-
-    method_signature = st.builds(
-        MethodSignature,
-        name=st.text(min_size=1, max_size=20),
-        parameters=st.lists(st.text(min_size=1, max_size=16), max_size=4).map(tuple),
-        has_return_annotation=st.booleans(),
-    )
-    parameter_info = st.builds(
-        ParameterInfo,
-        name=st.text(min_size=1, max_size=20),
-        annotation=st.one_of(st.none(), st.text(min_size=1, max_size=20)),
-    )
-    function_info = st.builds(
-        FunctionInfo,
-        name=st.text(min_size=1, max_size=20),
-        line=st.integers(min_value=1, max_value=500),
-        is_public=st.booleans(),
-        parameters=st.lists(parameter_info, max_size=4).map(tuple),
-        return_annotation=st.one_of(st.none(), st.text(min_size=1, max_size=20)),
-        has_require=st.booleans(),
-        has_ensure=st.booleans(),
-        calls=st.lists(st.text(min_size=1, max_size=20), max_size=4).map(tuple),
-    )
-    class_info = st.builds(
-        ClassInfo,
-        name=st.text(min_size=1, max_size=20),
-        line=st.integers(min_value=1, max_value=500),
-        bases=st.lists(st.text(min_size=1, max_size=20), max_size=3).map(tuple),
-        methods=st.lists(st.text(min_size=1, max_size=20), max_size=4).map(tuple),
-        is_protocol=st.booleans(),
-        method_signatures=st.lists(method_signature, max_size=4).map(tuple),
-        has_invariant=st.booleans(),
-    )
-    protocol_info = st.builds(
-        ProtocolInfo,
-        name=st.text(min_size=1, max_size=20),
-        line=st.integers(min_value=1, max_value=500),
-        methods=st.lists(method_signature, max_size=4).map(tuple),
-    )
-    module_info = st.builds(
-        ModuleInfo,
-        file_path=st.text(min_size=1, max_size=60),
-        module_path=st.text(min_size=1, max_size=60),
-        imports=st.lists(st.text(min_size=1, max_size=20), max_size=4).map(tuple),
-        from_imports=st.lists(
-            st.tuples(
-                st.text(min_size=1, max_size=20),
-                st.text(min_size=1, max_size=20),
-            ),
-            max_size=4,
-        ).map(tuple),
-        classes=st.lists(class_info, max_size=3).map(tuple),
-        functions=st.lists(st.text(min_size=1, max_size=20), max_size=4).map(tuple),
-        protocols=st.lists(protocol_info, max_size=3).map(tuple),
-        function_infos=st.lists(function_info, max_size=4).map(tuple),
-    )
-
-    strategies = {
-        "MethodSignature": method_signature,
-        "ParameterInfo": parameter_info,
-        "FunctionInfo": function_info,
-        "ClassInfo": class_info,
-        "ProtocolInfo": protocol_info,
-        "ModuleInfo": module_info,
-    }
-    return strategies.get(type_name)
 
 
 @icontract.require(lambda annotation: annotation is not None, "annotation must be provided")

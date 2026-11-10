@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import icontract
 
-from serenecode.contracts.predicates import is_non_empty_string
+from serenecode.contracts.predicates import is_non_empty_string, is_test_module_path
 from serenecode.core.dead_code_filter import (
     is_suppressed_dead_code,
     registered_symbol_sites,
@@ -29,20 +29,6 @@ from serenecode.ports.dead_code_analyzer import DeadCodeAnalyzer
 if TYPE_CHECKING:
     from serenecode.config import SerenecodeConfig
     from serenecode.core.pipeline import SourceFile
-
-
-@icontract.require(lambda file_path: isinstance(file_path, str), "file_path must be a string")
-@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
-def _is_test_file_path(file_path: str) -> bool:
-    """Return True when a path points to a test-only Python file."""
-    normalized = file_path.replace("\\", "/")
-    basename = normalized.rsplit("/", maxsplit=1)[-1]
-    path_parts = normalized.split("/")
-    return (
-        "tests" in path_parts
-        or basename.startswith("test_")
-        or basename == "conftest.py"
-    )
 
 
 @icontract.require(
@@ -65,7 +51,7 @@ def run_dead_code_analysis(
     paths = tuple(
         source_file.file_path
         for source_file in source_files
-        if not _is_test_file_path(source_file.file_path)
+        if not is_test_module_path(source_file.module_path)
     )
     if not paths:
         return []
@@ -195,7 +181,7 @@ def check_test_existence(
 
     # Loop invariant: results contains test-existence findings for source_files[0..i]
     for sf in source_files:
-        if _is_test_file_path(sf.file_path):
+        if is_test_module_path(sf.module_path):
             continue
         basename = sf.file_path.rsplit("/", 1)[-1] if "/" in sf.file_path else sf.file_path
         if basename == "__init__.py":

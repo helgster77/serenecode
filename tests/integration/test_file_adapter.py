@@ -67,6 +67,52 @@ class TestLocalFileReader:
         assert str(tmp_path / "app.py") in files
         assert str(venv_file) not in files
 
+    def test_list_python_files_keeps_packages_named_like_build_output(self, tmp_path: Path) -> None:
+        """Verifies: REQ-056"""
+        package = tmp_path / "src" / "pkg"
+        kept = []
+        for name in ("build", "dist", "env", "venv"):
+            module = package / name / "steps.py"
+            module.parent.mkdir(parents=True)
+            module.write_text("# source", encoding="utf-8")
+            kept.append(str(module))
+
+        files = LocalFileReader().list_python_files(str(tmp_path / "src"))
+
+        assert files == sorted(kept)
+
+    def test_list_python_files_skips_build_output_beside_a_packaging_marker(self, tmp_path: Path) -> None:
+        """Verifies: REQ-056"""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+        (tmp_path / "app.py").write_text("# app", encoding="utf-8")
+        for name in ("build", "dist"):
+            stale = tmp_path / name / "lib" / "pkg" / "mod.py"
+            stale.parent.mkdir(parents=True)
+            stale.write_text("# stale copy", encoding="utf-8")
+
+        files = LocalFileReader().list_python_files(str(tmp_path))
+
+        assert files == [str(tmp_path / "app.py")]
+
+    def test_list_python_files_skips_environments_and_hidden_directories(self, tmp_path: Path) -> None:
+        """Verifies: REQ-056"""
+        (tmp_path / "app.py").write_text("# app", encoding="utf-8")
+        environment = tmp_path / "venv"
+        (environment / "lib").mkdir(parents=True)
+        (environment / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+        (environment / "lib" / "site.py").write_text("# env", encoding="utf-8")
+        for hidden in (".claude", ".nox", ".git"):
+            copy = tmp_path / hidden / "worktree" / "mod.py"
+            copy.parent.mkdir(parents=True)
+            copy.write_text("# hidden copy", encoding="utf-8")
+        cache = tmp_path / "node_modules" / "tool.py"
+        cache.parent.mkdir()
+        cache.write_text("# vendored", encoding="utf-8")
+
+        files = LocalFileReader().list_python_files(str(tmp_path))
+
+        assert files == [str(tmp_path / "app.py")]
+
     def test_list_python_files_nonexistent_raises(self) -> None:
         reader = LocalFileReader()
         with pytest.raises(ConfigurationError):

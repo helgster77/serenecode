@@ -59,6 +59,7 @@ class _FunctionNode:
     line_end: int
     is_method: bool  # allow-unused: dataclass field used by consumers
     class_name: str | None
+    body_start: int = 0  # first body line; 0 means "the line after line_start"
 
 
 @icontract.invariant(
@@ -312,6 +313,54 @@ def _check_empty_coverage(
     return None
 
 
+@icontract.require(lambda fc: isinstance(fc, _FunctionCoverage), "fc must be a _FunctionCoverage")
+@icontract.ensure(
+    lambda fc, result: not result or len(fc.executed_lines | fc.missing_lines) > 0,
+    "a measured body line implies coverage recorded at least one line",
+)
+def _has_measured_body_line(fc: _FunctionCoverage) -> bool:
+    """Return True when coverage measured a line inside the function's body.
+
+    Implements: REQ-058
+
+    The ``def`` line runs when the module is imported, so it says nothing
+    about whether the function was called. A body that is excluded from
+    measurement, is a bare stub, or shares its line with the ``def`` leaves
+    no line that could.
+    """
+    body_start = fc.function.body_start or fc.function.line_start + 1
+    return any(line >= body_start for line in fc.executed_lines | fc.missing_lines)
+
+
+@icontract.require(lambda function: isinstance(function, _FunctionNode), "function must be a _FunctionNode")
+@icontract.require(
+    lambda module_path: is_non_empty_string(module_path),
+    "module_path must be a non-empty string",
+)
+@icontract.ensure(
+    lambda result: result.finding_type == "no_measurable_lines" and not result.meets_threshold,
+    "result must be a no-evidence finding",
+)
+def _no_measurable_lines_finding(function: _FunctionNode, module_path: str) -> CoverageFinding:
+    """Build the finding for a function coverage cannot say anything about.
+
+    Implements: REQ-058
+    """
+    return CoverageFinding(
+        function_name=function.qualified_name, module_path=module_path,
+        line_start=function.line_start, line_end=function.line_end,
+        line_coverage_percent=0.0, branch_coverage_percent=0.0,
+        uncovered_lines=(), uncovered_branches=(), suggestions=(),
+        meets_threshold=False,
+        message=(
+            f"'{function.qualified_name}' has no measurable body lines — the body is "
+            "excluded from coverage, is a stub, or shares its line with the def — "
+            "so Level 3 provides no evidence that it was exercised"
+        ),
+        finding_type="no_measurable_lines",
+    )
+
+
 @icontract.require(
     lambda function_coverages: isinstance(function_coverages, list),
     "function_coverages must be a list",
@@ -339,10 +388,16 @@ def _build_coverage_findings(
     module_path: str,
     threshold: float,
 ) -> list[CoverageFinding]:
-    """Build coverage findings from per-function metrics."""
+    """Build coverage findings from per-function metrics.
+
+    Implements: REQ-058
+    """
     findings: list[CoverageFinding] = []
     # Loop invariant: findings contains results for function_coverages[0..i]
     for fc in function_coverages:
+        if not _has_measured_body_line(fc):
+            findings.append(_no_measurable_lines_finding(fc.function, module_path))
+            continue
         line_pct = (
             100.0 * len(fc.executed_lines) / fc.total_lines
             if fc.total_lines > 0 else 100.0
@@ -497,6 +552,7 @@ def _walk_for_functions(
                 line_end=child.end_lineno or child.lineno,
                 is_method=class_name is not None,
                 class_name=class_name,
+                body_start=max(child.body[0].lineno, child.lineno + 1),
             ))
             # Recurse into function body for nested functions
             _walk_for_functions(child, functions, prefix=qualified, class_name=None)

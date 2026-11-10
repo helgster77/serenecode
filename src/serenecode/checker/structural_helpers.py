@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import icontract
 
+from serenecode.checker.contract_conditions import contract_condition, is_always_true
 from serenecode.config import SerenecodeConfig
 from serenecode.contracts.predicates import is_non_empty_string
 
@@ -205,10 +206,10 @@ def _decorator_has_description(
     "result must be a bool",
 )
 def _is_tautological_lambda(node: ast.expr) -> bool:
-    """Check if an AST expression is a lambda that always returns True.
+    """Check if an AST expression is a lambda that can never be false.
 
-    Detects patterns like ``lambda result: True``, ``lambda self: True``,
-    and ``lambda: True`` which provide no verification value.
+    Covers ``lambda result: True`` and the other always-true shapes that
+    ``contract_conditions.is_always_true`` recognises (REQ-061).
 
     Args:
         node: An AST expression node (expected to be a Lambda).
@@ -216,20 +217,7 @@ def _is_tautological_lambda(node: ast.expr) -> bool:
     Returns:
         True if the expression is a tautological lambda.
     """
-    if not isinstance(node, ast.Lambda):
-        return False
-    body = node.body
-    # lambda ...: True
-    if isinstance(body, ast.Constant) and body.value is True:
-        return True
-    # lambda ...: True and True, lambda ...: True or True (unlikely but possible)
-    if isinstance(body, ast.BoolOp):
-        # Loop invariant: all values checked so far in [0..i] are True constants
-        for val in body.values:
-            if not (isinstance(val, ast.Constant) and val.value is True):
-                return False
-        return True
-    return False
+    return is_always_true(node)
 
 
 @icontract.require(
@@ -263,9 +251,10 @@ def _find_tautological_contracts(
     tautological: list[str] = []
     # Loop invariant: tautological contains names of tautological decorators in [0..i]
     for dec in node.decorator_list:
-        if isinstance(dec, ast.Call) and dec.args:
+        condition = contract_condition(dec)
+        if condition is not None:
             dec_name = get_decorator_name(dec)
-            if dec_name in names and _is_tautological_lambda(dec.args[0]):
+            if dec_name in names and _is_tautological_lambda(condition):
                 tautological.append(dec_name)
     return tautological
 
@@ -673,13 +662,13 @@ def _iter_checked_functions(
     """Return module-level functions and class methods to check.
 
     Local closures defined inside function bodies are implementation details,
-    so structural contract/docstring rules apply to top-level functions and
-    methods rather than nested helper closures.
+    so structural contract/docstring rules apply to module-level functions
+    and methods rather than nested helper closures.
     """
     functions: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
 
-    # Loop invariant: functions contains checkable defs from top-level nodes[0..i]
-    for node in ast.iter_child_nodes(tree):
+    # Loop invariant: functions contains checkable defs from module-level nodes[0..i]
+    for node in _module_level_statements(tree.body):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             functions.append(node)
         elif isinstance(node, ast.ClassDef):
@@ -700,15 +689,39 @@ def _iter_checked_functions(
     "result must be a list",
 )
 def _iter_checked_classes(tree: ast.Module) -> list[ast.ClassDef]:
-    """Return the top-level classes that participate in structural checks."""
-    classes: list[ast.ClassDef] = []
+    """Return the module-level classes that participate in structural checks."""
+    return [node for node in _module_level_statements(tree.body) if isinstance(node, ast.ClassDef)]
 
-    # Loop invariant: classes contains top-level class defs from nodes[0..i]
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.ClassDef):
-            classes.append(node)
 
-    return classes
+@icontract.require(lambda body: isinstance(body, list), "body must be a list of statements")
+@icontract.ensure(
+    lambda result: not any(isinstance(node, (ast.If, ast.Try, ast.With, ast.AsyncWith)) for node in result),
+    "compound statements are replaced by the statements they contain",
+)
+def _module_level_statements(body: list[ast.stmt]) -> list[ast.stmt]:
+    """Flatten module-level ``if`` / ``try`` / ``with`` blocks into their statements.
+
+    Implements: REQ-062
+
+    A definition guarded by ``if TYPE_CHECKING:`` or wrapped in a ``try``
+    is still a module-level definition. Function and class bodies are not
+    entered, so closures stay out of scope.
+    """
+    flattened: list[ast.stmt] = []
+    # Variant: the nesting depth of the remaining compound statements decreases
+    # Loop invariant: flattened holds the non-compound statements reachable from body[0..i]
+    for node in body:
+        if isinstance(node, (ast.If, ast.Try, ast.With, ast.AsyncWith)) or type(node).__name__ == "TryStar":
+            nested: list[ast.stmt] = list(getattr(node, "body", []))
+            nested.extend(getattr(node, "orelse", []))
+            nested.extend(getattr(node, "finalbody", []))
+            # Loop invariant: nested includes the bodies of handlers[0..j]
+            for handler in getattr(node, "handlers", []):
+                nested.extend(handler.body)
+            flattened.extend(_module_level_statements(nested))
+        else:
+            flattened.append(node)
+    return flattened
 
 
 @icontract.require(
@@ -876,32 +889,6 @@ def _has_silent_except_opt_out(
             if reason:
                 return True
     return False
-
-
-@icontract.require(
-    lambda module_path: isinstance(module_path, str),
-    "module_path must be a string",
-)
-@icontract.ensure(
-    lambda result: isinstance(result, bool),
-    "result must be a bool",
-)
-def _is_test_module(module_path: str) -> bool:
-    """Check whether a module path refers to a test file.
-
-    A module is treated as a test if any path segment is ``tests`` or
-    if the basename starts with ``test_``.
-    """
-    if not module_path:
-        return False
-    normalized = module_path.replace("\\", "/")
-    segments = [s for s in normalized.split("/") if s and s != "."]
-    if "tests" in segments:
-        return True
-    if not segments:
-        return False
-    basename = segments[-1]
-    return basename.startswith("test_")
 
 
 @icontract.require(

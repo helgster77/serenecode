@@ -1571,7 +1571,7 @@ requires-dist = [
     { name = "crosshair-tool", specifier = ">=0.0.60" },
     { name = "hypothesis", specifier = ">=6.0" },
     { name = "icontract", specifier = ">=2.7.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2,<2" },
     { name = "mypy", specifier = ">=1.0" },
     { name = "pytest", specifier = ">=7.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },

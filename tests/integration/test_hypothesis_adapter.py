@@ -31,32 +31,50 @@ class TestHypothesisAdapter:
             max_examples=20,
         )
         passed = [f for f in findings if f.passed]
-        assert len(passed) >= 0
+        assert len(passed) >= 1
 
     def test_broken_postcondition_detected(self) -> None:
-        """Test that Hypothesis finds postcondition violations.
+        """Hypothesis finds a postcondition violation in every test session.
 
-        Note: This test is sensitive to import order. If CrossHair
-        has been imported in the same process, it monkey-patches
-        icontract internals and may suppress postcondition checking.
+        Verifies: REQ-054
         """
         from tests.conftest import icontract_enabled
-        if not icontract_enabled():
-            pytest.skip("icontract invariants disabled by CrossHair monkey-patching")
+        assert icontract_enabled(), "contract enforcement must survive adapter wiring"
 
         tester = HypothesisPropertyTester(allow_code_execution=True)
         findings = tester.test_module(
             "tests.fixtures.invalid.broken_postcondition",
             max_examples=50,
         )
-        # At minimum, the function should be found and tested
         abs_findings = [f for f in findings if f.function_name == "absolute_value"]
-        assert len(abs_findings) >= 1
-        # The violation should be detected
-        failed = [f for f in findings if not f.passed]
-        if failed:
-            abs_failures = [f for f in failed if f.function_name == "absolute_value"]
-            assert len(abs_failures) >= 1
+        assert [f.passed for f in abs_findings] == [False]
+        assert abs_findings[0].finding_type == "postcondition_violated"
+
+    def test_function_that_exits_is_reported_as_a_crash(self, tmp_path: Path) -> None:
+        """A target calling sys.exit becomes a finding, not the run's exit code.
+
+        Verifies: REQ-057
+        """
+        module = tmp_path / "exits_when_called.py"
+        module.write_text(
+            "import sys\n"
+            "import icontract\n"
+            "\n"
+            "\n"
+            "@icontract.require(lambda code: 0 <= code <= 3, 'small exit code')\n"
+            "@icontract.ensure(lambda result: result >= 0, 'non-negative')\n"
+            "def leave(code: int) -> int:\n"
+            "    sys.exit(code)\n",
+            encoding="utf-8",
+        )
+
+        tester = HypothesisPropertyTester(allow_code_execution=True)
+        findings = tester.test_module(str(module), max_examples=5)
+
+        leave = [f for f in findings if f.function_name == "leave"]
+        assert [f.passed for f in leave] == [False]
+        assert leave[0].finding_type == "crash"
+        assert "SystemExit" in leave[0].message
 
     def test_correct_function_passes(self) -> None:
         tester = HypothesisPropertyTester(allow_code_execution=True)

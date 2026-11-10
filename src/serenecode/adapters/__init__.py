@@ -7,7 +7,10 @@ subprocess execution, and external tool integration.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import sys
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Callable
 
 import icontract
@@ -52,6 +55,25 @@ _SAFE_ENV_KEYS = frozenset({
 })
 
 
+@icontract.ensure(
+    lambda result: hasattr(result, "__enter__") and hasattr(result, "__exit__"),
+    "result must be a context manager",
+)
+@contextlib.contextmanager
+def project_output_on_stderr() -> Iterator[None]:
+    """Keep text printed by project code off stdout while verification runs.
+
+    Implements: REQ-064
+
+    Levels 3-6 import and call project code in this process. Anything it
+    prints would otherwise be interleaved with the report: a JSON document
+    for ``--format json``, the protocol stream for the MCP stdio server.
+    Child processes capture their own output or redirect it themselves.
+    """
+    with contextlib.redirect_stdout(sys.stderr):
+        yield
+
+
 @icontract.require(
     lambda extra_paths: extra_paths is None or isinstance(extra_paths, dict),
     "extra_paths must be None or a dictionary",
@@ -81,7 +103,6 @@ def safe_subprocess_env(
     if extra_paths is not None:
         env.update(extra_paths)
     if os.environ.get("SERENECODE_DEBUG"):
-        import sys
         keys = sorted(env.keys())
         print(
             f"[serenecode] subprocess environment keys ({len(keys)}): {keys}",
@@ -124,6 +145,7 @@ def wire_adapters(
     coverage_timeout: int | None = None,
     on_unavailable: Callable[[str], None] | None = None,
     dead_code_placeholder: bool = False,
+    allow_code_execution: bool = False,
 ) -> tuple[
     TypeChecker | None,
     CoverageAnalyzer | None,
@@ -139,6 +161,8 @@ def wire_adapters(
     arguments left as None use the adapter defaults. When vulture is
     unavailable, ``dead_code_placeholder`` selects an
     UnavailableDeadCodeAnalyzer (reports SKIPPED findings) over None.
+    ``allow_code_execution`` is the user's consent; at Level 2 it decides
+    whether a mypy configuration that runs code is honoured (REQ-066).
 
     Returns:
         (type_checker, coverage_analyzer, property_tester,
@@ -158,7 +182,7 @@ def wire_adapters(
     if level >= 2:
         try:
             from serenecode.adapters.mypy_adapter import MypyTypeChecker
-            type_checker = MypyTypeChecker()
+            type_checker = MypyTypeChecker(allow_plugins=allow_code_execution)
         except ImportError:
             _notify("mypy not available for Level 2 checks.")
 

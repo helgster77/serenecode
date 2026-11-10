@@ -150,9 +150,6 @@ class TestCliTargetReference:
         f = tmp_path / "mod.py"
         f.touch()
 
-        def my_func() -> int:
-            return 1
-
         # Force getsourcelines to raise AND remove __code__ so the fallback returns None
         def raising_getsourcelines(obj: object) -> tuple[list[str], int]:
             raise OSError("nope")
@@ -160,9 +157,11 @@ class TestCliTargetReference:
         monkeypatch.setattr(inspect, "getsourcelines", raising_getsourcelines)
 
         class _NoCode:
-            pass
+            """A callable with no __code__: the precondition needs a callable."""
 
-        # Wrap func so __code__ is not accessible
+            def __call__(self) -> int:
+                return 1
+
         no_code = _NoCode()
         no_code.__name__ = "my_func"  # type: ignore[attr-defined]
         result = _cli_target_reference(str(f), "my_func", no_code)  # type: ignore[arg-type]

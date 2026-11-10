@@ -341,3 +341,17 @@ Supports: REQ-001
         assert len(points) == 1
         assert points[0].source == "checkout.Service.checkout"
         assert points[0].target == "payments.Gateway.charge"
+
+
+def test_empty_spec_is_reported_not_raised() -> None:
+    """An empty SPEC.md used to violate a precondition and end the run.
+
+    Verifies: REQ-068
+    """
+    for content in ("", "  \n\n"):
+        result = validate_spec(content)
+        assert result.passed is False
+        assert [detail.finding_type for detail in result.results[0].details] == ["no_requirements"]
+
+        traceability = check_spec_traceability(content, (), ())
+        assert traceability.results == ()

@@ -14,7 +14,7 @@ from serenecode.ports.coverage_analyzer import CoverageFinding
 from serenecode.ports.property_tester import PropertyFinding
 from serenecode.ports.symbolic_checker import SymbolicFinding
 from serenecode.ports.type_checker import TypeIssue
-from tests.conftest import assert_violation_or_skip
+from tests.conftest import assert_violation
 
 
 @dataclass
@@ -277,7 +277,7 @@ class TestPipelineLevel1:
             source=_make_valid_source(),
         )
 
-        assert_violation_or_skip(lambda: run_pipeline(
+        assert_violation(lambda: run_pipeline(
             (sf,),
             level=1,
             start_level=1,

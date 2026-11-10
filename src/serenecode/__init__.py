@@ -268,7 +268,7 @@ def _run_check(
     if level >= 2:
         try:
             from serenecode.adapters.mypy_adapter import MypyTypeChecker
-            type_checker = MypyTypeChecker()
+            type_checker = MypyTypeChecker(allow_plugins=allow_code_execution)
         except ImportError:
             pass
 

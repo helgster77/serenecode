@@ -1,20 +1,46 @@
-"""Minimal tests for core.pipeline_helpers module."""
+"""Tests for core.pipeline_helpers module."""
 
 from __future__ import annotations
 
-from serenecode.core.pipeline_helpers import _is_test_file_path
+from serenecode.config import default_config
+from serenecode.core.pipeline import SourceFile
+from serenecode.core.pipeline_helpers import check_test_existence
+from serenecode.models import CheckStatus
 
 
-def test_is_test_file_path_detects_test_prefix() -> None:
-    """Files starting with test_ are recognized as test files."""
-    assert _is_test_file_path("test_foo.py") is True
+def _source_file(file_path: str, module_path: str) -> SourceFile:
+    return SourceFile(file_path=file_path, module_path=module_path, source="X = 1\n")
 
 
-def test_is_test_file_path_detects_tests_directory() -> None:
-    """Files under a tests/ directory are recognized as test files."""
-    assert _is_test_file_path("tests/unit/foo.py") is True
+def test_production_module_under_a_tests_ancestor_still_needs_a_test_file() -> None:
+    """A checkout located below a directory named tests is not a test suite.
+
+    Verifies: REQ-055
+    """
+    source_file = _source_file("/home/ci/tests/proj/src/pkg/calc.py", "pkg/calc.py")
+
+    results = check_test_existence((source_file,), frozenset({"test_other"}), default_config())
+
+    assert [result.status for result in results] == [CheckStatus.FAILED]
+    assert "No test file found for 'calc'" in results[0].details[0].message
 
 
-def test_is_test_file_path_rejects_regular_module() -> None:
-    """Regular source files are not test files."""
-    assert _is_test_file_path("src/serenecode/models.py") is False
+def test_project_test_files_are_skipped_by_the_presence_check() -> None:
+    """Files inside the project's own tests directory need no test file.
+
+    Verifies: REQ-055
+    """
+    source_file = _source_file("tests/unit/test_calc.py", "tests/unit/test_calc.py")
+
+    results = check_test_existence((source_file,), frozenset({"test_other"}), default_config())
+
+    assert results == []
+
+
+def test_module_with_matching_test_file_passes() -> None:
+    """A module whose test_<stem> file exists gets a passing record."""
+    source_file = _source_file("src/pkg/calc.py", "pkg/calc.py")
+
+    results = check_test_existence((source_file,), frozenset({"test_calc"}), default_config())
+
+    assert [result.status for result in results] == [CheckStatus.PASSED]

@@ -24,7 +24,6 @@ from serenecode.contracts.predicates import (
 )
 from serenecode.core.exceptions import ToolNotInstalledError
 from serenecode.core.pipeline_helpers import (
-    _is_test_file_path,
     check_test_existence as _check_test_existence,
     run_dead_code_analysis as _run_dead_code_analysis,
 )
@@ -48,6 +47,10 @@ StructuralChecker = Callable[[str, SerenecodeConfig, str, str], CheckResult]
 @icontract.invariant(
     lambda self: self.max_workers >= 1,
     "max_workers must be at least 1",
+)
+@icontract.invariant(
+    lambda self: all(is_non_empty_string(path) for path, _ in self.test_sources),
+    "every test source must name its file",
 )
 @dataclass(frozen=True)
 class PipelineConfig:
@@ -73,8 +76,8 @@ class PipelineConfig:
 
 
 @icontract.invariant(
-    lambda self: len(self.file_path) > 0,
-    "Source file must have a non-empty file path",
+    lambda self: all(is_non_empty_string(p) and "\x00" not in p for p in (self.file_path, self.module_path)),
+    "Source file must have a non-blank file path and module path free of null bytes",
 )
 @dataclass(frozen=True)
 class SourceFile:

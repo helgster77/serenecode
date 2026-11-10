@@ -43,7 +43,8 @@ over this skill.
   `@icontract.invariant`.
 - Write conditions that constrain behavior, for example
   `lambda items, result: min(items) <= result <= max(items)`. Never write
-  tautologies such as `lambda result: True`.
+  tautologies such as `lambda result: True`, and never switch a contract off
+  with `enabled=False`.
 - A condition can only name parameters that the signature has. Don't write
   conditions over `*args`/`**kwargs`, and don't use `lambda result: ...` on a
   function annotated `-> None`.

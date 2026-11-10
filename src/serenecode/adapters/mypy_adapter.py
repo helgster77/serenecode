@@ -17,6 +17,7 @@ import os
 
 import icontract
 
+from serenecode.adapters.mypy_config import find_executing_mypy_settings
 from serenecode.contracts.predicates import is_positive_int
 from serenecode.core.exceptions import ToolNotInstalledError
 from serenecode.ports.type_checker import TypeIssue
@@ -24,6 +25,39 @@ from serenecode.ports.type_checker import TypeIssue
 _MYPY_OUTPUT_PATTERN = re.compile(
     r"^(.+?):(\d+)(?::(\d+))?: (error|warning|note): (.+?)(?:\s+\[(.+?)\])?$"
 )
+
+
+@icontract.require(lambda working_dir: len(working_dir) > 0, "working_dir must be a non-empty path")
+@icontract.ensure(
+    lambda result: result is None or (result.file == "<mypy>" and result.severity == "error"),
+    "a refusal is an error reported against mypy itself",
+)
+def _refusal_for_project_code(working_dir: str) -> TypeIssue | None:
+    """Return the issue to report instead of starting mypy, if any.
+
+    Implements: REQ-066
+
+    Args:
+        working_dir: The directory mypy would be started in.
+
+    Returns:
+        An error naming the configuration file and its code-executing
+        settings, or None when the project configuration has none.
+    """
+    executing = find_executing_mypy_settings(working_dir)
+    if executing is None:
+        return None
+    return TypeIssue(
+        file="<mypy>",
+        line=0,
+        column=0,
+        severity="error",
+        message=(
+            f"mypy was not started: {executing.config_file} sets "
+            f"{'; '.join(executing.settings)}, which makes mypy run code chosen by "
+            "the project. Re-run with --allow-code-execution if you trust it."
+        ),
+    )
 
 
 @icontract.invariant(lambda self: is_positive_int(self._timeout), "timeout must be positive")
@@ -35,14 +69,18 @@ class MypyTypeChecker:
     """
 
     @icontract.require(lambda timeout: is_positive_int(timeout), "timeout must be positive")
-    @icontract.ensure(lambda result: result is None, "result must be None")
-    def __init__(self, timeout: int = 120) -> None:
+    @icontract.ensure(lambda self, allow_plugins: self._allow_plugins is allow_plugins, "consent is recorded as given")
+    def __init__(self, timeout: int = 120, allow_plugins: bool = False) -> None:
         """Initialize the checker.
 
         Args:
             timeout: Maximum seconds for mypy to run.
+            allow_plugins: Whether the project's mypy configuration may make
+                mypy run code (``plugins``, ``python_executable``). Callers
+                pass the user's code-execution consent.
         """
         self._timeout = timeout
+        self._allow_plugins = allow_plugins
 
     @icontract.require(lambda file_paths: isinstance(file_paths, list), "file_paths must be a list")
     @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
@@ -53,6 +91,8 @@ class MypyTypeChecker:
         search_paths: tuple[str, ...] = (),
     ) -> list[TypeIssue]:
         """Run mypy type checking on the given files.
+
+        Implements: REQ-066
 
         Args:
             file_paths: Paths to Python files to check.
@@ -67,6 +107,10 @@ class MypyTypeChecker:
         """
         if not file_paths:
             return []
+
+        refusal = None if self._allow_plugins else _refusal_for_project_code(os.getcwd())
+        if refusal is not None:
+            return [refusal]
 
         cmd = [sys.executable, "-m", "mypy"]
         if strict:

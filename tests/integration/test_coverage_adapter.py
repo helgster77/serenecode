@@ -16,9 +16,11 @@ from serenecode.adapters.coverage_adapter import (
     _generate_test_code,
     _get_call_name,
     _group_contiguous_lines,
+    _has_measured_body_line,
     _is_external_dependency,
     _is_io_call,
     _map_coverage_to_functions,
+    _no_measurable_lines_finding,
     _FunctionCoverage,
     _FunctionNode,
 )
@@ -676,3 +678,48 @@ class TestProtocolStubsAreNotCoverageTargets:
                     ...
         ''')
         assert names == {"Reader.read"}
+
+
+class TestNoMeasurableBodyLines:
+    """The def line runs at import time and says nothing about calls."""
+
+    @staticmethod
+    def _coverage(executed: set[int], missing: set[int]) -> _FunctionCoverage:
+        function = _FunctionNode(
+            name="f", qualified_name="f", line_start=10, line_end=12,
+            is_method=False, class_name=None, body_start=11,
+        )
+        return _FunctionCoverage(
+            function=function, total_lines=len(executed | missing),
+            executed_lines=frozenset(executed), missing_lines=frozenset(missing),
+            total_branches=0, executed_branches=(), missing_branches=(),
+        )
+
+    def test_def_line_alone_is_not_evidence(self) -> None:
+        """Verifies: REQ-058"""
+        assert not _has_measured_body_line(self._coverage({10}, set()))
+        assert not _has_measured_body_line(self._coverage(set(), set()))
+
+    def test_a_measured_body_line_is_evidence(self) -> None:
+        """Verifies: REQ-058"""
+        assert _has_measured_body_line(self._coverage({10, 11}, set()))
+        assert _has_measured_body_line(self._coverage({10}, {12}))
+
+    def test_excluded_body_yields_a_no_evidence_finding(self) -> None:
+        """A body under `# pragma: no cover` is reported, not passed at 100%.
+
+        Verifies: REQ-058
+        """
+        source = textwrap.dedent("""\
+            def excluded(x):  # pragma: no cover
+                if x:
+                    return 1
+                return 0
+        """)
+        functions = _discover_functions(source)
+        assert [function.body_start for function in functions] == [2]
+
+        finding = _no_measurable_lines_finding(functions[0], "mod")
+        assert finding.finding_type == "no_measurable_lines"
+        assert finding.meets_threshold is False
+        assert "no measurable body lines" in finding.message

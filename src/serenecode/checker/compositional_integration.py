@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 # with serenecode.checker.compositional at module load time.
 _SigCompatFn = Callable[[MethodSignature, MethodSignature], list[str]]
 from serenecode.config import SerenecodeConfig, is_core_module, is_exempt_module
-from serenecode.contracts.predicates import is_non_empty_string
+from serenecode.contracts.predicates import is_non_empty_string, is_test_module_path
 from serenecode.models import (
     CheckStatus,
     Detail,
@@ -80,7 +80,7 @@ def check_assume_guarantee(
 
     # Loop invariant: results contains assume-guarantee findings for modules[0..i]
     for mod in modules:
-        if is_exempt_module(mod.module_path, config):
+        if is_exempt_module(mod.module_path, config) or is_test_module_path(mod.module_path):
             continue
         results.extend(_check_assume_guarantee_for_module(
             mod, import_map, module_functions,
@@ -351,7 +351,7 @@ def check_data_flow(
 
     # Loop invariant: results contains data flow findings for modules[0..i]
     for mod in modules:
-        if is_exempt_module(mod.module_path, config):
+        if is_exempt_module(mod.module_path, config) or is_test_module_path(mod.module_path):
             continue
         results.extend(_check_data_flow_for_module(
             mod, modules, import_map, module_functions,

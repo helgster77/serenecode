@@ -12,19 +12,28 @@ import ast
 import textwrap
 from typing import cast
 
+import icontract
+import pytest
+
 from serenecode.checker.compositional import (
+    ClassInfo,
+    FunctionInfo,
     MethodSignature,
     ModuleInfo,
     _find_file_for_module,
     _get_name,
+    _is_exception_class,
     _is_public_function_name,
     _module_name_matches_reference,
     _module_package_name,
+    _module_path_has_segment,
     _node_satisfies_call_integration,
     _node_satisfies_single_integration_target,
     _parse_integration_target_list,
     _parse_method_signature,
     _resolve_from_import_module,
+    _resolve_from_import_target,
+    _resolve_to_known_module,
     parse_module_info,
 )
 
@@ -332,3 +341,130 @@ class TestFindFileForModule:
 
     def test_empty_module_list(self) -> None:
         assert _find_file_for_module("foo.py", []) == "<unknown>"
+
+
+# ---------------------------------------------------------------------------
+# Import resolution against the known internal modules (Level 6)
+# ---------------------------------------------------------------------------
+
+
+def _known(*module_paths: str) -> dict[str, ModuleInfo]:
+    """Parse an empty module for each path and key the result by that path."""
+    return {path: parse_module_info("", f"/proj/{path}", path) for path in module_paths}
+
+
+class TestResolveToKnownModule:
+    def test_exact_name(self) -> None:
+        assert _resolve_to_known_module("core.models", _known("core.models")) == "core.models"
+
+    def test_dotted_name_matches_slash_path(self) -> None:
+        assert _resolve_to_known_module("core.models", _known("core/models")) == "core/models"
+
+    def test_dotted_name_matches_file_path(self) -> None:
+        assert _resolve_to_known_module("core.models", _known("core/models.py")) == "core/models.py"
+
+    def test_package_prefix_is_stripped(self) -> None:
+        assert _resolve_to_known_module("proj.core.models", _known("core/models")) == "core/models"
+
+    def test_package_prefix_is_stripped_for_file_paths(self) -> None:
+        known = _known("core/models.py")
+        assert _resolve_to_known_module("proj.core.models", known) == "core/models.py"
+
+    def test_external_module_is_not_resolved(self) -> None:
+        assert _resolve_to_known_module("json", _known("core/models.py")) is None
+
+
+class TestResolveFromImportTarget:
+    def test_imported_submodule_wins_over_its_package(self) -> None:
+        """`from core import models` targets core/models.py, not core/__init__."""
+        known = _known("core/__init__.py", "core/models.py")
+        assert _resolve_from_import_target("core", "models", known) == "core/models.py"
+
+    def test_imported_symbol_resolves_to_its_module(self) -> None:
+        known = _known("core/models.py")
+        assert _resolve_from_import_target("core.models", "Thing", known) == "core/models.py"
+
+    def test_unresolved_relative_import_falls_back_to_the_name(self) -> None:
+        assert _resolve_from_import_target("", "models", _known("models.py")) == "models.py"
+
+    def test_external_import_is_not_resolved(self) -> None:
+        assert _resolve_from_import_target("json", "loads", _known("core/models.py")) is None
+
+
+class TestModulePathHasSegment:
+    def test_exact_segment(self) -> None:
+        assert _module_path_has_segment("src/ports/fs.py", "ports") is True
+
+    def test_backslash_paths(self) -> None:
+        assert _module_path_has_segment("src\\ports\\fs.py", "ports") is True
+
+    def test_partial_segment_does_not_match(self) -> None:
+        assert _module_path_has_segment("src/reports/fs.py", "ports") is False
+
+    def test_path_of_only_separators_has_no_segments(self) -> None:
+        assert _module_path_has_segment("///", "ports") is False
+
+
+# ---------------------------------------------------------------------------
+# Classes exempt from the invariant requirement (Level 6)
+# ---------------------------------------------------------------------------
+
+
+def _class_with_bases(*bases: str) -> ClassInfo:
+    return ClassInfo(name="Thing", line=1, bases=bases, methods=(), is_protocol=False)
+
+
+class TestIsExceptionClass:
+    def test_builtin_exception_base(self) -> None:
+        assert _is_exception_class(_class_with_bases("Exception")) is True
+
+    def test_base_exception_base(self) -> None:
+        assert _is_exception_class(_class_with_bases("object", "BaseException")) is True
+
+    def test_base_named_like_an_error(self) -> None:
+        assert _is_exception_class(_class_with_bases("ValidationError")) is True
+
+    def test_base_named_like_an_exception(self) -> None:
+        assert _is_exception_class(_class_with_bases("DomainException")) is True
+
+    def test_ordinary_base(self) -> None:
+        assert _is_exception_class(_class_with_bases("Base")) is False
+
+    def test_no_bases(self) -> None:
+        assert _is_exception_class(_class_with_bases()) is False
+
+
+class TestParsedNamesAreNeverBlank:
+    """Level 6 reports a finding per name, and a finding needs a visible name."""
+
+    def test_blank_function_name_is_rejected(self) -> None:
+        with pytest.raises(icontract.ViolationError):
+            FunctionInfo(
+                name="\r", line=1, is_public=True, parameters=(), return_annotation=None,
+                has_require=False, has_ensure=False, calls=(),
+            )
+
+    def test_blank_class_name_is_rejected(self) -> None:
+        with pytest.raises(icontract.ViolationError):
+            ClassInfo(name=" ", line=1, bases=(), methods=(), is_protocol=False)
+
+    @pytest.mark.parametrize(
+        ("imports", "from_imports", "all_imports"),
+        [
+            ((" ",), (), ()),
+            ((), ((" ", "name"),), ()),
+            ((), (("pkg", "\t"),), ()),
+            ((), (), ("",)),
+        ],
+    )
+    def test_blank_import_name_is_rejected(
+        self,
+        imports: tuple[str, ...],
+        from_imports: tuple[tuple[str, str], ...],
+        all_imports: tuple[str, ...],
+    ) -> None:
+        with pytest.raises(icontract.ViolationError):
+            ModuleInfo(
+                file_path="/proj/a.py", module_path="a.py", imports=imports, from_imports=from_imports,
+                classes=(), functions=(), protocols=(), all_imports=all_imports,
+            )

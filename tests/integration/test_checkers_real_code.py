@@ -140,8 +140,7 @@ class TestPropertiesCheckerWithRealHypothesis:
         from serenecode.checker.properties import transform_property_results
         from tests.conftest import icontract_enabled
 
-        if not icontract_enabled():
-            pytest.skip("icontract invariants disabled by CrossHair monkey-patching")
+        assert icontract_enabled(), "contract enforcement must survive adapter wiring"
 
         tester = HypothesisPropertyTester(allow_code_execution=True)
         findings = tester.test_module(

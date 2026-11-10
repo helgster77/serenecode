@@ -29,6 +29,7 @@ from serenecode.models import (
     VerificationLevel,
 )
 
+from serenecode.checker.contract_conditions import contract_condition, is_disabled_contract
 from serenecode.checker.structural_quality import _has_opt_out_comment
 
 from serenecode.checker.structural_helpers import (
@@ -177,17 +178,64 @@ def _contract_condition(
 ) -> ast.Lambda | None:
     """Return the lambda condition of a require/ensure decorator, if any.
 
-    Conditions that are not lambdas (named predicates, partials) carry no
-    parameter names in the AST, so they are out of scope for this check.
+    Implements: REQ-060
+
+    The condition may be the first positional argument or the ``condition=``
+    keyword. Conditions that are not lambdas (named predicates, partials)
+    carry no parameter names in the AST, so they are out of scope here.
     """
-    if not isinstance(decorator, ast.Call) or not decorator.args:
+    condition = contract_condition(decorator)
+    if not isinstance(condition, ast.Lambda):
         return None
     if get_decorator_name(decorator) not in (aliases.require_names | aliases.ensure_names):
         return None
-    condition = decorator.args[0]
-    if not isinstance(condition, ast.Lambda):
-        return None
     return condition
+
+
+@icontract.require(
+    lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)),
+    "node must be a function or class definition",
+)
+@icontract.require(lambda names: isinstance(names, frozenset), "names must be a frozenset")
+@icontract.ensure(
+    lambda result: all(detail.finding_type == "violation" for detail in result),
+    "every disabled contract is reported as a violation",
+)
+def disabled_contract_details(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+    names: frozenset[str],
+) -> list[Detail]:
+    """Report contract decorators switched off with a literal ``enabled=False``.
+
+    Implements: REQ-059
+
+    Such a decorator satisfies the "has a contract" rule while icontract
+    never evaluates it, so it is a finding rather than a contract.
+
+    Args:
+        node: A function or class definition.
+        names: The contract decorator names to consider.
+
+    Returns:
+        One Detail per disabled contract decorator.
+    """
+    kind = "Class" if isinstance(node, ast.ClassDef) else "Function"
+    return [
+        Detail(
+            level=VerificationLevel.STRUCTURAL, tool="structural",
+            finding_type="violation",
+            message=(
+                f"{kind} '{node.name}' has disabled contract '{get_decorator_name(decorator)}' "
+                "(enabled=False is never evaluated)"
+            ),
+            suggestion=(
+                "Remove enabled=False so the contract is enforced. If no contract applies, "
+                "delete the decorator and use the documented waiver comment instead."
+            ),
+        )
+        for decorator in node.decorator_list
+        if is_disabled_contract(decorator) and get_decorator_name(decorator) in names
+    ]
 
 
 @icontract.require(
@@ -426,6 +474,39 @@ def _binding_detail(function_name: str, name: str, kind: str) -> Detail:
 
 
 @icontract.require(lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)), "node must be a function definition")
+@icontract.require(lambda param_names: isinstance(param_names, list), "param_names must be a list")
+@icontract.ensure(
+    lambda result: "isinstance(result" not in result,
+    "the suggestion never proposes restating the return annotation",
+)
+def _postcondition_suggestion(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    param_names: list[str],
+) -> str:
+    """Word the suggestion for a missing postcondition.
+
+    Implements: REQ-070
+
+    A postcondition that only repeats the return annotation constrains
+    nothing, and on a ``-> None`` function ``result`` is not even usable,
+    so the suggestion points at what a postcondition can actually say.
+    """
+    if _returns_none(node):
+        subject = ", ".join(param_names) if param_names else "self"
+        return (
+            "Add a postcondition describing the effect. This function returns None, so "
+            "`result` says nothing: constrain the parameters or `self` after the call. "
+            f"Shape: @icontract.ensure(lambda {subject}: <state the call leaves behind>, \"<effect>\")"
+        )
+    arguments = ", ".join([*param_names, "result"])
+    return (
+        "Add a postcondition relating the result to the inputs; a type check only restates "
+        f"the annotation. Shape: @icontract.ensure(lambda {arguments}: "
+        "<what result guarantees>, \"<guarantee>\")"
+    )
+
+
+@icontract.require(lambda node: isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)), "node must be a function definition")
 @icontract.ensure(lambda result: isinstance(result, list), "result must be a list")
 def _check_single_function_contracts(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
@@ -435,7 +516,7 @@ def _check_single_function_contracts(
 ) -> list[Detail]:
     """Check contracts on a single function node.
 
-    Implements: REQ-050
+    Implements: REQ-050, REQ-070
     """
     details: list[Detail] = []
     params = _non_receiver_parameters(node)
@@ -453,26 +534,19 @@ def _check_single_function_contracts(
             finding_type="violation",
             message=f"Function '{node.name}' missing @icontract.require (precondition)",
             suggestion=(
-                f"Add precondition for parameters ({param_list}). "
-                f"Example: @icontract.require(lambda {example_param}: "
-                f"{example_param} is not None, \"{example_param} must not be None\")"
+                f"Add a precondition stating which values of ({param_list}) are valid. "
+                f"Shape: @icontract.require(lambda {example_param}: <condition on {example_param}>, "
+                f"\"<what {example_param} must satisfy>\"). If every value of the annotated "
+                "types is valid, put '# no-precondition: <reason>' above the function instead."
             ),
         ))
 
     if not has_decorator(node, aliases.ensure_names):
-        return_hint = _get_return_annotation_str(node)
         details.append(Detail(
             level=VerificationLevel.STRUCTURAL, tool="structural",
             finding_type="violation",
             message=f"Function '{node.name}' missing @icontract.ensure (postcondition)",
-            suggestion=(
-                f"Add postcondition. Example: @icontract.ensure(lambda result: "
-                f"result is not None, \"result must not be None\")"
-                if return_hint is None
-                else f"Add postcondition for return type '{return_hint}'. "
-                f"Example: @icontract.ensure(lambda result: isinstance(result, {return_hint}), "
-                f"\"result must be {return_hint}\")"
-            ),
+            suggestion=_postcondition_suggestion(node, param_names),
         ))
 
     if config.contract_requirements.require_description_strings and not details:
@@ -491,6 +565,8 @@ def _check_single_function_contracts(
                 message=f"Function '{node.name}' has contract description that is not a string literal",
                 suggestion="Contract descriptions must be string literals, not variables or expressions",
             ))
+
+    details.extend(disabled_contract_details(node, aliases.require_names | aliases.ensure_names))
 
     if not details:
         all_contract_names = aliases.require_names | aliases.ensure_names

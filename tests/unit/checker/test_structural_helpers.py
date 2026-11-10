@@ -813,3 +813,67 @@ class TestCheckExceptionTypesBranches:
         tree = ast.parse(source)
         results = check_exception_types(tree, default_config(), "core/foo.py", "test.py")
         assert len(results) == 0
+
+
+class TestModuleLevelCompoundStatements:
+    """Definitions guarded by module-level if / try / with are still checked."""
+
+    def test_definitions_inside_compound_statements_are_found(self) -> None:
+        """Verifies: REQ-062"""
+        from serenecode.checker.structural_helpers import (
+            _iter_checked_classes,
+            _iter_checked_functions,
+        )
+
+        tree = ast.parse(textwrap.dedent("""\
+            import contextlib
+            from typing import TYPE_CHECKING
+
+            if TYPE_CHECKING:
+                def in_if() -> None: ...
+            else:
+                class InElse:
+                    def method(self) -> None: ...
+
+            try:
+                def in_try() -> None: ...
+            except ImportError:
+                def in_handler() -> None: ...
+            else:
+                def in_try_else() -> None: ...
+            finally:
+                def in_finally() -> None: ...
+
+            with contextlib.suppress(Exception):
+                if True:
+                    def in_nested_if() -> None: ...
+
+            def top() -> None:
+                def closure() -> None: ...
+        """))
+
+        names = {function.name for function in _iter_checked_functions(tree)}
+        assert names == {
+            "in_if", "method", "in_try", "in_handler", "in_try_else",
+            "in_finally", "in_nested_if", "top",
+        }
+        assert [cls.name for cls in _iter_checked_classes(tree)] == ["InElse"]
+
+    def test_missing_contract_inside_module_level_if_fails_level_1(self) -> None:
+        """Verifies: REQ-062"""
+        from serenecode.checker.structural import check_structural
+
+        source = textwrap.dedent('''\
+            """Sample module."""
+
+            import sys
+
+            if sys.version_info >= (3, 11):
+                def parse(text: str) -> int:
+                    """Parse an integer."""
+                    return int(text)
+        ''')
+        result = check_structural(source, default_config(), file_path="sample.py")
+        messages = [detail.message for record in result.results for detail in record.details]
+        assert any("Function 'parse' missing @icontract.require" in message for message in messages)
+        assert any("Function 'parse' missing @icontract.ensure" in message for message in messages)

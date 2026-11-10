@@ -1,9 +1,10 @@
-"""CrossHair adapter for symbolic verification (Level 4).
+"""CrossHair adapter for symbolic verification (Level 5).
 
 This adapter implements the SymbolicChecker protocol by running
-CrossHair's symbolic execution engine on Python modules.
-It uses the CrossHair Python API when available, with a CLI
-subprocess fallback.
+CrossHair's symbolic execution engine on Python modules. CrossHair
+always runs in a child process — the CLI by preference, the Python API
+in a spawned worker as the fallback — and is never imported here:
+importing it disables icontract enforcement for the whole process.
 
 This is an adapter module — it handles I/O (module importing,
 subprocess execution) and is exempt from full contract requirements.
@@ -12,6 +13,7 @@ subprocess execution) and is exempt from full contract requirements.
 from __future__ import annotations
 
 import collections.abc
+import importlib.util
 import inspect
 import multiprocessing
 import multiprocessing.queues
@@ -41,17 +43,18 @@ from serenecode.contracts.predicates import is_non_empty_string, is_positive_int
 from serenecode.core.exceptions import ToolNotInstalledError, UnsafeCodeExecutionError
 from serenecode.ports.symbolic_checker import SymbolicFinding
 
+# CrossHair must not be imported into this process: importing
+# crosshair.core_and_libs replaces icontract's checkers with no-ops, which
+# would silence every contract Level 4 relies on (REQ-054). Detect it instead.
 try:
-    from crosshair.core_and_libs import analyze_module
-    from crosshair.options import AnalysisKind, AnalysisOptionSet
-    _CROSSHAIR_API_AVAILABLE = True
-except ImportError:
+    _CROSSHAIR_API_AVAILABLE = importlib.util.find_spec("crosshair") is not None
+except (ImportError, ValueError):
     _CROSSHAIR_API_AVAILABLE = False
 
 _CROSSHAIR_CLI_AVAILABLE: bool | None = None
 _CLI_CHECK_LOCK = threading.Lock()
 _TRUST_REQUIRED_MESSAGE = (
-    "Level 4 symbolic verification imports and executes project modules. "
+    "Level 5 symbolic verification imports and executes project modules. "
     "Re-run with allow_code_execution=True only for trusted code."
 )
 
@@ -577,9 +580,13 @@ def _api_verification_worker(
 ) -> None:
     """Run CrossHair API verification in a child process.
 
+    Implements: REQ-054
+
     This is the target function for multiprocessing.Process. Running
     in a separate process allows hard-killing via SIGTERM/SIGKILL when
     Z3 gets stuck in native C code that signal.SIGALRM cannot interrupt.
+    It is also the only place CrossHair is imported, so the icontract
+    patching it performs stays inside the child.
 
     Args:
         module_path: Importable module path.
@@ -587,6 +594,9 @@ def _api_verification_worker(
         per_path_timeout: Seconds per execution path.
         result_queue: Queue to put findings into.
     """
+    # This child inherits the parent's stdout, which may be a JSON report or
+    # the MCP protocol stream; target code must not print into it (REQ-064).
+    sys.stdout = sys.stderr
     try:
         module = load_python_module(module_path, search_paths)
     except ImportError as exc:
@@ -595,6 +605,9 @@ def _api_verification_worker(
             outcome="error", message=f"Cannot import module '{module_path}': {exc}",
         )])
         return
+
+    from crosshair.core_and_libs import analyze_module
+    from crosshair.options import AnalysisKind, AnalysisOptionSet
 
     options = AnalysisOptionSet(
         analysis_kind=[AnalysisKind.icontract],

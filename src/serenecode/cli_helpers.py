@@ -483,6 +483,7 @@ def _wire_adapters(
     per_path_timeout: int,
     module_timeout: int,
     coverage_timeout: int,
+    allow_code_execution: bool = False,
 ) -> tuple[
     TypeChecker | None,
     CoverageAnalyzer | None,
@@ -504,6 +505,7 @@ def _wire_adapters(
         module_timeout=module_timeout,
         coverage_timeout=coverage_timeout,
         on_unavailable=lambda message: click.echo(f"Warning: {message}", err=True),
+        allow_code_execution=allow_code_execution,
     )
 
 

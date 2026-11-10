@@ -24,8 +24,9 @@ try:
     from mcp.server.fastmcp import FastMCP
 except ImportError as exc:  # pragma: no cover - import-time gate
     raise ImportError(
-        "The 'mcp' package is not installed. Install with: "
-        "pip install 'serenecode[mcp]' or uv add 'mcp>=1.0'",
+        f"The MCP server could not be imported ({exc}). It needs the 'mcp' "
+        "package, version >=1.2,<2. Install with: "
+        "pip install 'serenecode[mcp]' or uv add 'mcp>=1.2,<2'",
     ) from exc
 
 from serenecode.mcp.resources import (

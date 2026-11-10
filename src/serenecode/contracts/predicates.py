@@ -229,3 +229,32 @@ def is_valid_spec_item_id(value: str) -> bool:
         True if value matches the REQ-xxx or INT-xxx pattern.
     """
     return bool(_SPEC_ITEM_ID_PATTERN.match(value))
+
+
+@icontract.require(lambda module_path: isinstance(module_path, str), "module_path must be a string")
+@icontract.ensure(
+    lambda module_path, result: not result or len(module_path.strip()) > 0,
+    "only a non-empty path can name a test file",
+)
+def is_test_module_path(module_path: str) -> bool:
+    """Check whether a project-relative path names a test-only Python file.
+
+    Implements: REQ-055
+
+    The path must be relative to the project's context root — pass
+    ``SourceFile.module_path``, never an absolute path. Directories above
+    the root are not part of the project, so a checkout that happens to
+    live under a directory named ``tests`` is not a test suite.
+
+    Args:
+        module_path: Root-relative path with either separator.
+
+    Returns:
+        True for a path with a ``tests`` segment, a ``test_*`` basename,
+        or ``conftest.py``.
+    """
+    segments = [s for s in module_path.replace("\\", "/").split("/") if s and s != "."]
+    if not segments:
+        return False
+    basename = segments[-1]
+    return "tests" in segments or basename.startswith("test_") or basename == "conftest.py"

@@ -38,6 +38,8 @@ def transform_coverage_results(
 ) -> CheckResult:
     """Transform coverage analysis findings into a CheckResult.
 
+    Implements: REQ-058
+
     Maps each CoverageFinding to a FunctionResult with appropriate
     status and detailed suggestions for uncovered paths.
 
@@ -57,7 +59,17 @@ def transform_coverage_results(
         status: CheckStatus
         level_achieved: int
 
-        if finding.meets_threshold:
+        if finding.finding_type == "no_measurable_lines":
+            # Visible, but neither evidence of coverage nor a failure (REQ-058).
+            status = CheckStatus.EXEMPT
+            level_achieved = 2
+            details.append(Detail(
+                level=VerificationLevel.COVERAGE,
+                tool="coverage",
+                finding_type=finding.finding_type,
+                message=finding.message,
+            ))
+        elif finding.meets_threshold:
             status = CheckStatus.PASSED
             level_achieved = 3
             details.append(Detail(

@@ -6,6 +6,7 @@ import os
 
 import icontract
 
+from serenecode.contracts.predicates import is_test_module_path
 from serenecode.core.pipeline import SourceFile
 from serenecode.ports.file_system import FileReader
 from serenecode.source_discovery import build_source_files, is_test_file_path
@@ -19,6 +20,8 @@ def discover_traceability_sources(
 ) -> tuple[SourceFile, ...]:
     """Load implementation context from each selected project's source tree.
 
+    Implements: REQ-055
+
     Selected source objects win over disk contents, preserving callers' snapshots.
     A src layout limits context to src; flat projects use the project root.
     Test files remain in the separate verification-reference input.
@@ -28,10 +31,10 @@ def discover_traceability_sources(
     # Loop invariant: by_path contains context from each previously visited project.
     for root in sorted(roots):
         scope = os.path.join(root, "src") if os.path.isdir(os.path.join(root, "src")) else root
-        paths = [p for p in reader.list_python_files(scope) if not is_test_file_path(p)]
+        paths = [p for p in reader.list_python_files(scope) if not is_test_file_path(p, root)]
         for source_file in build_source_files(paths, reader, root):
             by_path[os.path.realpath(source_file.file_path)] = source_file
     for source_file in source_files:
-        if not is_test_file_path(source_file.file_path):
+        if not is_test_module_path(source_file.module_path):
             by_path[os.path.realpath(source_file.file_path)] = source_file
     return tuple(by_path.values())

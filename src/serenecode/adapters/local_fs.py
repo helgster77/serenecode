@@ -18,23 +18,46 @@ import icontract
 from serenecode.contracts.predicates import is_non_empty_string
 from serenecode.core.exceptions import ConfigurationError, InitializationError
 
-_IGNORED_DIR_NAMES = frozenset({
-    ".git",
-    ".hg",
-    ".svn",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".tox",
-    ".venv",
-    ".hypothesis",
-    "__pycache__",
-    "build",
-    "dist",
-    "env",
-    "node_modules",
-    "venv",
-})
+_ALWAYS_IGNORED_DIR_NAMES = frozenset({"__pycache__", "node_modules"})
+_BUILD_OUTPUT_DIR_NAMES = frozenset({"build", "dist"})
+_PACKAGING_MARKERS = ("pyproject.toml", "setup.py", "setup.cfg")
+_ENVIRONMENT_MARKERS = ("pyvenv.cfg", "conda-meta")
+
+
+@icontract.require(lambda parent: is_non_empty_string(parent), "parent must be a non-empty string")
+@icontract.require(lambda name: is_non_empty_string(name), "name must be a non-empty string")
+@icontract.ensure(
+    lambda name, result: result or not name.startswith("."),
+    "hidden directories are always ignored",
+)
+def is_ignored_directory(parent: str, name: str) -> bool:
+    """Decide whether a directory holds no project source and is skipped.
+
+    Implements: REQ-056
+
+    Hidden directories, bytecode caches and ``node_modules`` are skipped
+    wherever they occur, as is any directory that is a Python environment.
+    ``build`` and ``dist`` are skipped only beside a packaging marker, which
+    is where build output is written; a package that is merely named
+    ``build``, ``dist``, ``env`` or ``venv`` is project source.
+
+    Args:
+        parent: Directory that contains the candidate.
+        name: The candidate directory's own name.
+    """
+    if name.startswith(".") or name in _ALWAYS_IGNORED_DIR_NAMES:
+        return True
+    candidate = os.path.join(parent, name)
+    # Loop invariant: no marker in _ENVIRONMENT_MARKERS[0..i] exists in candidate
+    for marker in _ENVIRONMENT_MARKERS:
+        if os.path.exists(os.path.join(candidate, marker)):
+            return True
+    if name in _BUILD_OUTPUT_DIR_NAMES:
+        # Loop invariant: no marker in _PACKAGING_MARKERS[0..i] sits beside candidate
+        for marker in _PACKAGING_MARKERS:
+            if os.path.isfile(os.path.join(parent, marker)):
+                return True
+    return False
 
 
 # no-invariant: stateless adapter with no instance fields to constrain
@@ -82,6 +105,8 @@ class LocalFileReader:
     def list_python_files(self, directory: str) -> list[str]:
         """List all Python (.py) files in a directory recursively.
 
+        Implements: REQ-056
+
         Args:
             directory: Root directory to search.
 
@@ -107,7 +132,7 @@ class LocalFileReader:
             for current_root, dir_names, file_names in os.walk(dir_path, followlinks=False):
                 dir_names[:] = sorted(
                     d for d in dir_names
-                    if d not in _IGNORED_DIR_NAMES
+                    if not is_ignored_directory(current_root, d)
                 )
 
                 # Loop invariant: files contains matching Python files from file_names[0..i]

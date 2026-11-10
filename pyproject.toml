@@ -44,7 +44,7 @@ dev = [
     "pytest-cov>=4.0",
 ]
 mcp = [
-    "mcp>=1.0",
+    "mcp>=1.2,<2",
 ]
 
 [project.scripts]

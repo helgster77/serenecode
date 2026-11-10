@@ -6,6 +6,85 @@ Releases before 0.6.0 are recorded in the repository's
 
 ## Unreleased
 
+These changes make several verdicts stricter and one category of failure
+visible for the first time. **A project that passed on 0.6.0 can fail after
+this change**; each item below says when.
+
+### Fixed — verdicts that were wrong
+
+- **Contracts were switched off for the whole process at Levels 5 and 6.**
+  Importing CrossHair replaces icontract's runtime checks with no-ops, and the
+  CrossHair adapter imported it into the SereneCode process. Level 4 running
+  inside a Level 5 or Level 6 pipeline therefore could not observe a
+  postcondition violation, and a function that called `sys.exit(0)` ended the
+  run with exit code 0 and no report. CrossHair is now imported only inside
+  the spawned Level 5 worker. *A project whose Level 4 findings were hidden
+  this way now fails at Level 4.* SereneCode's own source had six such
+  findings — callers admitting inputs their callees reject — which are fixed
+  here.
+- **A project checked out below a directory named `tests` was treated as a test
+  suite**: no contract rules, no test-presence check, no dead-code analysis.
+  Test files are now recognised by their path inside the project.
+- **Packages named `build`, `dist`, `env` or `venv` were silently skipped.**
+  Build output is now skipped only beside packaging metadata, and virtual
+  environments are recognised by `pyvenv.cfg` / `conda-meta`.
+- **`sys.exit` in checked code ended the run** with the target's exit code.
+  It is now a Level 4 `crash` finding, or an import failure when it happens at
+  import time.
+- **A function with no measurable body lines passed Level 3 at 100%** — the
+  `def` line runs at import. It is now `exempt` (`no_measurable_lines`).
+- **Level 6 reported a missing precondition on a function carrying the
+  `# no-precondition:` waiver**, and required class invariants when the
+  configuration did not. A project could pass Levels 1–5 and fail Level 6 on
+  a rule it had been told how to satisfy.
+- **Level 6 required contracts on test functions** when the checked path
+  included the tests, so `serenecode check . --level 6` on a project root
+  failed on every test that called a contracted function. Level 6 now skips
+  test files for contract presence, assume-guarantee and data flow, as Level 1
+  does.
+- **A mypy fatal error or timeout raised a contract violation** instead of
+  being reported. It is now a failed `<mypy>` record.
+- **An empty `SPEC.md` ended the run with a traceback.** It is now the
+  `no_requirements` finding.
+- **Text printed by project code could corrupt `--format json` output** and the
+  MCP stdio stream. It now goes to stderr.
+- **SereneCode's own contracts had gaps that disabled enforcement was hiding.**
+  With contracts live, Level 4 on SereneCode itself found inputs its own
+  preconditions admitted and its invariants then rejected: out-of-range levels
+  and negative durations in `make_check_result`, blank or NUL-carrying paths in
+  `SourceFile` and `check_compositional`, and whitespace-only names in the
+  Level 6 parsing dataclasses. The preconditions and invariants now state the
+  domain the code relies on. Two tailored Level 4 strategies for SereneCode's
+  own types matched module names those types no longer have and are removed;
+  the generic derivation was already what ran.
+
+### Changed — Level 1 rejects more
+
+- A contract decorator with `enabled=False` is reported as disabled.
+- More always-true conditions are reported as tautologies: truthy constants,
+  `not False`, `... or True`, comparisons of two literals, `x is x`,
+  `isinstance(x, object)`. `x == x` stays accepted (it is false for NaN).
+- A condition passed as `condition=` gets the same binding and tautology checks
+  as a positional one.
+- Functions and classes defined inside a module-level `if`, `try` or `with`
+  are checked like top-level definitions.
+- The suggestion on a missing-contract finding no longer proposes
+  `isinstance(result, <annotation>)`, which raised `TypeError` for `-> None`.
+
+### Changed — Level 2 and Level 6
+
+- Level 2 does not start mypy without `--allow-code-execution` when the
+  project's mypy configuration sets `plugins` or `python_executable`; both
+  make mypy run code chosen by the project. It reports which file and setting.
+- The Level 6 layer rule reads imports inside functions, `try` and `if` blocks,
+  `from package import name` forms, and string-literal dynamic imports.
+
+### Changed — packaging
+
+- The `mcp` extra requires `mcp>=1.2,<2`. `mcp.server.fastmcp` does not exist
+  before 1.2 and is a raising stub in 2.x. A failed import of the MCP server
+  now reports the underlying error.
+
 ### Added
 
 - An agent skill at `skills/serenecode/SKILL.md` that packages the

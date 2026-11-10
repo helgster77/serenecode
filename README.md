@@ -67,7 +67,7 @@ L6 checks dependency direction, cycles, explicit Protocol inheritance and signat
 
 ### Conventions and code quality
 
-The Default and Strict presets enable checks for stub bodies, mutable defaults, bare `assert` outside tests, `print()` in core, recognized dangerous calls, unfinished-work markers, tests without recognized assertions, silent exception handling, and simple tautological postconditions. These are syntax-based checks with documented suppression comments and exemptions; they do not detect every equivalent pattern or constitute a security audit. Minimal disables these additional code-quality rules by default.
+The Default and Strict presets enable checks for stub bodies, mutable defaults, bare `assert` outside tests, `print()` in core, recognized dangerous calls, unfinished-work markers, tests without recognized assertions, silent exception handling, and postconditions that only restate the return annotation (`isinstance(result, T)` where `T` is the annotation, on public functions). These are syntax-based checks with documented suppression comments and exemptions; they do not detect every equivalent pattern or constitute a security audit. Minimal disables these additional code-quality rules by default.
 
 L1 also checks that each contract can be enforced as written. icontract binds
 a condition's parameters by name against the decorated signature, so a
@@ -80,6 +80,12 @@ already entirely valid — a `bool`, a closed `Enum` — a
 `# no-precondition: <reason>` comment above the `def` or the topmost decorator
 waives the precondition requirement for that function; the reason is
 mandatory, so a bare marker waives nothing.
+
+On every function and class whose contracts L1 checks, under any preset, it
+also fails a contract switched off with a literal `enabled=False` and a
+contract whose condition cannot be false, such as `lambda result: True`,
+`x is x`, or `isinstance(x, object)`. Definitions inside a module-level `if`,
+`try`, or `with` block are checked like top-level definitions.
 
 Likely-dead-code advisories are suppressed for definitions whose callers a
 name-based scan cannot see: functions carrying a registering decorator
@@ -258,9 +264,9 @@ serenecode mcp [--allow-code-execution]                                 # boot t
 
 ## Security and limitations
 
-Levels 3–6 require explicit `--allow-code-execution` because they run project code. The tool does not sandbox filesystem or network access. Hypothesis may execute in the server process; subprocess backends receive a filtered environment but retain your user privileges. L1–L2 omit the execution-based stages, but configured mypy plugins can also execute Python. See the [trust model](docs/SECURITY.md).
+Levels 3–6 require explicit `--allow-code-execution` because they run project code. The tool does not sandbox filesystem or network access. Hypothesis may execute in the server process; subprocess backends receive a filtered environment but retain your user privileges. L1–L2 omit the execution-based stages; when the project's mypy configuration sets `plugins` or `python_executable`, which make mypy run project-chosen code, Level 2 refuses to start mypy without the flag. See the [trust model](docs/SECURITY.md).
 
-Runtime icontract checks are enabled by default under normal Python execution. They can be disabled with a decorator's `enabled` argument or, for decorators using the default, `python -O` / `PYTHONOPTIMIZE`. They check only the conditions written, at the points wrapped by icontract. Frozen dataclasses and invariants do not imply deep immutability or continuous monitoring of mutable fields.
+Runtime icontract checks are enabled by default under normal Python execution. They can be disabled with a decorator's `enabled` argument (Level 1 reports a literal `enabled=False`) or, for decorators using the default, `python -O` / `PYTHONOPTIMIZE`. They check only the conditions written, at the points wrapped by icontract. Frozen dataclasses and invariants do not imply deep immutability or continuous monitoring of mutable fields.
 
 A clean check does not establish that a spec is complete, that contracts capture intent, or that every input and dependency was checked. L4 strategies are restricted; L5 is bounded; L6 is structural. Suppressions and exemptions require review. Hypothesis runs with `deadline=None`; there is no general per-request timeout for a hanging property target. Wider benchmarks, persistent incremental verification, baseline/diff gating, and strategy registration remain opportunities documented in the [project review](docs/PROJECT_REVIEW.md).
 
@@ -278,7 +284,7 @@ Kiro documents requirements, design, and task workflows across its IDE, CLI, and
 
 GitHub's Spec Kit provides a specification-driven workflow using a constitution, specification, plan, tasks, implementation, and convergence commands. [Spec Kit repository](https://github.com/github/spec-kit).
 
-SereneCode supplies a Python CLI/MCP pipeline for executable contracts, static checks, tests, bounded symbolic search, and REQ/INT references. It can be used with an authoring workflow that produces suitable Python and a structured spec. The comparison above was checked on 7 September 2026; it is not an exclusive feature or effectiveness claim.
+SereneCode supplies a Python CLI/MCP pipeline for executable contracts, static checks, tests, bounded symbolic search, and REQ/INT references. It can be used with an authoring workflow that produces suitable Python and a structured spec. The comparison above was checked on 10 November 2026; it is not an exclusive feature or effectiveness claim.
 
 ## Disclaimer
 
