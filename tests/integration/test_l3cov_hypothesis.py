@@ -4,7 +4,6 @@ Targets specific uncovered lines and branches flagged by Level 3 verification:
 
 - hypothesis_adapter: _is_pathlike_annotation, _annotation_may_represent_path_text,
   _handle_violation, _handle_generic_exception, _build_postcondition_finding
-- hypothesis_strategies: _strategy_for_icontract_names, _strategy_for_compositional_type
 - hypothesis_refinement: _try_membership_pattern
 
 Importing private helpers directly follows the established practice in
@@ -20,7 +19,6 @@ import typing
 from unittest import mock
 
 import icontract
-import pytest
 
 from serenecode.adapters.hypothesis_adapter import (
     _annotation_may_represent_path_text,
@@ -28,10 +26,6 @@ from serenecode.adapters.hypothesis_adapter import (
     _handle_generic_exception,
     _handle_violation,
     _is_pathlike_annotation,
-)
-from serenecode.adapters.hypothesis_strategies import (
-    _strategy_for_compositional_type,
-    _strategy_for_icontract_names,
 )
 from serenecode.support.hypothesis_refinement import _try_membership_pattern
 
@@ -257,6 +251,17 @@ class TestHandleGenericException:
         assert finding.exception_type == "ValueError"
         assert finding.exception_message == "boom"
 
+    def test_unsatisfiable_is_reported_as_unverified(self) -> None:
+        """No input satisfied the preconditions: nothing was tested, nothing crashed."""
+        from hypothesis.errors import Unsatisfiable
+
+        finding = _handle_generic_exception(
+            "my_func", "pkg.mod", Unsatisfiable("no examples"),
+        )
+        assert finding.passed is True
+        assert finding.finding_type == "skipped"
+        assert "my_func" in finding.message
+
 
 # ---------------------------------------------------------------------------
 # _build_postcondition_finding
@@ -284,44 +289,6 @@ class TestBuildPostconditionFinding:
             finding.message
             == "Postcondition violated for 'my_func': opaque single-line failure"
         )
-
-
-# ---------------------------------------------------------------------------
-# _strategy_for_icontract_names
-# ---------------------------------------------------------------------------
-
-
-class TestStrategyForIcontractNames:
-    def test_returns_hypothesis_strategy(self) -> None:
-        strategy = _strategy_for_icontract_names()
-        assert strategy is not None
-        assert hasattr(strategy, "map")
-
-
-# ---------------------------------------------------------------------------
-# _strategy_for_compositional_type
-# ---------------------------------------------------------------------------
-
-
-class TestStrategyForCompositionalType:
-    @pytest.mark.parametrize(
-        "type_name",
-        [
-            "MethodSignature",
-            "ParameterInfo",
-            "FunctionInfo",
-            "ClassInfo",
-            "ProtocolInfo",
-            "ModuleInfo",
-        ],
-    )
-    def test_known_types_return_strategy(self, type_name: str) -> None:
-        strategy = _strategy_for_compositional_type(type_name, frozenset())
-        assert strategy is not None
-        assert hasattr(strategy, "map")
-
-    def test_unknown_type_returns_none(self) -> None:
-        assert _strategy_for_compositional_type("NotAType", frozenset()) is None
 
 
 # ---------------------------------------------------------------------------

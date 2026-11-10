@@ -20,6 +20,7 @@ import icontract
 
 from serenecode.config import SerenecodeConfig, is_core_module, is_exempt_module
 from serenecode.contracts.predicates import is_non_empty_string, is_pascal_case, is_snake_case
+from serenecode.contracts.predicates import is_test_module_path
 from serenecode.models import (
     CheckStatus,
     Detail,
@@ -37,7 +38,6 @@ from serenecode.checker.structural_helpers import (
     _is_protocol_class,
     _is_public_class,
     _is_public_function,
-    _is_test_module,
     _non_receiver_parameters,
     get_decorator_name,
 )
@@ -503,7 +503,7 @@ def check_bare_asserts_outside_tests(
         return []
     if is_exempt_module(module_path, config):
         return []
-    if _is_test_module(module_path):
+    if is_test_module_path(module_path):
         return []
 
     results: list[FunctionResult] = []
@@ -641,7 +641,7 @@ def check_todo_comments(
         return []
     if is_exempt_module(module_path, config):
         return []
-    if _is_test_module(module_path):
+    if is_test_module_path(module_path):
         return []
     del tree  # not needed; comment scan is purely lexical
 
@@ -710,7 +710,7 @@ def check_no_assertions_in_tests(
     """Flag test_* functions in test modules with no assertion-equivalent."""
     if not config.code_quality_rules.require_test_assertions:
         return []
-    if not _is_test_module(module_path):
+    if not is_test_module_path(module_path):
         return []
 
     results: list[FunctionResult] = []

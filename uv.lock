@@ -1535,7 +1535,7 @@ wheels = [
 
 [[package]]
 name = "serenecode"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1546,6 +1546,7 @@ dependencies = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "vulture" },
 ]
 
@@ -1571,12 +1572,13 @@ requires-dist = [
     { name = "crosshair-tool", specifier = ">=0.0.60" },
     { name = "hypothesis", specifier = ">=6.0" },
     { name = "icontract", specifier = ">=2.7.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2,<2" },
     { name = "mypy", specifier = ">=1.0" },
     { name = "pytest", specifier = ">=7.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-cov", specifier = ">=4.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.1" },
     { name = "vulture", specifier = ">=2.14" },
 ]
 provides-extras = ["dev", "mcp"]

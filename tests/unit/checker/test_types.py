@@ -115,3 +115,47 @@ class TestSuggestFromMypyCode:
         result = _suggest_from_mypy_code("attr-defined", "attribute does not exist")
         assert result is not None
         assert "attribute" in result.lower()
+
+
+class TestIssueWithoutALine:
+    """A fatal mypy error or a timeout has no line to point at."""
+
+    def test_fatal_error_is_reported_at_line_one(self) -> None:
+        """Verifies: REQ-063"""
+        issues = [TypeIssue(
+            file="<mypy>", line=0, column=0, severity="error",
+            message="mod.py: error: Duplicate module named 'mod'",
+        )]
+
+        result = transform_type_results(issues, 0.1)
+
+        assert result.passed is False
+        record = result.results[0]
+        assert (record.function, record.file, record.line) == ("<mypy>", "<mypy>", 1)
+        assert record.status == CheckStatus.FAILED
+        assert "Duplicate module" in record.details[0].message
+
+    def test_timeout_is_reported_at_line_one(self) -> None:
+        """Verifies: REQ-063"""
+        issues = [TypeIssue(
+            file="<timeout>", line=0, column=0, severity="error",
+            message="mypy timed out after 120s",
+        )]
+
+        result = transform_type_results(issues, 120.0)
+
+        assert [(r.function, r.line, r.status) for r in result.results] == [
+            ("<mypy>", 1, CheckStatus.FAILED),
+        ]
+
+    def test_issue_without_message_or_code_still_yields_a_record(self) -> None:
+        """A blank message must not violate the Detail invariant.
+
+        Verifies: REQ-063
+        """
+        issues = [TypeIssue(file="test.py", line=3, column=0, severity="error", message="")]
+
+        result = transform_type_results(issues, 0.1)
+
+        assert result.summary.failed_count == 1
+        assert result.results[0].details[0].message == "mypy reported an error without a message"

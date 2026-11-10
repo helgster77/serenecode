@@ -21,6 +21,7 @@ import re
 import icontract
 
 from serenecode.config import SerenecodeConfig
+from serenecode.contracts.predicates import is_test_module_path
 from serenecode.models import (
     CheckStatus,
     Detail,
@@ -30,23 +31,6 @@ from serenecode.models import (
 from serenecode.core.pipeline import SourceFile
 
 _BANNER_PATTERN = re.compile(r"^#\s*[-=]{3,}\s*(.+?)\s*[-=]*\s*$")
-
-
-@icontract.require(
-    lambda file_path: isinstance(file_path, str),
-    "file_path must be a string",
-)
-@icontract.ensure(lambda result: isinstance(result, bool), "result must be a boolean")
-def _is_test_file_path(file_path: str) -> bool:
-    """Return True when a path points to a test-only Python file."""
-    normalized = file_path.replace("\\", "/")
-    basename = normalized.rsplit("/", maxsplit=1)[-1]
-    path_parts = normalized.split("/")
-    return (
-        "tests" in path_parts
-        or basename.startswith("test_")
-        or basename == "conftest.py"
-    )
 
 
 @icontract.require(
@@ -180,7 +164,7 @@ def check_file_length(
 
     # Loop invariant: results contains file-length findings for source_files[0..i]
     for sf in source_files:
-        if _is_test_file_path(sf.file_path):
+        if is_test_module_path(sf.module_path):
             continue
         line_count = len(sf.source.splitlines())
         if line_count <= mh.file_length_warn:
@@ -278,7 +262,7 @@ def check_function_length(
 
     # Loop invariant: results contains function-length findings for source_files[0..i]
     for sf in source_files:
-        if _is_test_file_path(sf.file_path):
+        if is_test_module_path(sf.module_path):
             continue
         # silent-except: unparseable files are handled by L1 structural; skip here
         try:
@@ -424,7 +408,7 @@ def check_parameter_count(
 
     # Loop invariant: results contains parameter-count findings for source_files[0..i]
     for sf in source_files:
-        if _is_test_file_path(sf.file_path):
+        if is_test_module_path(sf.module_path):
             continue
         # silent-except: unparseable files are handled by L1 structural; skip here
         try:
@@ -510,7 +494,7 @@ def check_class_method_count(
 
     # Loop invariant: results contains class-size findings for source_files[0..i]
     for sf in source_files:
-        if _is_test_file_path(sf.file_path):
+        if is_test_module_path(sf.module_path):
             continue
         # silent-except: unparseable files are handled by L1 structural; skip here
         try:

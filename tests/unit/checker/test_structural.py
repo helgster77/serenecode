@@ -30,8 +30,8 @@ from serenecode.checker.structural_helpers import (
     _is_tautological_lambda,
     resolve_icontract_aliases,
 )
+from serenecode.contracts.predicates import is_test_module_path as _is_test_module
 from serenecode.checker.structural_quality import (
-    _is_test_module,
     check_bare_asserts_outside_tests,
     check_dangerous_calls,
     check_mutable_default_arguments,

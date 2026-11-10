@@ -44,6 +44,8 @@ Each finding includes function name, file path, line number, a message, and a su
   - A contract that cannot be enforced as written — a condition over `*args`/`**kwargs`, a condition naming a parameter the signature does not have, or `lambda result: ...` on a function annotated `-> None`. Fix the contract; do not delete it.
   - A precondition that is genuinely unnecessary because the parameter's annotated domain is already fully valid: waive it with `# no-precondition: <reason>`, never with a type-shaped tautology.
   - An `Implements:`/`Verifies:` tag in a module docstring, which nothing reads. Move it to the implementing or testing symbol.
+  - A contract switched off with `enabled=False`, or a condition that cannot be false (`lambda x: True`, `not False`, `... or True`, `x is x`, `isinstance(x, object)`). Write a condition that constrains behavior.
+  - A definition inside a module-level `if`, `try` or `with` block: it is checked like any top-level definition.
 
 **Level 2 (types)** — mypy type errors. The suggestion includes the mypy error code and a fix direction. Fix the type annotation or the expression.
 

@@ -4,7 +4,7 @@
 
 **Source:** Implementation plan derived from codebase exploration (2026-04-13).
 
-**Scope:** This specification covers the module-health feature (REQ-001–REQ-036, INT-001–INT-004) and the contract-enforcement and tooling corrections of REQ-037–REQ-053 and INT-005, not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
+**Scope:** This specification covers the module-health feature (REQ-001–REQ-036, INT-001–INT-004) the contract-enforcement and tooling corrections of REQ-037–REQ-053 and INT-005, and the verdict-soundness corrections of REQ-054–REQ-070, not the entire SereneCode product. References and presentation descriptions were reconciled with the implementation on 7 September 2026. Product behavior and verification limits are documented in [README.md](README.md) and [verification semantics](docs/VERIFICATION_LEVELS.md). Tags establish traceability, not proof of every acceptance criterion.
 
 ---
 
@@ -421,6 +421,170 @@ gives no hint that the tag exists in the wrong docstring a few lines away.
 `INT-xxx` identifiers on a single symbol, in any mixture — for example
 `Implements: REQ-001, INT-002`. Each listed identifier is recorded
 separately. The templates document this.
+
+---
+
+## Verdict Soundness
+
+A pass has to mean that the check ran on the code it names. The requirements
+in this section each close a way for a run to report success, or to end
+without a report, while code went unchecked. They come from the 10 November
+2026 review.
+
+### REQ-054: Level 5 wiring leaves contract enforcement intact
+
+Importing `crosshair.core_and_libs` replaces icontract's precondition,
+postcondition and invariant checkers with no-ops for the whole process. The
+CrossHair adapter therefore never imports CrossHair into the SereneCode
+process: availability is detected with `importlib.util.find_spec`, and the
+CrossHair API is imported only inside `_api_verification_worker`, which runs
+in a spawned child. After the adapter module is imported and a
+`CrossHairSymbolicChecker` is constructed, an icontract violation in the same
+process still raises `ViolationError`, so a Level 4 property test that runs
+in a Level 5 or Level 6 pipeline detects the same postcondition violations it
+detects in a Level 4 pipeline.
+
+### REQ-055: test-file classification uses the project-relative path
+
+A file is a test file when its path relative to the context root contains a
+`tests` segment, when its basename starts with `test_`, or when it is
+`conftest.py`. Directories above the context root never take part, so a
+checkout located under a directory named `tests` is checked like any other.
+Level 1 contract checks, the test-file-presence check, dead-code analysis,
+module health and traceability scoping all use the one predicate
+`is_test_module_path`, applied to `SourceFile.module_path`.
+
+### REQ-056: build and virtualenv exclusion is anchored
+
+`LocalFileReader.list_python_files` skips hidden directories (names starting
+with a dot), `__pycache__` and `node_modules` wherever they occur. It skips a
+directory that is a Python environment — one containing `pyvenv.cfg` or
+`conda-meta` — whatever it is called. It skips `build` and `dist` only when a
+packaging marker — `pyproject.toml`, `setup.py` or `setup.cfg` — sits beside
+them, which is where build output is written. A package directory that is
+merely named `build`, `dist`, `env` or `venv` is listed.
+
+### REQ-057: an exit raised by target code is a finding
+
+When a function under property test raises `SystemExit`, or any other
+`BaseException` that is not `KeyboardInterrupt`, Level 4 reports a FAILED
+`crash` finding naming the exception type, and the run continues to its
+report. When the escaping exception is a group that contains an icontract
+violation, the violation is reported. A module that calls `sys.exit` while
+being imported is reported as not importable: `load_python_module` raises
+`ImportError` naming the exit.
+
+### REQ-058: a function with no measurable body lines gives no coverage evidence
+
+When coverage data contains no measured line inside a function's body — the
+body is excluded by a pragma or an `exclude_lines` pattern, is a bare stub, or
+shares its only line with the `def` — the function is reported EXEMPT with
+`finding_type="no_measurable_lines"` and a message saying Level 3 provides no
+evidence for it. It is never reported as covered. The `def` line itself runs
+at import, so it does not count as a body line.
+
+### REQ-059: a disabled contract fails Level 1
+
+A `require`, `ensure` or `invariant` decorator carrying the literal keyword
+`enabled=False` is never evaluated by icontract. It is reported as a FAILED
+finding stating that the contract is disabled, on functions and on classes.
+
+### REQ-060: a condition passed by keyword is checked like a positional one
+
+The condition of a contract decorator is its first positional argument or its
+`condition=` keyword argument. The binding checks of REQ-037–REQ-041 and the
+tautology check apply to both spellings.
+
+### REQ-061: conditions that are always true are tautologies
+
+A lambda condition is tautological when its value is fixed and truthy
+whatever the arguments: a truthy constant, the negation of a falsy constant,
+an `or` with a constant-true operand, an `and` whose operands are all
+constant-true, a comparison between two literals that holds, `x is x`, or
+`isinstance(<anything>, object)`. Each is reported as the existing
+tautological-contract finding. `x == x`, `x <= x` and `x >= x` are not
+reported: they are false for a float NaN, so they constrain the input.
+
+### REQ-062: definitions inside module-level compound statements are checked
+
+Functions and classes defined in the body, `else` branch or handlers of a
+module-level `if`, `try` or `with` statement are checked by Level 1 exactly
+like definitions at the top level, including their methods. Closures inside
+function bodies stay out of scope.
+
+### REQ-063: a type-checker issue without a line is reported, not raised
+
+A `TypeIssue` with line 0 — a mypy fatal error such as a duplicate module
+name, or a timeout — becomes a FAILED Level 2 record for `<mypy>` at line 1
+carrying the checker's message. It does not violate the `FunctionResult`
+line invariant.
+
+### REQ-064: project output cannot reach stdout during verification
+
+While the CLI commands and the MCP check tools run the pipeline,
+`sys.stdout` is redirected to stderr, so text printed by imported or executed
+project code cannot corrupt the JSON document of REQ-043 or the MCP stdio
+stream. The Level 5 worker process applies the same redirection to itself.
+
+### REQ-065: Level 6 contract completeness honours the Level 1 waivers
+
+The Level 6 completeness check does not report a missing precondition for a
+function that carries the `# no-precondition: <reason>` waiver of REQ-050,
+and does not report a missing class invariant when the active configuration
+sets `require_on_classes` to false. The Level 6 contract-completeness,
+assume-guarantee and data-flow checks skip test files as classified by
+REQ-055, so checking a project root that contains its tests does not ask test
+functions for contracts. `parse_module_info` accepts any non-blank file path
+and module path without a null byte, including one with a `..` segment, so a
+project addressed as `../proj` reaches Level 6.
+
+### REQ-066: Level 2 refuses project-selected mypy plugins without consent
+
+Two mypy options make the type checker run code chosen by the project:
+`plugins` names Python modules mypy imports, and `python_executable` names a
+program mypy starts. The project configuration is the first of `mypy.ini`,
+`.mypy.ini`, `pyproject.toml` with `[tool.mypy]` and `setup.cfg` with
+`[mypy]`, searched in the working directory and then in each ancestor up to
+the repository root. When that file sets either option and code execution has
+not been allowed, Level 2 does not start mypy: it reports a FAILED `<mypy>`
+record naming the configuration file and the settings, and telling the user
+to re-run with `--allow-code-execution`. With consent, mypy runs as before. A
+user-level mypy configuration is the user's own choice and is not examined.
+
+### REQ-067: the MCP extra is bounded to the supported SDK line
+
+The `mcp` extra requires `mcp>=1.2,<2`: `mcp.server.fastmcp` first shipped in
+1.2 and is a raising stub in 2.x. When importing the MCP server fails, the
+error message includes the underlying import error instead of stating only
+that the extra is not installed.
+
+### REQ-068: an empty SPEC.md is reported, not raised
+
+`validate_spec` and `check_spec_traceability` accept any string, including an
+empty or whitespace-only one. An empty `SPEC.md` produces the existing
+`no_requirements` FAILED finding and a normal report; it does not violate a
+precondition and end the run with a traceback.
+
+### REQ-069: the layer rule sees every import form
+
+`ModuleInfo.all_imports` lists every module a file imports, wherever the
+statement appears: inside `try`, `if` (including `if TYPE_CHECKING:`), `with`
+and function bodies, as well as at the top level. A `from package import
+name` contributes both `package` and `package.name`, so
+`from .. import adapters` is seen as an import of the adapters layer.
+String-literal arguments of `importlib.import_module` and `__import__` are
+included. `check_dependency_direction` tests this list. Cycle detection keeps
+using top-level imports only.
+
+### REQ-070: missing-contract suggestions are themselves valid
+
+The suggestion attached to a missing-postcondition finding never proposes
+`isinstance(result, <annotation>)`: for a `-> None` function that expression
+raises `TypeError`, and for any other annotation it only restates the type.
+The suggestion instead asks for a condition relating `result` to the inputs,
+or, for `-> None`, a condition over the parameters or `self` that describes
+the effect. The missing-precondition suggestion likewise asks for a condition
+on the parameter's values and names the `# no-precondition: <reason>` waiver.
 
 ## INT-005: Contract binding check integration
 

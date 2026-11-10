@@ -3,7 +3,7 @@
 This records local measurements of the working tree containing the seven defect
 fixes and documentation/template corrections. The base commit was
 `a2fb95fb76dc1699bf5f198d021d14dfcf87a1bd`; changes were uncommitted. Package metadata said
-`0.5.1` at the time of that run; the current tree is `0.6.0`. This is not a claim about the published PyPI artifact or remote CI.
+`0.5.1` at the time of that run; the current tree is `0.7.0`. This is not a claim about the published PyPI artifact or remote CI.
 The [machine-readable snapshot](verification-2026-09-07.json) contains the counts,
 commands, timestamps, and tool versions **of that run only** — it is a dated
 artifact and does not carry the re-measured numbers noted below. Refresh this record when the inputs change;
@@ -27,7 +27,48 @@ counts can be quoted again. Measured after that work, on the same machine:
   the example; this run covers `src` only).
 
 The L5/L6 stages, the example-project runs, and the icontract decorator count
-in the tables below have not been re-measured.
+in the tables below were not re-measured in that pass.
+
+**Re-measured on 10 November 2026**, on the tree of the `Prepare 0.7.0`
+commit. Its parent, `afa59a4`, holds the verdict-soundness work of
+`REQ-054`–`REQ-070`; the preparation adds the version bump, the lockfile, and
+the changelog. The measurements were taken before that commit was made. Same
+machine, Python 3.13.12:
+
+- Root `SPEC.md` holds **70 requirements and 5 integration points** (was 53
+  and 5).
+- `pytest --collect-only -q` collects **2012 tests** (was 1877).
+- `pytest -q`: **2012 passed**, 0 skipped, exit 0, 5m 34s.
+- `serenecode check src --level 6 --allow-code-execution --format json`: exit
+  **0**, achieved **L6**, **complete**, 1,276 records — 774 passed, 0 failed,
+  0 skipped, 502 exempt including 107 advisories. Wall time 10m 32.2s. The
+  report's `version` field read `0.7.0`.
+- `mypy src examples/dosage-serenecode/src`: passed on **68 source files**.
+- `examples/dosage-serenecode`: `pytest -q` 67 passed; the L6 command exited 0,
+  complete, L6, with 47 passed records, 0 failed, 0 skipped, 7 exempt including
+  4 advisories. `examples/dosage-regular`: `pytest -q` 59 passed. The example
+  runs were measured earlier the same day, before the version bump; no source
+  file changed in between.
+- Python 3.10.20, with the locked dependencies, mirroring the CI job:
+  `mypy src examples/dosage-serenecode/src` passed, both Level 2 self-checks
+  exited 0, and `pytest -q` passed all **2012** tests. The full 3.10 suite ran
+  before the version bump; after it, the 1970 tests not marked slow were
+  re-run and passed.
+- `uv build` produced the `0.7.0` wheel and sdist; `twine check` passed both,
+  and the clean-wheel Level 3 smoke check passed on Python 3.10.
+
+Two things about this run differ in kind from the earlier ones. CrossHair is no
+longer imported into the SereneCode process (`REQ-054`), so icontract contracts
+are enforced during Level 4 inside a Level 5 or Level 6 run and throughout the
+test suite; before, they were switched off in both. And Level 4 input
+generation is unseeded, so a rare counterexample can appear in one run and not
+the next: one such finding (a whitespace-only name accepted by the Level 6
+dataclasses) appeared once in 24 strict Level 4 runs, was fixed, and did not
+recur in 36 further runs. A passing run is evidence within those bounds, not a
+proof that no further rare input exists.
+
+These are local measurements. Remote CI has not run on this tree, and nothing
+here is a claim about a published PyPI artifact.
 
 ## Framework
 

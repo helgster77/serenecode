@@ -13,7 +13,7 @@ from serenecode.ports.coverage_analyzer import (
     MockDependency,
     CoverageSuggestion,
 )
-from tests.conftest import assert_violation_or_skip
+from tests.conftest import assert_violation
 
 
 def _make_passing_finding(name: str = "func") -> CoverageFinding:
@@ -266,7 +266,36 @@ class TestFormatLineRanges:
         assert _format_line_ranges(lines) == "100-200"
 
     def test_precondition_rejects_non_positive(self) -> None:
-        assert_violation_or_skip(lambda: _format_line_ranges((0,)))
+        assert_violation(lambda: _format_line_ranges((0,)))
 
     def test_precondition_rejects_negative(self) -> None:
-        assert_violation_or_skip(lambda: _format_line_ranges((-1,)))
+        assert_violation(lambda: _format_line_ranges((-1,)))
+
+
+def test_function_without_measurable_lines_is_exempt_not_passed() -> None:
+    """No measured body line is no evidence, so the record must not pass.
+
+    Verifies: REQ-058
+    """
+    finding = CoverageFinding(
+        function_name="stub",
+        module_path="test_module",
+        line_start=1,
+        line_end=2,
+        line_coverage_percent=0.0,
+        branch_coverage_percent=0.0,
+        uncovered_lines=(),
+        uncovered_branches=(),
+        suggestions=(),
+        meets_threshold=False,
+        message="'stub' has no measurable body lines",
+        finding_type="no_measurable_lines",
+    )
+
+    result = transform_coverage_results([finding], "test.py", 0.1)
+
+    assert [record.status for record in result.results] == [CheckStatus.EXEMPT]
+    assert result.results[0].level_achieved == 2
+    assert result.results[0].details[0].finding_type == "no_measurable_lines"
+    assert result.summary.passed_count == 0
+    assert result.summary.failed_count == 0

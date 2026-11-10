@@ -312,6 +312,18 @@ def result_is_advisory(func_result: FunctionResult) -> bool:
     lambda results: isinstance(results, tuple),
     "results must be a tuple",
 )
+@icontract.require(
+    lambda level_requested: 1 <= level_requested <= 6,
+    "level_requested must be a verification level (1-6)",
+)
+@icontract.require(
+    lambda duration_seconds: duration_seconds >= 0.0,
+    "duration_seconds must be non-negative",
+)
+@icontract.require(
+    lambda level_requested, level_achieved: level_achieved is None or 0 <= level_achieved <= level_requested,
+    "an explicit level_achieved must lie between 0 and level_requested",
+)
 @icontract.ensure(
     lambda results, level_requested, result: result.level_requested == level_requested,
     "result must report the correct requested level",

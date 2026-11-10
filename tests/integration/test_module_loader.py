@@ -46,6 +46,17 @@ class TestLoadPythonModule:
         with pytest.raises(RuntimeError, match="boom"):
             load_python_module(str(module_file))
 
+    def test_module_that_exits_on_import_raises_import_error(self, tmp_path: Path) -> None:
+        """SystemExit from a target module must not end the verification run.
+
+        Verifies: REQ-057
+        """
+        module = tmp_path / "exits_on_import.py"
+        module.write_text("import sys\nsys.exit(3)\n", encoding="utf-8")
+
+        with pytest.raises(ImportError, match=r"sys\.exit\(3\)"):
+            load_python_module(str(module))
+
     def test_sys_modules_not_polluted_after_exec_failure(self, tmp_path: Path) -> None:
         """A failed load must not leave the broken module in sys.modules."""
         module_file = tmp_path / "broken_mod.py"

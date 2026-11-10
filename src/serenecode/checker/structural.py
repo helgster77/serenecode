@@ -16,7 +16,7 @@ import time
 import icontract
 
 from serenecode.config import SerenecodeConfig, is_core_module, is_exempt_module
-from serenecode.core.pipeline_helpers import _is_test_file_path
+from serenecode.contracts.predicates import is_test_module_path
 from serenecode.models import (
     CheckResult,
     CheckStatus,
@@ -29,6 +29,7 @@ from serenecode.models import (
 from serenecode.checker.contract_binding import (
     _check_single_function_contracts,
     check_contract_bindings,
+    disabled_contract_details,
 )
 
 from serenecode.checker.structural_helpers import (
@@ -176,6 +177,7 @@ def check_class_invariants(
                 suggestion=suggestion,
             ))
         else:
+            details.extend(disabled_contract_details(node, aliases.invariant_names))
             # Check for tautological invariants (e.g. lambda self: True)
             tautological = _find_tautological_contracts(node, aliases.invariant_names)
             # Loop invariant: details contains one finding per tautological invariant in [0..i]
@@ -910,7 +912,7 @@ def _run_all_structural_checks(
     Implements: REQ-042, INT-005
     """
     results: list[FunctionResult] = []
-    if not _is_test_file_path(file_path):
+    if not is_test_module_path(module_path):
         results.extend(check_contracts(tree, config, aliases, file_path, source))
         results.extend(check_contract_bindings(tree, aliases, file_path))
         results.extend(check_class_invariants(tree, config, aliases, file_path, source))

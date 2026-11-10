@@ -106,8 +106,8 @@ class TestFunctionResultProperty:
     @example(line=-1)
     @example(line=-999)
     def test_invalid_line_rejected(self, line: int) -> None:
-        from tests.conftest import assert_violation_or_skip
-        assert_violation_or_skip(lambda: FunctionResult(
+        from tests.conftest import assert_violation
+        assert_violation(lambda: FunctionResult(
             function="f", file="f.py", line=line,
             level_requested=1, level_achieved=1, status=CheckStatus.PASSED,
         ))
@@ -163,9 +163,9 @@ class TestCheckSummaryProperty:
     def test_mismatched_total_rejected(
         self, passed: int, failed: int, skipped: int, exempt: int,
     ) -> None:
-        from tests.conftest import assert_violation_or_skip
+        from tests.conftest import assert_violation
         total = passed + failed + skipped + exempt + 1  # off by one
-        assert_violation_or_skip(lambda: CheckSummary(
+        assert_violation(lambda: CheckSummary(
             total_functions=total,
             passed_count=passed,
             failed_count=failed,

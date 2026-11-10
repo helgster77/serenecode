@@ -28,6 +28,10 @@ from serenecode.ports.type_checker import TypeIssue
     lambda issues: isinstance(issues, list),
     "issues must be a list",
 )
+@icontract.require(
+    lambda duration_seconds: duration_seconds >= 0.0,
+    "duration_seconds must be non-negative",
+)
 @icontract.ensure(
     lambda result: result.level_requested == 2,
     "transformed result must report level 2 (types)",
@@ -37,6 +41,8 @@ def transform_type_results(
     duration_seconds: float,
 ) -> CheckResult:
     """Transform mypy type issues into a CheckResult.
+
+    Implements: REQ-063
 
     Groups issues by file and line, creating FunctionResult entries
     for each location with type errors.
@@ -75,14 +81,19 @@ def transform_type_results(
                 level=VerificationLevel.TYPES,
                 tool="mypy",
                 finding_type="violation",
-                message=f"{error.message}" + (f" [{error.code}]" if error.code else ""),
+                message=(
+                    error.message if is_non_empty_string(error.message)
+                    else "mypy reported an error without a message"
+                ) + (f" [{error.code}]" if error.code else ""),
                 suggestion=suggestion,
             ))
 
+        # A fatal mypy error or a timeout carries no line; it still has to
+        # be reported, and FunctionResult lines start at 1.
         func_results.append(FunctionResult(
-            function=f"<line {line}>",
+            function=f"<line {line}>" if line >= 1 else "<mypy>",
             file=file_path,
-            line=line,
+            line=max(1, line),
             level_requested=2,
             level_achieved=1,
             status=CheckStatus.FAILED,

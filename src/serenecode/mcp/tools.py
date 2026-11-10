@@ -17,7 +17,7 @@ from typing import Callable
 
 import icontract
 
-from serenecode.adapters import wire_adapters
+from serenecode.adapters import project_output_on_stderr, wire_adapters
 from serenecode.adapters.local_fs import LocalFileReader
 from serenecode.checker.structural import check_structural
 from serenecode.config import (
@@ -190,6 +190,7 @@ def _wire_adapters(level: int) -> dict[str, object]:
     (type_checker, coverage_analyzer, property_tester,
      symbolic_checker, dead_code_analyzer) = wire_adapters(
         level, dead_code_placeholder=True,
+        allow_code_execution=_STATE.allow_code_execution,
     )
     return {
         "type_checker": type_checker,
@@ -280,19 +281,20 @@ def tool_check(path: str = ".", level: int = 1) -> dict[str, object]:
     test_stems = discover_test_file_stems(abs_path, reader)
     spec_content, test_sources = _load_spec_inputs(abs_path)
     adapters = _wire_adapters(level)
-    result = run_pipeline(
-        source_files=source_files,
-        level=level,
-        start_level=1,
-        config=config,
-        known_test_stems=test_stems,
-        spec_content=spec_content,
-        test_sources=test_sources,
-        traceability_sources=(
-            discover_traceability_sources(source_files, reader) if spec_content is not None else None
-        ),
-        **adapters,  # type: ignore[arg-type]
-    )
+    with project_output_on_stderr():
+        result = run_pipeline(
+            source_files=source_files,
+            level=level,
+            start_level=1,
+            config=config,
+            known_test_stems=test_stems,
+            spec_content=spec_content,
+            test_sources=test_sources,
+            traceability_sources=(
+                discover_traceability_sources(source_files, reader) if spec_content is not None else None
+            ),
+            **adapters,  # type: ignore[arg-type]
+        )
     response = to_check_response(result)
     _STATE.last_check = response
     return response_to_dict(response)
@@ -339,19 +341,20 @@ def tool_check_file(path: str, level: int = 1) -> dict[str, object]:
     test_stems = discover_test_file_stems(project_root, reader)
     spec_content, test_sources = _load_spec_inputs(abs_file)
     adapters = _wire_adapters(level)
-    result = run_pipeline(
-        source_files=source_files,
-        level=level,
-        start_level=1,
-        config=config,
-        known_test_stems=test_stems,
-        spec_content=spec_content,
-        test_sources=test_sources,
-        traceability_sources=(
-            discover_traceability_sources(source_files, reader) if spec_content is not None else None
-        ),
-        **adapters,  # type: ignore[arg-type]
-    )
+    with project_output_on_stderr():
+        result = run_pipeline(
+            source_files=source_files,
+            level=level,
+            start_level=1,
+            config=config,
+            known_test_stems=test_stems,
+            spec_content=spec_content,
+            test_sources=test_sources,
+            traceability_sources=(
+                discover_traceability_sources(source_files, reader) if spec_content is not None else None
+            ),
+            **adapters,  # type: ignore[arg-type]
+        )
     response = to_check_response(result)
     _STATE.last_check = response
     return response_to_dict(response)
@@ -418,19 +421,20 @@ def tool_check_function(
     test_stems = discover_test_file_stems(project_root, reader)
     spec_content, test_sources = _load_spec_inputs(abs_file)
     adapters = _wire_adapters(level)
-    result = run_pipeline(
-        source_files=source_files,
-        level=level,
-        start_level=1,
-        config=config,
-        known_test_stems=test_stems,
-        spec_content=spec_content,
-        test_sources=test_sources,
-        traceability_sources=(
-            discover_traceability_sources(source_files, reader) if spec_content is not None else None
-        ),
-        **adapters,  # type: ignore[arg-type]
-    )
+    with project_output_on_stderr():
+        result = run_pipeline(
+            source_files=source_files,
+            level=level,
+            start_level=1,
+            config=config,
+            known_test_stems=test_stems,
+            spec_content=spec_content,
+            test_sources=test_sources,
+            traceability_sources=(
+                discover_traceability_sources(source_files, reader) if spec_content is not None else None
+            ),
+            **adapters,  # type: ignore[arg-type]
+        )
     filtered = filter_function_result(result, target)
     response = to_check_response(filtered)
     _STATE.last_check = response
@@ -579,10 +583,11 @@ def tool_dead_code(path: str = ".") -> dict[str, object]:
     """
     abs_path = os.path.abspath(path)
     reader = LocalFileReader()
+    project_root = _resolve_root(abs_path)
     files = [
         file_path
         for file_path in reader.list_python_files(abs_path)
-        if not is_test_file_path(file_path)
+        if not is_test_file_path(file_path, project_root)
     ]
     if not files:
         return {

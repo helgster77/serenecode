@@ -43,6 +43,44 @@ exemptions, but backend eligibility, test-specific rules, and explicit suppressi
 still apply. Module-health numeric overrides are not parsed from Markdown tables;
 use `SerenecodeConfig` in the Python API for explicit thresholds.
 
+## Level 1 (structure and contracts)
+
+- **What counts as a contract.** A decorator carrying a literal `enabled=False`
+  is never evaluated by icontract and is reported as a disabled contract. A
+  lambda condition that cannot be false is reported as a tautology: a truthy
+  constant, `not False`, an `or` with a constant-true operand, a comparison of
+  two literals, `x is x`, `isinstance(x, object)`. `x == x` is accepted — it is
+  false for NaN. The condition is read from the first positional argument or
+  from `condition=`. A condition that only restates a type annotation
+  (`isinstance(result, int)` on `-> int`) is **not** detected; it satisfies the
+  rule and constrains nothing, so review for it.
+- **Which definitions are checked.** Module-level functions and classes, their
+  methods, and definitions inside a module-level `if`, `try` or `with` block
+  (including `if TYPE_CHECKING:` and both branches of a version check).
+  Closures inside function bodies are not checked.
+- **Test files** are recognised by their path *inside the project*: a `tests`
+  directory segment, a `test_*.py` name, or `conftest.py`. A project that
+  happens to be checked out below a directory called `tests` is still checked
+  as production code.
+- **Directories skipped during discovery:** hidden directories, `__pycache__`,
+  `node_modules`, any directory containing `pyvenv.cfg` or `conda-meta`, and
+  `build` / `dist` only when they sit beside a `pyproject.toml`, `setup.py` or
+  `setup.cfg`. A package that is itself named `build`, `dist`, `env` or `venv`
+  is checked.
+- **Test-file presence** is checked only when the project has at least one
+  `tests/test_*.py` file. A project with no tests at all gets no
+  `No test file found` findings from Level 1; Level 3 is where missing tests
+  block.
+- An empty `SPEC.md` is reported as a spec with no requirements.
+
+## Level 2 (types)
+
+mypy runs in a subprocess with `--strict`. A fatal mypy error or a timeout has
+no source line and is reported as a failed `<mypy>` record at line 1. When the
+project's mypy configuration sets `plugins` or `python_executable`, Level 2
+refuses to start mypy without `--allow-code-execution`
+(see [SECURITY.md](SECURITY.md)).
+
 ## Level 3 (test execution and coverage)
 
 The default threshold is 80% for both per-function line and branch coverage.
@@ -53,6 +91,10 @@ figure would record whether the module was imported — 0% when nothing imports
 it, 100% when something does — and never whether an implementation was
 exercised. A Protocol method with a real body, and a `...` body in a class
 that is not a Protocol, both still count.
+A function with no measured body line — the body is under
+`# pragma: no cover`, is a bare stub, or sits on the `def` line — is reported
+as `exempt` with type `no_measurable_lines`. The `def` line runs at import, so
+it alone used to read as 100% coverage; it is now no evidence either way.
 Install the project's dependencies in the interpreter shown by `serenecode doctor`.
 Doctor discovers backend packages; it does not run each backend as a health check.
 
@@ -70,6 +112,14 @@ NaN, infinity, extreme integers, and arbitrary-length strings are therefore not
 covered by these basic strategies. Hypothesis runs in-process with `deadline=None`;
 a hanging target has no general per-request wall-clock limit.
 
+Contracts are enforced for the whole run at every level, including the
+contracts of functions the target calls. A violation of a *callee's*
+precondition is therefore reported against the target: it means the target's
+own preconditions admit an input its implementation cannot handle. A target
+that calls `sys.exit` (or raises another non-`Exception` exit) is reported as a
+`crash` finding; a module that exits while being imported is reported as an
+import failure. Neither ends the run.
+
 ## Level 5 (bounded symbolic search)
 
 CrossHair searches eligible contracted top-level functions. The CLI defaults are
@@ -86,6 +136,17 @@ bounds, not a proof over all Python values or paths.
   - an **`isinstance(..., Type)`** where the type expression matches that same target (including `pkg.sub.Type` and tuple-of-types forms).
 - **Comma-separated targets:** If `Target` contains commas, **every** listed target must appear (logical **AND**). Prefer one integration per boundary if that keeps the spec easier to read.
 - **Markdown in fields:** `Source`, `Target`, and related INT lines may use backticks; the parser strips them so `` `module.Type` `` matches `module.Type`.
+
+The dependency-direction rule reads every import in a core or ports module,
+wherever the statement is written: top level, inside a function, a `try`, or an
+`if` (including `if TYPE_CHECKING:`). `from package import name` counts as an
+import of `package.name` too, and a string literal passed to
+`importlib.import_module` or `__import__` counts as an import of that module.
+A module name computed at runtime cannot be seen. Cycle detection uses
+top-level imports only. Contract presence at this level follows Level 1: a
+`# no-precondition: <reason>` waiver is honoured, class invariants are
+required only when the configuration requires them, and test files are not
+asked for contracts.
 
 L6 checks recognized AST structure, explicit Protocol inheritance/signature
 compatibility, dependency direction, and contract presence. It does not establish

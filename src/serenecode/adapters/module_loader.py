@@ -40,17 +40,27 @@ def load_python_module(
 ) -> ModuleType:
     """Load a Python module from a dotted name or an absolute file path.
 
+    Implements: REQ-057
+
     Always refreshes the target module so repeated verification runs see
     the latest source instead of a cached import from an earlier check.
+    A module that calls ``sys.exit`` while being imported raises
+    ImportError here: letting SystemExit escape would end the verification
+    run with the module's exit code and no report.
     """
     with _MODULE_LOAD_LOCK:
-        module_file = _as_existing_python_file(module_ref)
-        if module_file is None:
-            spec = _find_module_spec(module_ref, search_paths)
-            if spec is None or spec.origin is None:
-                raise ImportError(f"Cannot load module '{module_ref}'")
-            return _load_module_from_spec(module_ref, spec, search_paths)
-        return _load_module_from_file(module_file, search_paths)
+        try:
+            module_file = _as_existing_python_file(module_ref)
+            if module_file is None:
+                spec = _find_module_spec(module_ref, search_paths)
+                if spec is None or spec.origin is None:
+                    raise ImportError(f"Cannot load module '{module_ref}'")
+                return _load_module_from_spec(module_ref, spec, search_paths)
+            return _load_module_from_file(module_file, search_paths)
+        except SystemExit as exc:
+            raise ImportError(
+                f"Module '{module_ref}' called sys.exit({exc.code!r}) while being imported"
+            ) from exc
 
 
 @icontract.require(lambda module_ref: is_non_empty_string(module_ref), "module_ref must be a non-empty string")

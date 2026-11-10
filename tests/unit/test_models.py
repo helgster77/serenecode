@@ -11,7 +11,7 @@ import json
 import icontract
 import pytest
 
-from tests.conftest import assert_violation_or_skip
+from tests.conftest import assert_violation
 
 from serenecode.models import (
     ADVISORY_FINDING_TYPES,
@@ -98,7 +98,7 @@ class TestDetail:
         assert detail.suggestion == "Add precondition: x >= 0"
 
     def test_empty_message_rejected(self) -> None:
-        assert_violation_or_skip(lambda: Detail(
+        assert_violation(lambda: Detail(
             level=VerificationLevel.STRUCTURAL,
             tool="structural",
             finding_type="violation",
@@ -106,7 +106,7 @@ class TestDetail:
         ))
 
     def test_whitespace_message_rejected(self) -> None:
-        assert_violation_or_skip(lambda: Detail(
+        assert_violation(lambda: Detail(
             level=VerificationLevel.STRUCTURAL,
             tool="structural",
             finding_type="violation",
@@ -168,25 +168,25 @@ class TestFunctionResult:
         assert result.details == ()
 
     def test_line_zero_rejected(self) -> None:
-        assert_violation_or_skip(lambda: FunctionResult(
+        assert_violation(lambda: FunctionResult(
             function="test", file="test.py", line=0,
             level_requested=1, level_achieved=1, status=CheckStatus.PASSED,
         ))
 
     def test_negative_line_rejected(self) -> None:
-        assert_violation_or_skip(lambda: FunctionResult(
+        assert_violation(lambda: FunctionResult(
             function="test", file="test.py", line=-1,
             level_requested=1, level_achieved=1, status=CheckStatus.PASSED,
         ))
 
     def test_empty_function_name_rejected(self) -> None:
-        assert_violation_or_skip(lambda: FunctionResult(
+        assert_violation(lambda: FunctionResult(
             function="", file="test.py", line=1,
             level_requested=1, level_achieved=1, status=CheckStatus.PASSED,
         ))
 
     def test_empty_file_rejected(self) -> None:
-        assert_violation_or_skip(lambda: FunctionResult(
+        assert_violation(lambda: FunctionResult(
             function="test", file="", line=1,
             level_requested=1, level_achieved=1, status=CheckStatus.PASSED,
         ))
@@ -228,13 +228,13 @@ class TestCheckSummary:
         assert summary.total_functions == 10
 
     def test_counts_must_sum_to_total(self) -> None:
-        assert_violation_or_skip(lambda: CheckSummary(
+        assert_violation(lambda: CheckSummary(
             total_functions=10, passed_count=5, failed_count=3,
             skipped_count=1, exempt_count=0, duration_seconds=0.1,  # 5+3+1+0=9 != 10
         ))
 
     def test_negative_counts_rejected(self) -> None:
-        assert_violation_or_skip(lambda: CheckSummary(
+        assert_violation(lambda: CheckSummary(
             total_functions=5, passed_count=-1, failed_count=3,
             skipped_count=3, exempt_count=0, duration_seconds=0.1,
         ))

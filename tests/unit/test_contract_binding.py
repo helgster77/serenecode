@@ -460,3 +460,158 @@ def test_waiver_does_not_silence_the_postcondition_requirement() -> None:
             return "ok" if succeeded else "failed"
     ''')
     assert any("missing @icontract.ensure" in message for message in messages)
+
+
+_SUCCESSOR = '''
+    """Sample module."""
+
+    from __future__ import annotations
+
+    import icontract
+
+
+    @icontract.require({precondition})
+    @icontract.ensure(lambda count, result: result == count + 1, "result is the successor")
+    def successor(count: int) -> int:
+        """Return the next integer.
+
+        Args:
+            count: The starting value.
+
+        Returns:
+            count + 1.
+        """
+        return count + 1
+'''
+
+
+def _successor_findings(precondition: str) -> list[str]:
+    """Return Level 1 messages for ``successor`` with the given precondition."""
+    return _presence_findings(_SUCCESSOR.format(precondition=precondition))
+
+
+def test_meaningful_contracts_have_no_findings() -> None:
+    """The baseline the cases below each change in one place."""
+    assert _successor_findings('lambda count: count >= 0, "count is non-negative"') == []
+
+
+def test_disabled_function_contract_is_reported() -> None:
+    """A contract icontract never evaluates does not count as a contract.
+
+    Verifies: REQ-059
+
+    Measured: with enabled=False, `successor(-5)` returns -4 without raising.
+    """
+    messages = _successor_findings('lambda count: count >= 0, "count is non-negative", enabled=False')
+    assert len(messages) == 1
+    assert "disabled contract 'icontract.require'" in messages[0]
+
+
+def test_disabled_class_invariant_is_reported() -> None:
+    """The same rule applies to invariants.
+
+    Verifies: REQ-059
+    """
+    messages = _presence_findings('''
+        """Sample module."""
+
+        from __future__ import annotations
+
+        import icontract
+
+
+        @icontract.invariant(lambda self: self.total >= 0, "total is non-negative", enabled=False)
+        class Ledger:
+            """A running total."""
+
+            total: int = 0
+    ''')
+    assert any("Class 'Ledger' has disabled contract 'icontract.invariant'" in m for m in messages)
+
+
+def test_keyword_condition_is_bound_like_a_positional_one() -> None:
+    """A condition passed as condition= gets the binding checks.
+
+    Verifies: REQ-060
+
+    Measured: `charge(1)` raises TypeError — the condition needs `amount`.
+    """
+    messages = _findings('''
+        import icontract
+
+        @icontract.require(condition=lambda amount: amount > 0, description="positive")
+        def charge(total: int) -> int:
+            return total
+    ''')
+    assert len(messages) == 1
+    assert "'amount'" in messages[0]
+
+
+def test_keyword_tautology_is_reported() -> None:
+    """A condition passed as condition= gets the tautology check.
+
+    Verifies: REQ-060
+    """
+    messages = _successor_findings('condition=lambda count: True, description="anything goes"')
+    assert len(messages) == 1
+    assert "tautological contract 'icontract.require'" in messages[0]
+
+
+def test_always_true_conditions_fail_level_1() -> None:
+    """Conditions that cannot be false are reported wherever they are spelled.
+
+    Verifies: REQ-061
+    """
+    for condition in (
+        "lambda count: isinstance(count, object)",
+        "lambda count: not False",
+        "lambda count: count is count",
+        "lambda count: count >= 0 or True",
+    ):
+        messages = _successor_findings(f'{condition}, "anything goes"')
+        assert len(messages) == 1, condition
+        assert "tautological contract" in messages[0], condition
+
+
+def test_nan_guard_is_not_a_tautology() -> None:
+    """`x == x` is false for NaN, so it is a constraint.
+
+    Verifies: REQ-061
+    """
+    assert _successor_findings('lambda count: count == count, "count is not NaN"') == []
+
+
+def test_missing_contract_suggestions_do_not_restate_the_annotation() -> None:
+    """The proposed contract must not be one Level 1 or Python would reject.
+
+    Verifies: REQ-070
+
+    Measured: `isinstance(result, None)` raises TypeError.
+    """
+    result = check_structural(textwrap.dedent('''
+        """Sample module."""
+
+        from __future__ import annotations
+
+
+        def total(prices: list[int]) -> int:
+            """Sum the prices."""
+            return sum(prices)
+
+
+        def record(message: str) -> None:
+            """Record a message."""
+            print(message)
+    '''), default_config(), file_path="sample.py")
+    suggestions = [
+        detail.suggestion or ""
+        for record in result.results
+        for detail in record.details
+        if "missing @icontract" in detail.message
+    ]
+    assert len(suggestions) == 4
+    assert not any("isinstance(result" in suggestion for suggestion in suggestions)
+    assert not any("is not None" in suggestion for suggestion in suggestions)
+    assert any("lambda prices, result:" in suggestion for suggestion in suggestions)
+    assert any("returns None" in suggestion and "lambda message:" in suggestion for suggestion in suggestions)
+    assert sum("# no-precondition: <reason>" in suggestion for suggestion in suggestions) == 2

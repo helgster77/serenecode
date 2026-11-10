@@ -248,16 +248,17 @@ def extract_integration_points(spec_content: str) -> tuple[IntegrationPoint, ...
     return tuple(integrations)
 
 
-@icontract.require(
-    lambda spec_content: is_non_empty_string(spec_content),
-    "spec_content must be a non-empty string",
-)
+@icontract.require(lambda spec_content: isinstance(spec_content, str), "spec_content must be a string")
 @icontract.ensure(
     lambda result: result.level_requested == 1,
     "spec validation reports findings at the structural level",
 )
 def validate_spec(spec_content: str) -> CheckResult:
     """Validate that a SPEC.md is well-formed and ready for SereneCode.
+
+    Implements: REQ-068
+
+    An empty spec is reported through check 1 rather than rejected.
 
     Checks:
     1. At least one REQ-xxx or INT-xxx heading exists.
@@ -443,10 +444,7 @@ def extract_verifications(source: str) -> list[tuple[str, str, int]]:
     return _extract_docstring_references(source, _VERIFIES_PATTERN)
 
 
-@icontract.require(
-    lambda spec_content: is_non_empty_string(spec_content),
-    "spec_content must be a non-empty string",
-)
+@icontract.require(lambda spec_content: isinstance(spec_content, str), "spec_content must be a string")
 @icontract.require(
     lambda source_files: isinstance(source_files, tuple),
     "source_files must be a tuple",

@@ -16,9 +16,11 @@ _ICONTRACT_ENABLED: bool | None = None
 def icontract_enabled() -> bool:
     """Check if icontract invariant checking is still active.
 
-    CrossHair monkey-patches icontract internals when imported,
-    which can disable invariant checking in the same process.
-    The result is cached because the state never reverts.
+    CrossHair monkey-patches icontract internals when imported, which
+    disables contract checking for the whole process. SereneCode never
+    imports it in-process (REQ-054), so this must stay True for the
+    entire test session. The result is cached because the state never
+    reverts.
     """
     global _ICONTRACT_ENABLED
     if _ICONTRACT_ENABLED is not None:
@@ -35,18 +37,21 @@ def icontract_enabled() -> bool:
     return _ICONTRACT_ENABLED
 
 
-def assert_violation_or_skip(fn: object) -> None:
-    """Assert that calling fn raises ViolationError, or skip if icontract is patched.
+def assert_violation(fn: object) -> None:
+    """Assert that calling fn raises ViolationError.
 
-    Use this instead of ``pytest.raises(icontract.ViolationError)``
-    in tests that may run after CrossHair has been imported.
+    A process in which icontract has been disabled fails here rather than
+    skipping: contract enforcement going quiet is the defect REQ-054 closes.
     """
     try:
         fn()  # type: ignore[operator]
     except icontract.ViolationError:
         return  # expected
     if not icontract_enabled():
-        pytest.skip("icontract invariants disabled by CrossHair monkey-patching")
+        pytest.fail(
+            "icontract enforcement is disabled in this process — "
+            "something imported CrossHair in-process (REQ-054)"
+        )
     pytest.fail("Expected icontract.ViolationError was not raised")
 
 from serenecode.models import (

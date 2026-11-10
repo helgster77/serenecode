@@ -13,7 +13,7 @@ from pathlib import Path
 
 import icontract
 
-from serenecode.contracts.predicates import is_non_empty_string
+from serenecode.contracts.predicates import is_non_empty_string, is_test_module_path
 from serenecode.core.exceptions import ConfigurationError
 from serenecode.core.pipeline import SourceFile
 from serenecode.ports.file_system import FileReader
@@ -234,20 +234,27 @@ def discover_narrative_spec_paths(project_root: str) -> tuple[str, ...]:
     lambda file_path: is_non_empty_string(file_path),
     "file_path must be a non-empty string",
 )
-@icontract.ensure(
-    lambda result: isinstance(result, bool),
-    "result must be a bool",
+@icontract.require(
+    lambda root: is_non_empty_string(root),
+    "root must be a non-empty string",
 )
-def is_test_file_path(file_path: str) -> bool:
-    """Return True when a path points to a test-only Python file."""
-    normalized = os.path.normpath(file_path)
-    basename = os.path.basename(normalized)
-    path_parts = normalized.split(os.sep)
-    return (
-        "tests" in path_parts
-        or basename.startswith("test_")
-        or basename == "conftest.py"
-    )
+@icontract.ensure(
+    lambda file_path, result: not result or "test" in os.path.abspath(file_path),
+    "a test file path names a tests directory or a test basename",
+)
+def is_test_file_path(file_path: str, root: str) -> bool:
+    """Return True when a path, taken relative to its project root, is a test file.
+
+    Implements: REQ-055
+
+    Only the part of the path below ``root`` is classified, so directories
+    above the project never make production code look like a test suite.
+
+    Args:
+        file_path: Path to a Python file.
+        root: The project's context root.
+    """
+    return is_test_module_path(_relative_to_root(file_path, os.path.abspath(root)))
 
 
 @icontract.require(lambda path: is_non_empty_string(path), "path must be a non-empty string")

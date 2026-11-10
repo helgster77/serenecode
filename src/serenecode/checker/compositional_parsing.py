@@ -14,14 +14,17 @@ from dataclasses import dataclass
 
 import icontract
 
+from serenecode.checker.contract_binding import _PRECONDITION_OPT_OUT
 from serenecode.checker.structural_helpers import (
     IcontractNames,
+    _function_opt_out_lines,
     get_decorator_name,
     has_decorator,
     resolve_icontract_aliases,
 )
+from serenecode.checker.structural_quality import _has_opt_out_comment
 from serenecode.config import SerenecodeConfig
-from serenecode.contracts.predicates import is_non_empty_string, is_valid_file_path_string
+from serenecode.contracts.predicates import is_non_empty_string
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +33,7 @@ from serenecode.contracts.predicates import is_non_empty_string, is_valid_file_p
 
 
 @icontract.invariant(
-    lambda self: len(self.name) > 0,
+    lambda self: is_non_empty_string(self.name),
     "Method name must be non-empty",
 )
 @icontract.invariant(
@@ -58,7 +61,7 @@ class MethodSignature:
 
 
 @icontract.invariant(
-    lambda self: len(self.name) > 0,
+    lambda self: is_non_empty_string(self.name),
     "Parameter name must be non-empty",
 )
 @dataclass(frozen=True)
@@ -70,7 +73,7 @@ class ParameterInfo:
 
 
 @icontract.invariant(
-    lambda self: len(self.name) > 0 and self.line >= 1,
+    lambda self: is_non_empty_string(self.name) and self.line >= 1,
     "Function must have a non-empty name and valid line number",
 )
 @dataclass(frozen=True)
@@ -85,10 +88,11 @@ class FunctionInfo:
     has_require: bool
     has_ensure: bool
     calls: tuple[str, ...]  # call target names extracted from body
+    precondition_waived: bool = False  # carries a "# no-precondition: <reason>" comment
 
 
 @icontract.invariant(
-    lambda self: len(self.name) > 0 and self.line >= 1,
+    lambda self: is_non_empty_string(self.name) and self.line >= 1,
     "Class must have a non-empty name and valid line number",
 )
 @dataclass(frozen=True)
@@ -106,7 +110,7 @@ class ClassInfo:
 
 
 @icontract.invariant(
-    lambda self: len(self.name) > 0 and self.line >= 1,
+    lambda self: is_non_empty_string(self.name) and self.line >= 1,
     "Protocol must have a non-empty name and valid line number",
 )
 @dataclass(frozen=True)
@@ -119,12 +123,25 @@ class ProtocolInfo:
 
 
 @icontract.invariant(
-    lambda self: len(self.file_path) > 0 and len(self.module_path) > 0,
+    lambda self: is_non_empty_string(self.file_path) and is_non_empty_string(self.module_path),
     "Module must have non-empty file and module paths",
+)
+@icontract.invariant(
+    lambda self: (
+        all(is_non_empty_string(name) for name in self.imports)
+        and all(is_non_empty_string(name) for name in self.all_imports)
+        and all(is_non_empty_string(m) and is_non_empty_string(n) for m, n in self.from_imports)
+    ),
+    "Every recorded import must name a module",
 )
 @dataclass(frozen=True)
 class ModuleInfo:
-    """Parsed information about a single module for compositional analysis."""
+    """Parsed information about a single module for compositional analysis.
+
+    ``imports`` and ``from_imports`` hold the top-level statements, which is
+    what cycle detection uses. ``all_imports`` holds every import target in
+    the file, wherever it appears, which is what the layer rule uses.
+    """
 
     file_path: str
     module_path: str
@@ -136,6 +153,7 @@ class ModuleInfo:
     function_infos: tuple[FunctionInfo, ...] = ()
     import_bindings: tuple[tuple[str, str, str | None], ...] = ()
     parse_error: str | None = None
+    all_imports: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -152,16 +170,12 @@ class ModuleInfo:
     "file_path must be a non-empty string",
 )
 @icontract.require(
-    lambda file_path: is_valid_file_path_string(file_path),
-    "file_path must be a valid path string",
-)
-@icontract.require(
     lambda module_path: is_non_empty_string(module_path),
     "module_path must be a non-empty string",
 )
 @icontract.require(
-    lambda module_path: is_valid_file_path_string(module_path),
-    "module_path must be a valid module path string",
+    lambda file_path, module_path: "\x00" not in file_path and "\x00" not in module_path,
+    "paths must not contain a null byte; a parent reference such as '../pkg' is allowed",
 )
 @icontract.ensure(
     lambda file_path, module_path, result: result.file_path == file_path and result.module_path == module_path,
@@ -233,7 +247,7 @@ def parse_module_info(
             is_public = _is_public_function_name(node.name)
             if is_public:
                 functions.append(node.name)
-            func_info = _parse_function_info(node, aliases)
+            func_info = _parse_function_info(node, aliases, source)
             function_infos.append(func_info)
 
     return ModuleInfo(
@@ -246,7 +260,67 @@ def parse_module_info(
         protocols=tuple(protocols),
         function_infos=tuple(function_infos),
         import_bindings=tuple(import_bindings),
+        all_imports=_collect_all_imports(tree, module_path),
     )
+
+
+@icontract.require(lambda tree: isinstance(tree, ast.Module), "tree must be an ast.Module")
+@icontract.require(lambda module_path: isinstance(module_path, str), "module_path must be a string")
+@icontract.ensure(lambda result: all(result), "every collected import names a module")
+@icontract.ensure(lambda result: len(set(result)) == len(result), "each import target is listed once")
+def _collect_all_imports(tree: ast.Module, module_path: str) -> tuple[str, ...]:
+    """List every module a file imports, wherever the statement appears.
+
+    Implements: REQ-069
+
+    An import inside a function body, a ``try`` or an ``if`` creates the same
+    dependency as one at the top of the file, so the layer rule has to see
+    it. ``from package import name`` contributes ``package.name`` as well as
+    ``package``, because ``name`` may itself be a module.
+
+    Args:
+        tree: The parsed module.
+        module_path: The module's path, used to resolve relative imports.
+
+    Returns:
+        The distinct import targets in first-seen order.
+    """
+    targets: list[str] = []
+    # Loop invariant: targets holds the import targets of every node walked so far
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            targets.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            names = [alias.name for alias in node.names if alias.name != "*"]
+            resolved = _resolve_from_import_module(node, module_path)
+            if resolved:
+                targets.append(resolved)
+                targets.extend(f"{resolved}.{name}" for name in names)
+            else:
+                # `from .. import name` above the known package root
+                targets.extend(names)
+        elif isinstance(node, ast.Call):
+            dynamic_target = _dynamic_import_target(node)
+            if dynamic_target is not None:
+                targets.append(dynamic_target)
+    return tuple(dict.fromkeys(targets))
+
+
+@icontract.require(lambda call: isinstance(call, ast.Call), "call must be a call expression")
+@icontract.ensure(lambda result: result is None or len(result) > 0, "a reported target is non-empty")
+def _dynamic_import_target(call: ast.Call) -> str | None:
+    """Return the string-literal target of ``import_module`` / ``__import__``.
+
+    A computed module name cannot be known from the AST and yields None.
+    """
+    func = call.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+    if name not in ("import_module", "__import__") or not call.args:
+        return None
+    target = call.args[0]
+    if not isinstance(target, ast.Constant) or not isinstance(target.value, str):
+        return None
+    return target.value.lstrip(".") or None
 
 
 @icontract.require(
@@ -368,7 +442,12 @@ def _should_check_class_invariants(
     cls: ClassInfo,
     config: SerenecodeConfig,
 ) -> bool:
-    """Check whether invariant completeness applies to a class."""
+    """Check whether invariant completeness applies to a class.
+
+    Implements: REQ-065
+    """
+    if not config.contract_requirements.require_on_classes:
+        return False
     if config.contract_requirements.require_on_private:
         return True
     return not cls.name.startswith("_")
@@ -389,12 +468,16 @@ def _should_check_class_invariants(
 def _parse_function_info(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     aliases: IcontractNames,
+    source: str = "",
 ) -> FunctionInfo:
     """Parse a function definition into a FunctionInfo.
+
+    Implements: REQ-065
 
     Args:
         node: An AST FunctionDef or AsyncFunctionDef node.
         aliases: Resolved icontract import names for decorator detection.
+        source: The module source, read for the precondition waiver comment.
 
     Returns:
         A FunctionInfo with function metadata including contracts and calls.
@@ -404,6 +487,11 @@ def _parse_function_info(
     has_req = has_decorator(node, aliases.require_names)
     has_ens = has_decorator(node, aliases.ensure_names)
     calls = _extract_calls(node)
+    # The waiver only matters when the precondition is absent, so the comment
+    # scan is skipped for every function that already has one.
+    waived = not has_req and bool(source) and _has_opt_out_comment(
+        source, _function_opt_out_lines(node), _PRECONDITION_OPT_OUT,
+    )
 
     return FunctionInfo(
         name=node.name,
@@ -414,6 +502,7 @@ def _parse_function_info(
         has_require=has_req,
         has_ensure=has_ens,
         calls=calls,
+        precondition_waived=waived,
     )
 
 

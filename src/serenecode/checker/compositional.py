@@ -47,7 +47,7 @@ from serenecode.checker.compositional_parsing import (
     parse_module_info,
 )
 from serenecode.config import SerenecodeConfig, is_core_module, is_exempt_module
-from serenecode.contracts.predicates import is_non_empty_string
+from serenecode.contracts.predicates import is_non_empty_string, is_test_module_path
 from serenecode.models import (
     CheckResult,
     CheckStatus,
@@ -126,6 +126,8 @@ def check_dependency_direction(
 ) -> list[FunctionResult]:
     """Check that import dependencies follow the hexagonal architecture.
 
+    Implements: REQ-069
+
     Rules:
     - core/ must not import from adapters/
     - ports/ must not import from adapters/
@@ -151,31 +153,12 @@ def check_dependency_direction(
         if not is_core and not is_port:
             continue
 
-        # Check imports
-        # Loop invariant: results contains violations for imports[0..j]
-        for imp in mod.imports:
-            violation = _check_import_direction(imp, is_core, is_port)
-            if violation:
-                results.append(FunctionResult(
-                    function="<module>",
-                    file=mod.file_path,
-                    line=1,
-                    level_requested=6,
-                    level_achieved=5,
-                    status=CheckStatus.FAILED,
-                    details=(Detail(
-                        level=VerificationLevel.COMPOSITIONAL,
-                        tool="compositional",
-                        finding_type="violation",
-                        message=violation,
-                        suggestion="Move this import to an adapter module or use dependency injection",
-                    ),),
-                ))
-
-        # Check from-imports
-        # Loop invariant: results contains violations for from_imports[0..j]
-        for from_mod, _ in mod.from_imports:
-            violation = _check_import_direction(from_mod, is_core, is_port)
+        # Top-level statements plus every import nested in a function, a
+        # `try` or an `if`: each creates the same dependency (REQ-069).
+        targets = dict.fromkeys((*mod.imports, *(m for m, _ in mod.from_imports), *mod.all_imports))
+        # Loop invariant: results contains violations for targets[0..j]
+        for target in targets:
+            violation = _check_import_direction(target, is_core, is_port)
             if violation:
                 results.append(FunctionResult(
                     function="<module>",
@@ -573,6 +556,7 @@ def check_contract_completeness(
     Uses FunctionInfo metadata to verify that every public function in
     non-exempt modules has icontract.require (if it has parameters) and
     icontract.ensure decorators, and every public class has an invariant.
+    Test files are skipped, as at Level 1 (REQ-065).
 
     Args:
         modules: List of parsed module information.
@@ -584,7 +568,7 @@ def check_contract_completeness(
     results: list[FunctionResult] = []
     # Loop invariant: results contains completeness findings for modules[0..i]
     for mod in modules:
-        if is_exempt_module(mod.module_path, config):
+        if is_exempt_module(mod.module_path, config) or is_test_module_path(mod.module_path):
             continue
         results.extend(_check_function_contracts_completeness(mod, config))
         results.extend(_check_class_invariants_completeness(mod, config))
@@ -608,7 +592,7 @@ def _check_function_contracts_completeness(
         if not _should_check_function_contracts(func_info, config):
             continue
         details: list[Detail] = []
-        if len(func_info.parameters) > 0 and not func_info.has_require:
+        if len(func_info.parameters) > 0 and not func_info.has_require and not func_info.precondition_waived:
             details.append(Detail(
                 level=VerificationLevel.COMPOSITIONAL, tool="compositional",
                 finding_type="violation",
@@ -917,6 +901,10 @@ def _find_cycles(graph: dict[str, set[str]]) -> list[tuple[str, ...]]:
 @icontract.require(
     lambda sources: isinstance(sources, (list, tuple)),
     "sources must be a list or tuple",
+)
+@icontract.require(
+    lambda sources: all(is_non_empty_string(p) and "\x00" not in p for _, f, m in sources for p in (f, m)),
+    "every source needs a file path and a module path free of null bytes",
 )
 @icontract.require(
     lambda spec_content: spec_content is None or isinstance(spec_content, str),

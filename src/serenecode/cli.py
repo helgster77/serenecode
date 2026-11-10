@@ -14,6 +14,7 @@ import time
 import click
 import icontract
 
+from serenecode.adapters import project_output_on_stderr
 from serenecode.adapters.local_fs import LocalFileReader, LocalFileWriter
 from serenecode.config import parse_serenecode_md
 from serenecode.contracts.predicates import (
@@ -218,7 +219,7 @@ def doctor() -> None:
     if _mcp_extra_installed():
         click.echo("OK: MCP Python package is available (`mcp` import succeeds).")
     else:
-        click.echo("NOT FOUND: MCP extra is not installed — AI tools cannot load the server.")
+        click.echo("NOT FOUND: MCP extra is not installed (or not mcp>=1.2,<2) — AI tools cannot load the server.")
         click.echo("  Install one of:")
         click.echo("    uv add 'serenecode[mcp]'")
         click.echo("    pip install 'serenecode[mcp]'")
@@ -261,6 +262,8 @@ def doctor() -> None:
 def mcp(allow_code_execution: bool, project_root: str | None) -> None:
     """Boot the Serenecode MCP server over stdio.
 
+    Implements: REQ-067
+
     Exposes the verification pipeline as MCP tools an AI agent can call
     mid-edit. Register with Claude Code via:
 
@@ -276,8 +279,9 @@ def mcp(allow_code_execution: bool, project_root: str | None) -> None:
         from serenecode.mcp.server import run_stdio_server
     except ImportError as exc:
         click.echo(
-            f"Error: the 'mcp' optional dependency is not installed.\n"
-            f"Install with: uv add 'mcp>=1.0' or pip install 'serenecode[mcp]'\n"
+            "Error: the MCP server is unavailable — the 'mcp' optional dependency is "
+            "missing or is not a supported version (>=1.2,<2).\n"
+            "Install with: uv add 'mcp>=1.2,<2' or pip install 'serenecode[mcp]'\n"
             f"Underlying error: {exc}",
             err=True,
         )
@@ -423,28 +427,29 @@ def check(  # allow-many-params: Click requires one parameter per CLI flag
     (type_checker, coverage_analyzer, property_tester,
      symbolic_checker, dead_code_analyzer) = _wire_adapters(
         level, per_condition_timeout, per_path_timeout,
-        module_timeout, coverage_timeout,
+        module_timeout, coverage_timeout, allow_code_execution,
     )
 
-    final_result = run_pipeline(
-        source_files=source_files,
-        level=level,
-        start_level=start_level,
-        config=config,
-        type_checker=type_checker,
-        coverage_analyzer=coverage_analyzer,
-        property_tester=property_tester,
-        symbolic_checker=symbolic_checker,
-        dead_code_analyzer=dead_code_analyzer,
-        progress=lambda msg: click.echo(msg, err=True),
-        max_workers=workers,
-        known_test_stems=test_stems,
-        spec_content=spec_content,
-        test_sources=test_sources,
-        traceability_sources=(
-            discover_traceability_sources(source_files, reader) if spec_content is not None else None
-        ),
-    )
+    with project_output_on_stderr():
+        final_result = run_pipeline(
+            source_files=source_files,
+            level=level,
+            start_level=start_level,
+            config=config,
+            type_checker=type_checker,
+            coverage_analyzer=coverage_analyzer,
+            property_tester=property_tester,
+            symbolic_checker=symbolic_checker,
+            dead_code_analyzer=dead_code_analyzer,
+            progress=lambda msg: click.echo(msg, err=True),
+            max_workers=workers,
+            known_test_stems=test_stems,
+            spec_content=spec_content,
+            test_sources=test_sources,
+            traceability_sources=(
+                discover_traceability_sources(source_files, reader) if spec_content is not None else None
+            ),
+        )
 
     _output_and_exit(final_result, output_format, wall_start, fail_on_advisory)
 
@@ -550,16 +555,17 @@ def status(path: str, output_format: str) -> None:
     except Exception as exc:
         click.echo(f"Error reading spec: {exc}", err=True)
         sys.exit(ExitCode.INTERNAL)
-    result = run_pipeline(
-        source_files, level=1, start_level=1, config=config,
-        known_test_stems=test_stems,
-        dead_code_analyzer=_maybe_make_dead_code_analyzer(),
-        spec_content=spec_content,
-        test_sources=test_sources,
-        traceability_sources=(
-            discover_traceability_sources(source_files, reader) if spec_content is not None else None
-        ),
-    )
+    with project_output_on_stderr():
+        result = run_pipeline(
+            source_files, level=1, start_level=1, config=config,
+            known_test_stems=test_stems,
+            dead_code_analyzer=_maybe_make_dead_code_analyzer(),
+            spec_content=spec_content,
+            test_sources=test_sources,
+            traceability_sources=(
+                discover_traceability_sources(source_files, reader) if spec_content is not None else None
+            ),
+        )
 
     if output_format == "json":
         click.echo(format_json(result))
@@ -626,7 +632,7 @@ def report(
 
     (type_checker, coverage_analyzer, property_tester,
      symbolic_checker, dead_code_analyzer) = _wire_adapters(
-        level, 30, 10, 300, 600,
+        level, 30, 10, 300, 600, allow_code_execution,
     )
 
     test_stems = discover_test_file_stems(path, reader)
@@ -636,17 +642,18 @@ def report(
         click.echo(f"Error reading spec: {exc}", err=True)
         sys.exit(ExitCode.INTERNAL)
 
-    final_result = run_pipeline(
-        source_files, level=level, start_level=1, config=config,
-        type_checker=type_checker, coverage_analyzer=coverage_analyzer,
-        property_tester=property_tester, symbolic_checker=symbolic_checker,
-        dead_code_analyzer=dead_code_analyzer,
-        known_test_stems=test_stems,
-        spec_content=spec_content, test_sources=test_sources,
-        traceability_sources=(
-            discover_traceability_sources(source_files, reader) if spec_content is not None else None
-        ),
-    )
+    with project_output_on_stderr():
+        final_result = run_pipeline(
+            source_files, level=level, start_level=1, config=config,
+            type_checker=type_checker, coverage_analyzer=coverage_analyzer,
+            property_tester=property_tester, symbolic_checker=symbolic_checker,
+            dead_code_analyzer=dead_code_analyzer,
+            known_test_stems=test_stems,
+            spec_content=spec_content, test_sources=test_sources,
+            traceability_sources=(
+                discover_traceability_sources(source_files, reader) if spec_content is not None else None
+            ),
+        )
 
     if output_format == "json":
         formatted = format_json(final_result)
