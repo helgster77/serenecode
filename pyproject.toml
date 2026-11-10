@@ -1,6 +1,6 @@
 [project]
 name = "serenecode"
-version = "0.6.0"
+version = "0.7.0"
 description = "Verification framework for AI-generated Python — test coverage, property testing, and symbolic execution"
 requires-python = ">=3.10"
 license = "MIT"
@@ -31,6 +31,7 @@ dependencies = [
     "hypothesis>=6.0",
     "crosshair-tool>=0.0.60",
     "vulture>=2.14",
+    "tomli>=1.1; python_version < '3.11'",
 ]
 
 [project.urls]

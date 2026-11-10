@@ -4,11 +4,49 @@ Releases before 0.6.0 are recorded in the repository's
 [commit history](https://github.com/helgster77/serenecode/commits/main) and
 [tags](https://github.com/helgster77/serenecode/tags).
 
-## Unreleased
+## 0.7.0 — 2026-11-10
 
-These changes make several verdicts stricter and one category of failure
-visible for the first time. **A project that passed on 0.6.0 can fail after
-this change**; each item below says when.
+This release makes several verdicts stricter and one category of failure
+visible for the first time. Read **Upgrading** before adopting it in CI.
+
+### Upgrading
+
+**A project that passed on 0.6.0 can fail on 0.7.0.** Each case names a defect
+or a risk that 0.6.0 did not report:
+
+- **Level 4, in runs that go on to Level 5 or 6.** Contract violations found
+  by Level 4 were hidden in those runs, because importing CrossHair switched
+  icontract off for the whole process. They are reported now. Each one is a
+  real counterexample: fix the implementation, or add the precondition that
+  excludes the input.
+- **Level 4, `sys.exit` in checked code.** It is a `crash` finding instead of
+  ending the run with the target's exit code.
+- **Level 1.** A contract with a literal `enabled=False`, more always-true
+  conditions, and conditions passed as `condition=` are reported. Functions
+  and classes inside a module-level `if`, `try` or `with` are checked, so a
+  missing contract there is now a finding.
+- **Level 2.** When the project's mypy configuration sets `plugins` or
+  `python_executable`, mypy is not started without `--allow-code-execution`
+  and the run fails with a `<mypy>` record. Add the flag in CI if you trust
+  that configuration. A mypy fatal error or timeout is also a failed record
+  now.
+- **Level 6.** The layer rule reads every import form, so a forbidden import
+  inside a function, a `try` block, or a dynamic import is reported.
+- **Projects that were silently skipped.** A project checked out below a
+  directory named `tests`, and packages named `build`, `dist`, `env` or
+  `venv`, are checked now.
+
+**A project can also newly pass:**
+
+- `serenecode check . --level 6` on a project root no longer asks test
+  functions for contracts.
+- Level 6 honours the `# no-precondition:` waiver and does not require class
+  invariants the configuration does not require.
+- A project path containing `..` no longer ends a Level 6 run with a contract
+  violation.
+
+**Installing:** the `mcp` extra now requires `mcp>=1.2,<2`. An environment
+pinned to another `mcp` line needs that pin changed before upgrading.
 
 ### Fixed — verdicts that were wrong
 
@@ -84,6 +122,9 @@ this change**; each item below says when.
 - The `mcp` extra requires `mcp>=1.2,<2`. `mcp.server.fastmcp` does not exist
   before 1.2 and is a raising stub in 2.x. A failed import of the MCP server
   now reports the underlying error.
+- `tomli` is a declared dependency on Python 3.10, where the Level 2
+  configuration check reads `pyproject.toml` with it. It was previously
+  installed only because mypy depends on it.
 
 ### Added
 
